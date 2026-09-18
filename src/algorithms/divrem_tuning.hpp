@@ -19,4 +19,12 @@ inline constexpr double inverse_cost_ratio = 3.0;
 // Arithmetic guarantees (docs/divrem-design): |qhat-q|<=7, |E|<7D.
 inline constexpr unsigned correction_limit = 8;
 inline constexpr size_t ring_guard_words = 2; // ring >= dn + guard for the signed residual lift
+// Residual recipe: the cyclic product is taken when its ring is at most this
+// fraction of the linear product's dn+in output; otherwise the linear recipe.
+// Measured 2026-09-18 (results/divrem_2026-09-18/family, W16, prepare+execute):
+// 65536: cyclic 73728/87382=0.84 wins (1.51-1.63 vs 1.71 ms); 262144:
+// 294912/349526=0.84 wins (6.86 vs 7.88); 1048576: 1310720/1398102=0.94 loses
+// (25.8 vs 22.8). The cost model ranked both cases the other way, so this
+// structural rule replaces its linear-versus-cyclic comparison only.
+inline constexpr double cyclic_ring_fraction = 0.9;
 } // namespace sbn::v3::divrem_tuning

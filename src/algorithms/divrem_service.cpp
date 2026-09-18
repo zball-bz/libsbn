@@ -182,22 +182,37 @@ bool choose_u(const Plan &p, size_t in, ProductChoice &out, Queried &q, Cost &co
 // prepare + applications * apply.
 bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductChoice &out, Queried &q, Cost &cost,
               size_t &ring) {
-    bool found = false;
-    double best = INFINITY;
-    auto consider = [&](const ProductChoice &c, size_t r) {
+    // Linear and cyclic families are ranked separately by the cost model; the
+    // family is then chosen by the structural ring rule (divrem_tuning).
+    struct Best {
+        bool found = false;
+        double total = INFINITY;
+        ProductChoice choice{};
+        Queried queried{};
+        Cost cost{};
+        size_t ring = 0;
+    } lin, cyc;
+    auto consider = [&](Best &b, const ProductChoice &c, size_t r) {
         Queried candidate{};
         if (!query_product(dn, in, c, 2, candidate))
             return;
         const Cost k = product_cost(candidate, dn, in);
         const double total = k.prepare + applications * k.apply;
-        if (!std::isfinite(total) || total >= best)
+        if (!std::isfinite(total) || total >= b.total)
             return;
-        best = total;
-        found = true;
-        out = c;
-        q = candidate;
-        cost = k;
-        ring = r;
+        b.total = total;
+        b.found = true;
+        b.choice = c;
+        b.queried = candidate;
+        b.cost = k;
+        b.ring = r;
+    };
+    auto take = [&](const Best &b) {
+        out = b.choice;
+        q = b.queried;
+        cost = b.cost;
+        ring = b.ring;
+        return true;
     };
     ProductChoice linear{};
     linear.np = p.options.prime_count;
@@ -205,17 +220,17 @@ bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductC
     if (p.options.residual != 2)
         for (unsigned cached : {1u, 0u}) {
             linear.cached = cached;
-            consider(linear, 0);
+            consider(lin, linear, 0);
         }
     if (p.options.residual == 1)
-        return found;
+        return lin.found && take(lin);
     const size_t minimum = dn + divrem_tuning::ring_guard_words;
     const unsigned width = product_workers(p, dn);
     const unsigned first = p.options.prime_count ? p.options.prime_count : newton_limits::first_ntt_prime_count,
                    last = p.options.prime_count ? p.options.prime_count : newton_limits::last_ntt_prime_count;
     if (!p.options.prime_count && minimum <= 512) {
         ProductChoice c{0, SBN3_MUL_SCALAR, 1, 0, minimum, 0};
-        consider(c, minimum);
+        consider(cyc, c, minimum);
     }
     for (unsigned np = first; np <= last; ++np)
         for (int T = np == 4 ? 88 : 24 * int(np) - 8; T >= (np == 4 ? 80 : 24 * int(np) - 32); T -= np == 4 ? 4 : 8) {
@@ -228,7 +243,7 @@ bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductC
                 if (algorithm == SBN3_MUL_BAILEY && r < 2048)
                     continue;
                 ProductChoice c{np, algorithm, width, T, r, 1};
-                consider(c, r);
+                consider(cyc, c, r);
             }
         }
     if (!p.options.prime_count && minimum <= 32768)
@@ -241,10 +256,18 @@ bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductC
                 continue;
             for (unsigned w : {1u, width}) {
                 ProductChoice c{0, SBN3_MUL_PQ16, w, 16, r, 1};
-                consider(c, r);
+                consider(cyc, c, r);
             }
         }
-    return found;
+    if (!cyc.found)
+        return lin.found && take(lin);
+    if (!lin.found || p.options.residual == 2)
+        return take(cyc);
+    // Cached against cached: the ring rule; otherwise (no cyclic spectrum, e.g.
+    // the scalar ring) the cost model decides.
+    if (cyc.queried.cached && lin.queried.cached)
+        return take(double(cyc.ring) <= divrem_tuning::cyclic_ring_fraction * double(dn + in) ? cyc : lin);
+    return take(cyc.total < lin.total ? cyc : lin);
 }
 double inverse_estimate(const Plan &p, size_t in) {
     ProductChoice c{};
