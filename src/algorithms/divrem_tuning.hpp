@@ -27,4 +27,29 @@ inline constexpr size_t ring_guard_words = 2; // ring >= dn + guard for the sign
 // (25.8 vs 22.8). The cost model ranked both cases the other way, so this
 // structural rule replaces its linear-versus-cyclic comparison only.
 inline constexpr double cyclic_ring_fraction = 0.9;
+// Short head block (quotient limbs modulo the block size) by word division:
+// one multiply-subtract pass over the divisor per limb, against one padded
+// block's product pair. Planning seeds (ns) for that crossover, measured
+// 2026-09-18 (results/divrem_stageA_2026-09-18/headcost, forced full block,
+// numerators 2dn-1..2dn+3): 0.25-0.5 ns/limb single-threaded (dn 4096 W1,
+// 65536 W16), 0.13 ns/limb with team passes inside the shared cache (2^20,
+// W16), 0.5-0.6 ns/limb once divisor and residual exceed it (2^22, W16).
+inline constexpr double head_step_ns = 40.0;
+inline constexpr double head_ns_per_limb = 0.45;
+inline constexpr double head_parallel_ns_per_limb = 0.13;
+inline constexpr double head_memory_ns_per_limb = 0.6;
+inline constexpr size_t head_cache_limbs = size_t(1) << 21; // divisor + residual within the 64 MiB shared cache
+// Candidate rule: complete dn-limb blocks (a full inverse for 2d/d) are
+// considered when the head they leave is at most head_candidate_limbs, the
+// divisor has at least head_candidate_min_divisor limbs and the team is
+// wider than one worker; the cost order still decides among candidates.
+// Measured (results/divrem_stageA_2026-09-18/{profile,shapes,shapes2,shapes3}):
+// at W16 every chosen point from dn=11585 up is faster than the previous
+// default or level with it (one-shot 0.86-0.97, reuse 8: 0.48-1.01 of it);
+// below dn=2896 the short-product cost order picks it wrongly (1.03-1.82),
+// and at one worker it is mixed (0.90-1.12), so neither domain enables it.
+inline constexpr size_t head_candidate_limbs = 8;
+inline constexpr size_t head_candidate_min_divisor = 8192;
+// The 3/2 estimate exceeds the quotient limb by at most one.
+inline constexpr unsigned head_correction_limit = 2;
 } // namespace sbn::v3::divrem_tuning

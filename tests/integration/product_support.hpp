@@ -27,8 +27,9 @@ struct Fixture {
     std::vector<sbn3_mul_binding *> bindings;
     uintptr_t base=0;size_t cursor=0;
     bool guard_pages=true;
-    explicit Fixture(unsigned workers,bool guards=true):guard_pages(guards) {
-        sbn3_error e{};sbn3_arena_config ac{size_t(1)<<34,size_t(256)<<20};
+    // resident: the arena's declared (locked) memory budget; larger gates state theirs explicitly.
+    explicit Fixture(unsigned workers,bool guards=true,size_t resident=size_t(256)<<20):guard_pages(guards) {
+        sbn3_error e{};sbn3_arena_config ac{size_t(1)<<34,resident};
         assert(sbn3_arena_create(&ac,&arena,&e)==SBN3_OK);
         auto control=allocate(sbn3_team_storage_bytes(),64);
         base=reinterpret_cast<uintptr_t>(control.data);

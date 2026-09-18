@@ -13,7 +13,10 @@ switch algorithms. Resource preparation reports failure before execution.
 A binding holds its leases until unbind. In-place result views remain valid only
 for the lifetime declared by that service. Inputs, output and workspace must obey
 the overlap rules in the public header. Cache compatibility includes arithmetic
-basis, completion state, scaling and support, not merely transform size.
+basis, completion state, scaling and support, not merely transform size. A
+consumer may read a wider or rescaled spectrum, but only a binding whose own
+representation equals the reservation may build it; a service that builds
+through its consumer selects that one representation at query time.
 
 A team has one controlling thread. Binding and top-level operations must obey
 its idle/owner rules; internal worker scopes may split into subteams. Never share

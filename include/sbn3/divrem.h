@@ -28,7 +28,10 @@ void sbn3_int_divrem_basecase(sbn3_int *q, sbn3_int *r, sbn3_int_view n, sbn3_in
 /* Prepared service: word/schoolbook for small shapes, block Barrett with a
  * Newton block inverse and cached spectra otherwise. One binding serves any
  * numerator of at most numerator_limbs limbs against the prepared divisor,
- * and may be re-prepared with another divisor of the same length. */
+ * and may be re-prepared with another divisor of the same length. Quotient
+ * limbs left over by the block size (the first limb of 2d/d under a full
+ * inverse) are exact O(dn) word division when that is cheaper than one more
+ * padded block; the blocks below them are complete. */
 typedef struct sbn3_divrem_request {
     size_t numerator_limbs;   /* maximum numerator length accepted by execute */
     size_t denominator_limbs; /* exact length: the prepared divisor's top limb is nonzero */
@@ -58,6 +61,7 @@ typedef struct sbn3_divrem_info {
     size_t control_bytes,persistent_bytes,shared_bytes; /* control; divisor state incl. spectra; prepare/execute union */
     size_t table_bytes,product_workspace_bytes,spectrum_bytes,scratch_bytes;
     uint64_t plan_id;
+    size_t head_limbs; /* longest numerator: leading quotient limbs by O(dn) word division, outside blocks */
 } sbn3_divrem_info;
 typedef struct sbn3_divrem_result {
     size_t quotient_limbs,remainder_limbs; /* normalized lengths; zero for a zero value */
