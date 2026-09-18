@@ -41,15 +41,11 @@ struct Plan {
     unsigned divide_lease_peak = 0;
     uint64_t tree_id = 0, seal = 0;
 };
-// The plan value: the sealed layout, the Newton plan of the reciprocal and the transcript of the product
-// searches (see format.cpp): bind assembles the tree plan again without searching again.
-struct PlanValue {
-    Plan plan{};
-    sbn3_newton_plan divide{};
-    uint32_t searches = 0;
-    uint64_t search[PlanTranscript::capacity]{};
-};
-static_assert(sizeof(PlanValue) <= sizeof(sbn3_parse_plan));
+// The plan value: [sealed layout][Newton plan of the reciprocal][number of recorded searches][the transcript]
+// (see format.cpp): bind assembles the tree plan again without searching again.
+constexpr size_t value_divide_at = (sizeof(Plan) + 7) & ~size_t(7), value_count_at = value_divide_at + sizeof(sbn3_newton_plan),
+                 value_entries_at = value_count_at + 8;
+static_assert(value_entries_at + PlanTranscript::capacity * 8 <= sizeof(sbn3_parse_plan));
 uint64_t seal(const Plan &p, const sbn3_newton_plan &divide, const PlanTranscript &t) noexcept {
     uint64_t h = identity::fnv_seed;
     const uint64_t fields[] = {p.marker, p.spec.base, p.spec.integer_digits, p.spec.fraction_digits, p.spec.fraction_bits,
@@ -251,16 +247,19 @@ sbn3_query_result Assembly::assemble() noexcept {
     info.divide_bytes = p.divide_bytes;
     return SBN3_SUPPORTED;
 }
-// The sealed plan; the Newton plan and the transcript (ready to replay) of the plan value.
+// The sealed plan; the Newton plan and the transcript (ready to replay) of the plan value. `divide` and
+// `transcript` come in value-initialised.
 Plan load(const sbn3_parse_plan &opaque, sbn3_newton_plan &divide, PlanTranscript &transcript) noexcept {
-    PlanValue v{};
-    memcpy(static_cast<void *>(&v), opaque.opaque, sizeof v);
-    const Plan p = v.plan;
-    require(p.marker == plan_magic && v.searches <= PlanTranscript::capacity, SBN3_FATAL_ARGUMENT, "parse plan");
-    divide = v.divide;
-    transcript = {};
-    transcript.count = v.searches;
-    memcpy(transcript.entry, v.search, size_t(v.searches) * 8);
+    const auto *bytes = reinterpret_cast<const unsigned char *>(opaque.opaque);
+    Plan p{};
+    memcpy(static_cast<void *>(&p), bytes, sizeof p);
+    uint64_t count = 0;
+    memcpy(&count, bytes + value_count_at, 8);
+    require(p.marker == plan_magic && count <= PlanTranscript::capacity, SBN3_FATAL_ARGUMENT, "parse plan");
+    if (p.divide_limbs)
+        memcpy(&divide, bytes + value_divide_at, sizeof divide);
+    transcript.count = uint32_t(count);
+    memcpy(transcript.entry, bytes + value_entries_at, size_t(count) * 8);
     require(p.seal == seal(p, divide, transcript), SBN3_FATAL_ARGUMENT, "parse plan");
     transcript.replay = true;
     return p;
@@ -375,14 +374,14 @@ extern "C" sbn3_query_result sbn3_parse_query(const sbn3_parse_spec *spec, const
         return SBN3_QUERY_CAPACITY;
     p.seal = seal(p, a.divide, transcript);
     p.info.plan_id = info->plan_id = p.seal;
-    PlanValue v{};
-    v.plan = p;
-    if (p.divide_limbs)
-        v.divide = a.divide;
-    v.searches = transcript.count;
-    memcpy(v.search, transcript.entry, size_t(transcript.count) * 8);
     memset(out, 0, sizeof *out);
-    memcpy(out->opaque, static_cast<const void *>(&v), sizeof v);
+    auto *bytes = reinterpret_cast<unsigned char *>(out->opaque);
+    memcpy(bytes, static_cast<const void *>(&p), sizeof p);
+    if (p.divide_limbs)
+        memcpy(bytes + value_divide_at, &a.divide, sizeof a.divide);
+    const uint64_t count = transcript.count;
+    memcpy(bytes + value_count_at, &count, 8);
+    memcpy(bytes + value_entries_at, transcript.entry, size_t(count) * 8);
     return SBN3_SUPPORTED;
 }
 extern "C" void sbn3_parse_bind(const sbn3_parse_plan *opaque, sbn3_arena *arena, size_t offset, sbn3_team *team,
