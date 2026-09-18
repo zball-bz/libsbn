@@ -40,8 +40,9 @@ inline constexpr double head_parallel_ns_per_limb = 0.13;
 inline constexpr double head_memory_ns_per_limb = 0.6;
 inline constexpr size_t head_cache_limbs = size_t(1) << 21; // divisor + residual within the 64 MiB shared cache
 // The head limit takes this fraction of the modelled crossover. Measured
-// crossovers (results/divrem_stageA_2026-09-18/final/headcross and headcost,
-// forced full block): 42 limbs at dn=1000 W1, 17 at 20000 W16, 19 at 300000
+// crossovers (results/divrem_stageA_2026-09-18/pre-margin-7b1fd45/headcross
+// and results/divrem_stageA_2026-09-18/headcost, forced full block): 42 limbs
+// at dn=1000 W1, 17 at 20000 W16, 19 at 300000
 // W16, ~55 at 2^20 W16, ~11 at 2^22 W16, against unscaled model limits of
 // 24, 24, 8, 25 and 6: the product-pair estimate is up to 1.4x high, and a
 // head past the true crossover would cost more than the padded block.
@@ -52,14 +53,24 @@ inline constexpr double head_cost_margin = 0.6;
 // than one worker and the prepared divisor serves at least
 // head_candidate_min_applications block applications (reuse hint times
 // complete blocks); the cost order still decides among candidates.
-// Measured (experiments results/divrem_stageA_2026-09-18): a full inverse
-// never pays for a single application (one-shot 2d/d: 10-31% behind the best
-// of two or three blocks at W16, 77% at 4096 W1) and lost 5-21% at two
-// (one-shot 3d/d, dn=16384, W4); it pays back within 1-4 reuses, and every
-// chosen point with seven or more applications at W4, W8 and W16 from
-// dn=11585 up is faster than the previous default or level with it
-// (0.47-1.03). Below dn=2896 the short-product cost order picks it wrongly
-// (1.03-1.82) and at one worker it is mixed (0.90-1.12): neither is enabled.
+// Measured (experiments results/divrem_stageA_2026-09-18/final, arithmetic
+// diagnostics): a full inverse never pays for a single application (one-shot
+// 2d/d: 9-29% behind the best of two or three blocks at W16, 74% at 4096 W1)
+// and lost 5-21% at two (one-shot 3d/d, dn=16384, W4, pre-amortization-2f87681);
+// it pays back within 1-4 reuses, and every chosen point with seven or more
+// applications at W4, W8 and W16 from dn=11585 up is faster than the previous
+// default or level with it (0.49-1.01). Below dn=2896 the short-product cost
+// order picks it wrongly (1.03-1.82, wip1) and at one worker it is mixed
+// (0.90-1.12): neither is enabled.
+// The candidate stands only with its word-division head. When the final
+// cyclic recipe cannot serve the head (the ring leaves ring-dn < head limbs
+// above the divisor, or its cheaper pair lowers the head limit) the policy
+// returns to the other block sizes: complete blocks plus a padded one
+// measured 1.22-1.28 of the previous default at dn=387141..1310717 and 1.56
+// at 147454 (results/divrem_stageA2_2026-09-18/wip2, W16, 8 executions).
+// Moving to the next ring with room instead was measured there and not
+// adopted: 0.57-0.94 at six ring-growth representatives but 1.18 at
+// dn=147454 (ring 1.28x); the cost order does not price that trade reliably.
 inline constexpr size_t head_candidate_limbs = 8;
 inline constexpr size_t head_candidate_min_divisor = 8192;
 inline constexpr double head_candidate_min_applications = 4.0;

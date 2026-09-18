@@ -39,7 +39,7 @@ typedef struct sbn3_divrem_request {
 typedef struct sbn3_divrem_options {
     unsigned workers;       /* 1..32 */
     unsigned prime_count;   /* 0 selects; explicit 4..10 pins the NTT family of every product */
-    size_t memory_budget;   /* 0: no filter; otherwise storage_bytes must not exceed it */
+    size_t memory_budget;   /* 0: no filter; otherwise the policy passes over block sizes whose storage_bytes exceed it */
     unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot */
     size_t block_limbs;     /* 0: policy; otherwise the requested Barrett block size (tests/experiments) */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */
@@ -75,7 +75,10 @@ typedef struct sbn3_divrem_metrics {
 } sbn3_divrem_metrics;
 typedef struct sbn3_divrem_binding sbn3_divrem_binding;
 
-/* Pure query; on capacity rejection info reports the requirement. */
+/* Pure query. Under memory_budget the plan is the policy's first block size, in
+ * cost order, whose storage fits; when none fits the result is
+ * SBN3_QUERY_CAPACITY, info reports the least requirement among them and the
+ * plan output is untouched. */
 sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *,const sbn3_divrem_options *,
                                     sbn3_divrem_plan *,sbn3_divrem_info *);
 /* Caller prepares an unleased, aligned arena range of info.storage_bytes,

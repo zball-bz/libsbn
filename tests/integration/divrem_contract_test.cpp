@@ -12,7 +12,8 @@ struct Case {
     size_t dn, nn;
     unsigned workers, prime_count;
     size_t block;
-    size_t head; // expected word-division head
+    unsigned reuse;
+    int head; // expected word-division head; -1: the policy decides
 };
 size_t mem_available() {
     FILE *f = fopen("/proc/meminfo", "r");
@@ -58,11 +59,11 @@ std::vector<uint64_t> random_limbs(size_t n) {
 }
 bool run(const Case &c) {
     sbn3_divrem_request request{c.nn, c.dn};
-    sbn3_divrem_options options{c.workers, c.prime_count, 0, 0, c.block, 0, 0, 0};
+    sbn3_divrem_options options{c.workers, c.prime_count, 0, c.reuse, c.block, 0, 0, 0};
     sbn3_divrem_plan plan{};
     sbn3_divrem_info info{};
     assert(sbn3_divrem_query(&request, &options, &plan, &info) == SBN3_SUPPORTED);
-    assert(info.algorithm == SBN3_DIVREM_BARRETT && info.spectrum_bytes && info.head_limbs == c.head);
+    assert(info.algorithm == SBN3_DIVREM_BARRETT && info.spectrum_bytes && (c.head < 0 || info.head_limbs == size_t(c.head)));
     const size_t in = info.block_limbs;
     const bool u_varies = representation_varies(in + 1, in, c.workers, c.prime_count),
                t_varies = !info.ring_limbs && representation_varies(c.dn, in, c.workers, c.prime_count);
@@ -76,7 +77,7 @@ bool run(const Case &c) {
         return false;
     }
     Fixture f(c.workers, false, budget);
-    Service s(f, c.nn, c.dn, c.block, 0, 0, 0, c.prime_count);
+    Service s(f, c.nn, c.dn, c.block, c.reuse, 0, 0, c.prime_count);
     assert(s.info.plan_id == info.plan_id && s.info.storage_bytes == info.storage_bytes);
     // Two divisors with different normalization shifts, re-prepared on one binding.
     auto d0 = random_limbs(c.dn), d1 = random_limbs(c.dn);
@@ -105,10 +106,10 @@ bool run(const Case &c) {
     check(d0, n0, true);
     check(d0, n1, false);
     check(d0, n2, false);
-    if (c.head) { // team-wide word division: the crafted numerator takes the add-back through the stitched parts
+    if (c.head > 0) { // team-wide word division: the crafted numerator takes the add-back through the stitched parts
         sbn3_divrem_metrics head{};
         sbn3_divrem_get_metrics(s.bound, &head);
-        assert(head.head_limbs >= 2 * c.head && head.head_corrections >= 1);
+        assert(head.head_limbs >= 2 * size_t(c.head) && head.head_corrections >= 1);
     }
     s.prepare(d1);
     check(d1, n0, false);
@@ -127,10 +128,10 @@ bool run(const Case &c) {
     assert(q == first_q && r == first_r);
     sbn3_arena_get_stats(f.arena, &after);
     assert(after.payload_resident_bytes == before.payload_resident_bytes && after.prepare_calls == before.prepare_calls);
-    printf("divrem contract dn=%zu nn=%zu W%u np=%u in=%zu ring=%zu blocks=%u head=%zu: producer/consumer variation U=%d T=%d, "
-           "storage %zu MiB within the %zu MiB budget, 4 prepares, %u executes, rebind identical PASS\n",
-           c.dn, c.nn, c.workers, c.prime_count, in, info.ring_limbs, info.blocks, info.head_limbs, int(u_varies), int(t_varies),
-           info.storage_bytes >> 20, budget >> 20, executes + 1);
+    printf("divrem contract dn=%zu nn=%zu W%u np=%u block=%zu reuse=%u -> in=%zu ring=%zu blocks=%u head=%zu: producer/consumer "
+           "variation U=%d T=%d, storage %zu MiB within the %zu MiB budget, 4 prepares, %u executes, rebind identical PASS\n",
+           c.dn, c.nn, c.workers, c.prime_count, c.block, c.reuse, in, info.ring_limbs, info.blocks, info.head_limbs, int(u_varies),
+           int(t_varies), info.storage_bytes >> 20, budget >> 20, executes + 1);
     fflush(stdout);
     return true;
 }
@@ -138,7 +139,11 @@ bool run(const Case &c) {
 int main() {
     // Default block policy with the prime family pinned: linear U and D spectra both vary.
     // Forced full inverse under a one-limb head: cyclic residual, varying U spectrum, parallel word division.
-    const Case cases[] = {{3859823, 7719646, 16, 4, 0, 0}, {2546617, 5093234, 16, 0, 2546617, 1}};
+    // Default options throughout (policy family, block size and residual), the path callers take: a one-shot
+    // 1.5d/d division at sixteen workers and a repeated 2d/d divisor at one worker. Both abort in prepare on
+    // the 19e239d baseline; the variation assert below fails if a policy change moves them off the defect.
+    const Case cases[] = {{3859823, 7719646, 16, 4, 0, 0, 0}, {2546617, 5093234, 16, 0, 2546617, 0, 1},
+                          {4380001, 6570001, 16, 0, 0, 0, -1}, {2719669, 5439337, 1, 0, 0, 8, -1}};
     unsigned ran = 0;
     for (const auto &c : cases)
         ran += run(c);

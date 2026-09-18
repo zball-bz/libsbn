@@ -279,6 +279,76 @@ static void shift_gates(size_t dn, size_t nn, size_t block, unsigned workers) {
     printf("divrem shifts dn=%zu nn=%zu W%u in=%zu blocks=%u head=%zu: 64 shifts, %u executes, exact oracle PASS\n", dn, nn,
            workers, s.info.block_limbs, s.info.blocks, s.info.head_limbs, executes);
 }
+// Plan facts of one public query (no arena).
+static sbn3_divrem_info planned(size_t dn, size_t nn, unsigned workers, unsigned reuse, size_t block = 0, size_t budget = 0,
+                                sbn3_query_result expected = SBN3_SUPPORTED) {
+    sbn3_divrem_request request{nn, dn};
+    sbn3_divrem_options options{workers, 0, budget, reuse, block, 0, 0, 0};
+    sbn3_divrem_plan plan{};
+    sbn3_divrem_info info{};
+    const auto rc = sbn3_divrem_query(&request, &options, &plan, &info);
+    assert(rc == expected);
+    return info;
+}
+// Complete divisor-length blocks are a default plan only under their word-division head. The block
+// size is ordered with the linear residual, and the final cyclic recipe can deny the head that the
+// order credited: the ring leaves no room above the divisor (ring - dn < head), or its cheaper product
+// pair lowers the head limit. The policy then returns to the other block sizes; it never pays a padded
+// whole block on top of a full inverse. The requested block size shows what the final recipe does to
+// the head, the policy query must not be that padded plan, and the shapes must exercise both denials.
+static void padded_head_gates() {
+    unsigned kept = 0, no_room = 0, over_limit = 0;
+    // A few limbs under the rings 12288, 393216 and 1310720, and divisors whose ring has ample room
+    // while five head limbs exceed the cyclic pair's limit (16 workers, 8 executions per divisor).
+    for (size_t dn : {12285u, 393214u, 1310717u, 325545u, 387141u, 710019u})
+        for (size_t complete : {1u, 2u})
+            for (size_t head = 1; head <= 8; ++head) {
+                const size_t nn = (complete + 1) * dn + head - 1; // qn = complete * dn + head
+                const auto requested = planned(dn, nn, 16, 8, dn), chosen = planned(dn, nn, 16, 8);
+                assert(requested.block_limbs == dn && requested.head_limbs + size_t(requested.blocks) * dn >= complete * dn + head);
+                if (chosen.block_limbs == dn) {
+                    assert(chosen.head_limbs == head && chosen.blocks == complete);
+                    ++kept;
+                }
+                if (requested.head_limbs)
+                    continue;
+                assert(requested.blocks == complete + 1 && chosen.block_limbs != dn && chosen.block_limbs < dn);
+                ++(requested.ring_limbs && requested.ring_limbs - dn < head ? no_room : over_limit);
+            }
+    assert(kept && no_room && over_limit);
+    printf("divrem padded head: %u complete-block plans keep their word head; %u heads without ring room and %u over the "
+           "cyclic limit return to shorter blocks PASS\n", kept, no_room, over_limit);
+}
+// memory_budget passes over block sizes that do not fit instead of rejecting the request: between the
+// requirements of the full-inverse default and of the shorter blocks the query stays supported with a
+// plan that fits and divides correctly; below every block size it reports the least requirement.
+static void budget_gates(size_t dn, size_t nn, unsigned workers, unsigned reuse) {
+    const auto free = planned(dn, nn, workers, reuse);
+    assert(free.block_limbs == dn && free.head_limbs); // the larger default: a full inverse under a word head
+    const auto fitted = planned(dn, nn, workers, reuse, 0, free.storage_bytes - 1);
+    assert(fitted.block_limbs < dn && fitted.storage_bytes < free.storage_bytes);
+    const auto exact = planned(dn, nn, workers, reuse, 0, fitted.storage_bytes);
+    assert(exact.plan_id == fitted.plan_id && exact.storage_bytes == fitted.storage_bytes);
+    const auto need = planned(dn, nn, workers, reuse, 0, 4096, SBN3_QUERY_CAPACITY);
+    assert(need.storage_bytes > 4096 && need.storage_bytes <= fitted.storage_bytes);
+    assert(planned(dn, nn, workers, reuse, 0, need.storage_bytes).storage_bytes == need.storage_bytes);
+    // The plan chosen under the budget is a working plan.
+    Fixture f(workers);
+    Service s(f, nn, dn, 0, reuse, 0, 0, 0, free.storage_bytes - 1);
+    assert(s.info.plan_id == fitted.plan_id && s.info.storage_bytes <= free.storage_bytes - 1);
+    auto d = divisors(dn)[0];
+    s.prepare(d);
+    unsigned executes = 0;
+    for (auto &n : numerators(d, nn)) {
+        std::vector<uint64_t> q(nn - dn + 1, 0xdead), r(dn, 0xdead);
+        const auto out = s.execute(n, q, r);
+        certify(n.data(), nn, d.data(), dn, q.data(), out.quotient_limbs, r.data(), out.remainder_limbs, false);
+        ++executes;
+    }
+    printf("divrem budget dn=%zu nn=%zu W%u reuse=%u: default %zux%u+%zu %zu KiB; budget one byte below -> %zux%u %zu KiB, "
+           "%u executes; least requirement %zu KiB PASS\n", dn, nn, workers, reuse, free.block_limbs, free.blocks, free.head_limbs,
+           free.storage_bytes >> 10, fitted.block_limbs, fitted.blocks, fitted.storage_bytes >> 10, executes, need.storage_bytes >> 10);
+}
 int main() {
     basecase_gates();
     service_gates(3, 40, 1);
@@ -321,6 +391,8 @@ int main() {
     service_gates(70001, 140002, 16, 70001, 0, 0, 0, {70001, 70002, 140001}, 1);
     service_gates(70001, 140003, 16, 0, 8, 0, 0, {140002});
     service_gates(70001, 210004, 16, 0, 0, 0, 0, {140002, 140003});
+    padded_head_gates();
+    budget_gates(70001, 140003, 16, 8);
     shift_gates(70, 141, 70, 1);
     shift_gates(70, 141, 0, 1);
     shift_gates(300, 601, 300, 1);

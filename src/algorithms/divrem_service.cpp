@@ -344,9 +344,10 @@ struct Candidate {
     ProductChoice u{}, t{};
     Queried uq{}, tq{};
     double total = INFINITY;
+    bool word_head = false; // the total serves qn mod in by word division instead of a padded block
 };
 // Block-size ordering uses the linear residual recipe only; the cyclic
-// lattice (the expensive part of the query) runs once for the chosen size.
+// lattice (the expensive part of the query) runs for the size that is taken.
 bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
     const size_t blocks = (qn + in - 1) / in, head = qn % in;
@@ -362,19 +363,33 @@ bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
     // The residual buffer bounds the head: X = R*B^head + block needs dn+head limbs.
     const size_t xlen = c.ring ? c.ring : dn + in;
     c.head = std::min(head_limit(p, dn, in, uc.apply + tc.apply), xlen - dn);
-    const bool word_head = head && head <= c.head;
+    c.word_head = head && head <= c.head;
     c.total = inverse_estimate(p, in) + uc.prepare + tc.prepare +
-              reuse * (double(blocks - word_head) * (uc.apply + tc.apply) +
-                       (word_head ? double(head) * head_step_cost(p, dn) : 0));
+              reuse * (double(blocks - c.word_head) * (uc.apply + tc.apply) +
+                       (c.word_head ? double(head) * head_step_cost(p, dn) : 0));
     return std::isfinite(c.total);
 }
-// Choose the block size and both products. With replay, the plan's stored
-// choices are re-queried exactly.
-bool assemble(Plan &p, bool replay, Queried &uq, Queried &tq) {
+// Block-size candidates in cost order; take() hands them out one at a time so
+// that the query can pass over a size whose storage exceeds the budget.
+struct Ranked {
+    size_t in = 0;
+    double total = INFINITY;
+    bool word_head = false;
+};
+struct Ranking {
+    Ranked ordered[4]{}, padded[4]{};
+    unsigned count = 0, next = 0, padded_count = 0, padded_next = 0;
+    bool single = false; // a requested block size: nothing to order, evaluated once by take()
+};
+void insert(Ranked *list, unsigned &count, const Candidate &c) {
+    unsigned at = count++;
+    for (; at && c.total < list[at - 1].total; --at)
+        list[at] = list[at - 1];
+    list[at] = {c.in, c.total, c.word_head};
+}
+void rank(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
-    if (replay) // exact re-query of stored choices (tests/diagnostics; bind uses the stored recipes)
-        return query_product(p.in + 1, p.in, p.u, 1, uq) && query_product(dn, p.in, p.t, 2, tq);
-    size_t candidates[4]{};
+    size_t candidates[4]{}, whole = 0; // whole: complete dn-limb blocks, offered only under their word-division head
     unsigned count = 0;
     auto add = [&](size_t in) {
         in = std::min(in, std::min(dn, qn));
@@ -399,30 +414,50 @@ bool assemble(Plan &p, bool replay, Queried &uq, Queried &tq) {
         // where the larger preparation is amortized; the cost order decides.
         const double applications = double(std::max(1u, p.options.reuse_hint)) * double(qn / dn);
         if (qn % dn <= divrem_tuning::head_candidate_limbs && dn >= divrem_tuning::head_candidate_min_divisor &&
-            p.options.workers > 1 && applications >= divrem_tuning::head_candidate_min_applications)
+            p.options.workers > 1 && applications >= divrem_tuning::head_candidate_min_applications) {
+            const unsigned before = count;
             add(dn);
+            if (count > before && qn % dn)
+                whole = dn;
+        }
     }
-    Candidate best{};
+    if (count == 1) {
+        r.single = true;
+        r.ordered[r.count++].in = candidates[0];
+        return;
+    }
     for (unsigned j = 0; j < count; ++j) {
         Candidate c{};
-        if (evaluate(p, candidates[j], c, count == 1) && c.total < best.total)
-            best = c;
+        if (evaluate(p, candidates[j], c, false) && (candidates[j] != whole || c.word_head))
+            insert(r.ordered, r.count, c);
     }
-    if (!std::isfinite(best.total))
-        return false;
-    if (count > 1) {
-        Candidate full{};
-        if (evaluate(p, best.in, full, true))
-            best = full;
+}
+// Next block size with its final recipes. A size ordered under a
+// word-division head is a plan of that order only while the final recipe
+// keeps the head. The lattice may choose a ring without room for it
+// (ring - dn < head) or a cheaper cyclic pair that lowers the head limit;
+// the head is then a padded whole block, a plan the order never priced
+// (complete dn-limb blocks plus a padded block lose to the same number of
+// shorter blocks), so that size stands behind every other one.
+bool take(const Plan &p, Ranking &r, Candidate &out) {
+    while (r.next < r.count) {
+        const Ranked &ranked = r.ordered[r.next++];
+        out = {};
+        if (!evaluate(p, ranked.in, out, true)) {
+            if (!r.single && evaluate(p, ranked.in, out, false)) // as ordered
+                return true;
+            continue;
+        }
+        if (!ranked.word_head || out.word_head)
+            return true;
+        insert(r.padded, r.padded_count, out);
     }
-    p.in = best.in;
-    p.ring = best.ring;
-    p.head = best.head;
-    p.u = best.u;
-    p.t = best.t;
-    uq = best.uq;
-    tq = best.tq;
-    return true;
+    while (r.padded_next < r.padded_count) {
+        out = {};
+        if (evaluate(p, r.padded[r.padded_next++].in, out, true))
+            return true;
+    }
+    return false;
 }
 sbn3_newton_options newton_options(const Plan &p) {
     sbn3_newton_options o{};
@@ -808,19 +843,50 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     else
         i.algorithm = SBN3_DIVREM_BARRETT;
     Stored s{};
+    const size_t budget = p.options.memory_budget;
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
-        if (!assemble(p, false, s.uq, s.tq))
-            return SBN3_UNSUPPORTED;
+        // Block sizes in cost order; under a memory budget the first whose
+        // storage fits, so a faster but larger size never displaces a plan
+        // the caller can hold. When none fits, info reports the least requirement.
+        Ranking ranking{};
+        rank(p, ranking);
         const auto no = newton_options(p);
-        const auto status = sbn3_newton_query(SBN3_NEWTON_INVERSE, p.in, &no, &s.nplan, &s.ninfo);
-        if (status != SBN3_SUPPORTED)
-            return status;
+        sbn3_query_result failure = SBN3_UNSUPPORTED;
+        bool failed = false, planned = false;
+        for (Candidate c{}; !planned && take(p, ranking, c);) {
+            Plan sized = p;
+            sized.in = c.in;
+            sized.ring = c.ring;
+            sized.head = c.head;
+            sized.u = c.u;
+            sized.t = c.t;
+            const auto inverse = sbn3_newton_query(SBN3_NEWTON_INVERSE, c.in, &no, &s.nplan, &s.ninfo);
+            if (inverse != SBN3_SUPPORTED || !layout(sized, c.uq, c.tq, &s.ninfo)) {
+                if (!failed)
+                    failure = inverse != SBN3_SUPPORTED ? inverse : SBN3_QUERY_CAPACITY;
+                failed = true;
+                continue;
+            }
+            if (budget && sized.info.storage_bytes > budget) {
+                if (!info->storage_bytes || sized.info.storage_bytes < info->storage_bytes)
+                    *info = sized.info;
+                continue;
+            }
+            p = sized;
+            s.uq = c.uq;
+            s.tq = c.tq;
+            planned = true;
+        }
+        if (!planned)
+            return info->storage_bytes ? SBN3_QUERY_CAPACITY : failure;
+        *info = p.info;
+    } else {
+        if (!layout(p, s.uq, s.tq, &s.ninfo))
+            return SBN3_QUERY_CAPACITY;
+        *info = p.info;
+        if (budget && p.info.storage_bytes > budget)
+            return SBN3_QUERY_CAPACITY;
     }
-    if (!layout(p, s.uq, s.tq, &s.ninfo))
-        return SBN3_QUERY_CAPACITY;
-    *info = p.info;
-    if (p.options.memory_budget && p.info.storage_bytes > p.options.memory_budget)
-        return SBN3_QUERY_CAPACITY;
     p.seal = seal(p);
     s.plan = p;
     memset(out, 0, sizeof *out);

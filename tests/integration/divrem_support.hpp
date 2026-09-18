@@ -62,20 +62,28 @@ struct Service {
     sbn3_divrem_binding *bound = nullptr;
     size_t offset = 0;
     Service(Fixture &fixture, size_t nn, size_t dn, size_t block = 0, unsigned reuse = 0, unsigned residual = 0, unsigned algorithm = 0,
-            unsigned prime_count = 0) : f(fixture) {
+            unsigned prime_count = 0, size_t budget = 0) : f(fixture) {
         sbn3_divrem_request request{nn, dn};
-        sbn3_divrem_options options{sbn3_team_workers(f.team), prime_count, 0, reuse, block, residual, algorithm, 1};
+        sbn3_divrem_options options{sbn3_team_workers(f.team), prime_count, budget, reuse, block, residual, algorithm, 1};
         allocation_watch_start();
         const auto rc = sbn3_divrem_query(&request, &options, &plan, &info);
         assert(!allocation_watch_stop());
         if (rc != SBN3_SUPPORTED)
             fprintf(stderr, "divrem query nn=%zu dn=%zu: %u\n", nn, dn, rc);
         assert(rc == SBN3_SUPPORTED);
+        // One byte below the requirement: the policy passes to another block size that fits, or rejects
+        // with the least requirement and leaves the plan output untouched.
         const auto saved = plan;
         options.memory_budget = info.storage_bytes - 1;
         sbn3_divrem_info need{};
-        assert(sbn3_divrem_query(&request, &options, &plan, &need) == SBN3_QUERY_CAPACITY &&
-               need.storage_bytes == info.storage_bytes && !memcmp(&saved, &plan, sizeof plan));
+        const auto limited = sbn3_divrem_query(&request, &options, &plan, &need);
+        if (limited == SBN3_SUPPORTED) {
+            assert(!block && need.algorithm == SBN3_DIVREM_BARRETT && need.block_limbs != info.block_limbs &&
+                   need.storage_bytes <= options.memory_budget);
+            plan = saved;
+        } else
+            assert(limited == SBN3_QUERY_CAPACITY && need.storage_bytes == info.storage_bytes &&
+                   !memcmp(&saved, &plan, sizeof plan));
         offset = up(f.base + f.cursor, info.storage_alignment) - f.base;
         f.cursor = up(offset + info.storage_bytes, 4096) + 4096;
         sbn3_error e{};
