@@ -17,3 +17,7 @@ research repository. Keep core functionality independent of that repository.
 
 The old GIMP copy is a migration backup, not the active checkout. Historical
 receipts retain old paths and hashes; do not reinterpret them as current builds.
+
+Original project code is LGPL-3.0-or-later unless a file carries a different
+notice. Preserve third-party copyright, licensing and attribution when importing
+or optimizing code; do not replace an upstream notice with the project default.

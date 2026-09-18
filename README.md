@@ -4,6 +4,29 @@ A SIMD multiprecision arithmetic library. The current native target is AMD Zen 5
 with AVX-512 IFMA; the build uses the pinned Clang toolchain. The public C API
 contains no SIMD vector types. The API is still under development.
 
+## Acknowledgements
+
+libsbn owes a great deal to [y-cruncher](https://www.numberworld.org/y-cruncher/)
+and its creator, Alexander J. Yee. Its published technical articles and its
+performance as a reference implementation have guided our work on multiplication,
+binary splitting, memory management, and radix conversion. Without y-cruncher,
+libsbn would not have reached its current level of optimization. We are grateful
+for both the software and the knowledge shared with the community.
+
+## Implementation and experimental provenance
+
+Our research has included behavioral probing and disassembly-based analysis of
+y-cruncher to understand its algorithms and performance. No y-cruncher kernels
+or code recovered through reverse engineering have been copied, translated, or
+incorporated into the libsbn library. Our corresponding implementations are
+written independently and validated through our own tests and experiments.
+
+We design, carry out, and evaluate our own experiments. Our performance results
+come from our own measurements, with raw data, build identities, and validation
+records retained in the [research repository](#research-checkout). Components
+imported from other sources retain their separate provenance and license notices;
+see [LICENSE.md](LICENSE.md).
+
 ## Capabilities
 
 - Signed integer values and scalar/u52 base arithmetic.
@@ -44,4 +67,12 @@ large artifacts to this repository. Production tuning values and their provenanc
 identities remain versioned under config/; optional full evidence verification
 uses the research checkout.
 
-Existing license notices and their scope are described in [LICENSE.md](LICENSE.md).
+## License
+
+libsbn is licensed under **LGPL-3.0-or-later**, except components that retain
+their own license notices. We chose LGPL to keep redistributed improvements to
+the library available as source to recipients, while allowing applications under
+other licenses to use it in accordance with the LGPL.
+
+See [LICENSE.md](LICENSE.md) for scope and third-party provenance, and
+[LICENSE](LICENSE) for the LGPL text.
