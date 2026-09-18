@@ -1,6 +1,8 @@
 #include "radix/programs.hpp"
 #include "value/parallel_limbs.hpp"
+#include "common/identity.hpp"
 #include "sbn3/product.h"
+#include "sbn3/divrem.h"
 #include <algorithm>
 #include <string.h>
 #include <stdlib.h>
@@ -27,27 +29,54 @@ TreePolicy &tree_policy() noexcept {
         if (const char *v = getenv("SBN3_RADIX_TASKS")) policy.frontier_tasks_per_worker = strtoull(v, nullptr, 10);
         if (const char *v = getenv("SBN3_RADIX_FORK_MIN")) policy.fork_min_workers = unsigned(strtoul(v, nullptr, 10));
         if (const char *v = getenv("SBN3_RADIX_RING")) policy.ring_products = atoi(v) != 0;
-        if (const char *v = getenv("SBN3_RADIX_INTEGER_TREE")) policy.integer_tree_limbs = policy.integer_tree_limbs_repeated = strtoull(v, nullptr, 10);
+        if (const char *v = getenv("SBN3_RADIX_INTEGER_TREE")) { // limbs; one conversion: the base 10 equivalent in limb-words
+            policy.integer_tree_limbs_repeated = strtoull(v, nullptr, 10);
+            policy.integer_tree_work = 5 * policy.integer_tree_limbs_repeated * policy.integer_tree_limbs_repeated / 2;
+        }
         if (const char *v = getenv("SBN3_RADIX_RING_NODE")) policy.ring_node_limbs = strtoull(v, nullptr, 10);
         if (const char *v = getenv("SBN3_RADIX_RING_COUNT")) policy.ring_min_count = unsigned(strtoul(v, nullptr, 10));
     }
 #endif
     return policy;
 }
+uint64_t PlanTranscript::check(uint64_t a, uint64_t b, uint64_t c, uint64_t identity) noexcept {
+    uint64_t h = identity::fnv_seed;
+    for (uint64_t v : {a, b, c, identity})
+        h = identity::word(h, v);
+    return (h ^ h >> 28) & ((uint64_t(1) << (64 - product_choice_bits)) - 1);
+}
 sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductShape &s,
-                                ProductProgramPlan *keep) {
+                                ProductProgramPlan *keep, PlanTranscript *transcript) {
     ProductProgramPlan local{};
     auto &p = keep ? *keep : local;
     sbn3_mul_options o{};
     o.workers = workers;
-    const auto rc = product_program_query(an, bn, o, p);
-    if (rc != SBN3_SUPPORTED)
-        return rc;
+    ProductChoice choice = 0;
+    bool replayed = false;
+    if (transcript && transcript->replay) {
+        // The recorded winner: one backend query. Anything that does not reproduce the recorded request and
+        // identity is planned by the search below, like a product without a transcript.
+        const uint64_t e = transcript->next();
+        choice = e & ((uint64_t(1) << product_choice_bits) - 1);
+        replayed = choice && product_program_chosen(an, bn, o, choice, p) == SBN3_SUPPORTED &&
+                   PlanTranscript::check(an, bn, workers, p.info.arithmetic_id) == e >> product_choice_bits;
+    }
+    if (!replayed) {
+        p = {};
+        const auto rc = product_program_choose(an, bn, o, p, choice);
+        if (transcript && transcript->replay)
+            ++transcript->searched;
+        if (transcript && !transcript->replay)
+            transcript->record(rc == SBN3_SUPPORTED ? choice : 0, PlanTranscript::check(an, bn, workers, p.info.arithmetic_id));
+        if (rc != SBN3_SUPPORTED)
+            return rc;
+    }
     s = {};
     s.an = an;
     s.bn = bn;
     s.workers = p.info.workers;
     s.requested = workers;
+    s.choice = choice;
     s.prepared_bytes = p.prepared_bytes;
     s.tables = product_program_tables(p);
     s.local_bytes = product_program_local_bytes(p);
@@ -84,13 +113,27 @@ ProgramSetBuilder::ProgramSetBuilder(const ProgramSetPlan &plan, Arena &arena, c
     require(prepared.bytes >= plan.bytes() && !(uintptr_t(prepared.data) & (plan.alignment - 1)), SBN3_FATAL_WORKSPACE,
             "radix program storage", plan.bytes(), prepared.bytes);
 }
+namespace {
+// The product plan of a planned shape: its winner's one backend query, the search when that does not give the
+// planned identity (or the shape carries no choice).
+bool planned_product(const ProductShape &expected, ProductProgramPlan &pp) noexcept {
+    sbn3_mul_options o{};
+    o.workers = expected.requested;
+    auto matches = [&] {
+        return pp.info.arithmetic_id == expected.arithmetic_id && pp.info.workspace_bytes == expected.work_bytes &&
+               sbn3_mul_output_capacity(&pp.info) == expected.output_limbs && pp.prepared_bytes == expected.prepared_bytes;
+    };
+    if (expected.choice && product_program_chosen(expected.an, expected.bn, o, expected.choice, pp) == SBN3_SUPPORTED && matches())
+        return true;
+    pp = {};
+    return product_program_query(expected.an, expected.bn, o, pp) == SBN3_SUPPORTED && matches();
+}
+} // namespace
 ProductProgram ProgramSetBuilder::prepare(const ProductShape &expected) noexcept {
     ProductProgramPlan pp{};
+    require(planned_product(expected, pp), SBN3_FATAL_MATH, "radix product replay");
     ProductShape shape{};
-    require(product_shape(expected.an, expected.bn, expected.requested, shape, &pp) == SBN3_SUPPORTED &&
-                shape.arithmetic_id == expected.arithmetic_id && shape.work_bytes == expected.work_bytes &&
-                shape.output_limbs == expected.output_limbs,
-            SBN3_FATAL_MATH, "radix product replay");
+    shape.tables = product_program_tables(pp);
     const void *shared = nullptr;
     if (shape.tables.bytes)
         for (unsigned s = 0; s < plan_.shared_count; ++s)
@@ -114,15 +157,28 @@ void run_product(sbn3_team *team, TeamProduct &job) noexcept {
     }, &job);
 }
 void temporary_product(sbn3_team *team, unsigned workers, Frame &scratch, const uint64_t *a, size_t an,
-                       const uint64_t *b, size_t bn, uint64_t *out, size_t out_capacity) noexcept {
+                       const uint64_t *b, size_t bn, uint64_t *out, size_t out_capacity, ProductChoice choice) noexcept {
 #ifdef SBN3_RADIX_TRACE // rail trace
     timespec t0{}, t1{}, t2{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
 #endif
     ProductProgramPlan plan{};
     ProductShape shape{};
-    require(product_shape(an, bn, workers, shape, &plan) == SBN3_SUPPORTED && shape.output_limbs <= out_capacity,
-            SBN3_FATAL_MATH, "radix temporary product");
+    sbn3_mul_options o{};
+    o.workers = workers;
+    // The planned winner needs no search; its scratch was sized from the same plan.
+    if (choice && product_program_chosen(an, bn, o, choice, plan) == SBN3_SUPPORTED) {
+        shape.prepared_bytes = plan.prepared_bytes;
+        shape.work_bytes = plan.info.workspace_bytes;
+        shape.work_alignment = std::max<size_t>(64, plan.info.workspace_alignment);
+        shape.output_limbs = sbn3_mul_output_capacity(&plan.info);
+        require(plan.info.output_alignment <= 64 && shape.output_limbs >= an + bn && shape.output_limbs <= out_capacity,
+                SBN3_FATAL_MATH, "radix temporary product");
+    } else {
+        plan = {};
+        require(product_shape(an, bn, workers, shape, &plan) == SBN3_SUPPORTED && shape.output_limbs <= out_capacity,
+                SBN3_FATAL_MATH, "radix temporary product");
+    }
     FrameMark mark(scratch);
     auto tables = scratch.subframe(align_to(shape.prepared_bytes, 128) + 256, 128);
     const auto program = product_program_prepare(plan, tables);
@@ -146,14 +202,18 @@ struct SquarePlan {
     sbn3_product_info info{};
     size_t bytes = 0; // [tables][workspace][output], page aligned parts
 };
-bool square_plan(size_t limbs, unsigned workers, SquarePlan &out) noexcept {
-    sbn3_product_request r{};
-    r.kind = SBN3_PRODUCT_SQR;
-    r.a_limbs = limbs;
+// `choice`: in, the planned winner of this squaring's search (0: search); out, the winner. `searched`: set
+// when the search ran.
+bool square_plan(size_t limbs, unsigned workers, SquarePlan &out, ProductChoice &choice, bool *searched = nullptr) noexcept {
     sbn3_mul_options o{};
     o.workers = workers;
-    if (sbn3_product_query(&r, &o, &out.plan, &out.info) != SBN3_SUPPORTED)
-        return false;
+    if (!choice || square_query_chosen(limbs, o, choice, out.plan, out.info) != SBN3_SUPPORTED) {
+        if (searched)
+            *searched = true;
+        out = {};
+        if (square_query_choose(limbs, o, out.plan, out.info, choice) != SBN3_SUPPORTED)
+            return false;
+    }
     const auto &i = out.info.mul;
     if (i.output_alignment > 64 || sbn3_mul_output_capacity(&i) < 2 * limbs)
         return false;
@@ -167,7 +227,7 @@ unsigned square_workers(unsigned workers, size_t limbs) noexcept {
     return 2 * limbs < tree_policy().wide_product_limbs ? std::min(workers, 8u) : workers;
 }
 } // namespace
-sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &rail) noexcept {
+sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &rail, PlanTranscript *transcript) noexcept {
     if (rail.count > max_rail)
         return SBN3_QUERY_CAPACITY;
     rail.total_limbs = 0;
@@ -176,20 +236,43 @@ sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &
         rail.limbs[k] = rail_limbs(base, k);
         rail.offset[k] = rail.total_limbs;
         rail.total_limbs += align_to(rail.limbs[k], 8);
-        rail.square_id[k] = 0;
+        rail.service[k] = false;
+        rail.square_choice[k] = 0;
     }
     for (unsigned k = 0; k + 1 < rail.count; ++k) {
         if (rail.limbs[k] <= rail_basecase_limbs)
             continue;
+        const unsigned w = square_workers(workers, rail.limbs[k]);
+        if (rail.limbs[k] >= rail_square_service_limbs) {
+            // One squaring, one plan: the service's SQR recipe where it exists, else the temporary program below.
+            const uint64_t mask = (uint64_t(1) << product_choice_bits) - 1;
+            auto check = [&](const SquarePlan &plan) { return PlanTranscript::check(rail.limbs[k], 0, w, plan.info.mul.arithmetic_id); };
+            const uint64_t recorded = transcript && transcript->replay ? transcript->next() : 0;
+            ProductChoice choice = recorded & mask;
+            SquarePlan service{};
+            bool searched = false;
+            rail.service[k] = square_plan(rail.limbs[k], w, service, choice, &searched);
+            if (recorded && !searched && rail.service[k] && check(service) != recorded >> product_choice_bits) {
+                choice = 0; // not the recorded plan: search
+                service = {};
+                rail.service[k] = square_plan(rail.limbs[k], w, service, choice, &searched);
+            }
+            if (transcript && transcript->replay)
+                transcript->searched += searched;
+            if (transcript && !transcript->replay)
+                transcript->record(rail.service[k] ? choice : 0, check(service));
+            if (rail.service[k]) {
+                rail.square_choice[k] = choice;
+                rail.setup_bytes = std::max(rail.setup_bytes, service.bytes + (size_t(1) << 21));
+                continue;
+            }
+        }
         ProductShape s{};
-        const auto rc = product_shape(rail.limbs[k], rail.limbs[k], square_workers(workers, rail.limbs[k]), s);
+        const auto rc = product_shape(rail.limbs[k], rail.limbs[k], w, s, nullptr, transcript);
         if (rc != SBN3_SUPPORTED)
             return rc;
-        rail.square_id[k] = s.arithmetic_id;
+        rail.square_choice[k] = s.choice;
         rail.setup_bytes = std::max(rail.setup_bytes, s.temporary_bytes() + 64);
-        SquarePlan service{};
-        if (rail.limbs[k] >= rail_square_service_limbs && square_plan(rail.limbs[k], square_workers(workers, rail.limbs[k]), service))
-            rail.setup_bytes = std::max(rail.setup_bytes, service.bytes + (size_t(1) << 21));
     }
     return SBN3_SUPPORTED;
 }
@@ -229,8 +312,10 @@ void rail_build(const BaseInfo &base, const RailPlan &rail, unsigned workers, Ar
             continue;
         }
         SquarePlan service{};
-        if (m >= rail_square_service_limbs && square_plan(m, square_workers(workers, m), service)) {
+        if (rail.service[k]) {
             // The product service binds its own leases: carve them out of the scratch range for this one squaring.
+            ProductChoice choice = rail.square_choice[k];
+            require(square_plan(m, square_workers(workers, m), service, choice), SBN3_FATAL_MATH, "radix rail squaring plan");
             const auto &i = service.info.mul;
             const uintptr_t base = reinterpret_cast<uintptr_t>(arena.base);
             const size_t scratch_offset = size_t(reinterpret_cast<uintptr_t>(scratch_lease.data) - base);
@@ -262,12 +347,23 @@ void rail_build(const BaseInfo &base, const RailPlan &rail, unsigned workers, Ar
         }
         Frame scratch = Frame::borrow(arena, scratch_lease, scratch_lease.data, scratch_lease.bytes);
         auto *z = scratch.alloc<uint64_t>(2 * m);
-        temporary_product(&team, square_workers(workers, m), scratch, q, m, q, m, z, 2 * m);
+        temporary_product(&team, square_workers(workers, m), scratch, q, m, q, m, z, 2 * m, rail.square_choice[k]);
         for (size_t j = next; j < 2 * m; ++j)
             require(!z[j], SBN3_FATAL_MATH, "radix rail capacity");
         parallel_limbs::copy(&team, out, z, std::min(next, 2 * m));
         pad(k + 1, std::min(next, 2 * m));
     }
+}
+void reciprocal_basecase(const uint64_t *d, size_t n, uint64_t *out, Frame &scratch) noexcept {
+    require(n && (d[n - 1] >> 63), SBN3_FATAL_MATH, "radix reciprocal divisor");
+    FrameMark mark(scratch);
+    // [numerator 2n][remainder n][division scratch 3n + 1], limbs
+    auto *numerator = scratch.alloc<uint64_t>(2 * n), *remainder = scratch.alloc<uint64_t>(n);
+    auto *work = scratch.alloc<uint64_t>(3 * n + 1);
+    for (size_t j = 0; j < 2 * n; ++j)
+        numerator[j] = ~uint64_t(0); // B^(2n) - 1
+    const size_t qn = sbn3_divrem_basecase(out, remainder, numerator, 2 * n, d, n, work);
+    require(qn == n + 1 && out[n] == 1, SBN3_FATAL_MATH, "radix reciprocal range");
 }
 Chain chain_of(const BaseInfo &b, uint64_t fragments) noexcept {
     Chain c{};
@@ -279,23 +375,24 @@ Chain chain_of(const BaseInfo &b, uint64_t fragments) noexcept {
             continue;
         done += uint64_t(1) << k;
         const size_t next = limbs_for_bits(power_bits(b.log2_odd, done * fragment_digits));
-        c.step[c.steps++] = {k, c.limbs, next};
+        c.step[c.steps++] = {k, c.limbs, next, 0};
         c.widest = std::max(c.widest, c.limbs + rail_limbs(b, k));
         c.limbs = next;
     }
     return c;
 }
-sbn3_query_result chain_bytes(const BaseInfo &b, const Chain &c, unsigned workers, size_t &bytes) noexcept {
+sbn3_query_result chain_bytes(const BaseInfo &b, Chain &c, unsigned workers, size_t &bytes, PlanTranscript *transcript) noexcept {
     size_t episode = 0;
     for (unsigned j = 0; j < c.steps; ++j) {
-        const auto &s = c.step[j];
+        auto &s = c.step[j];
         const size_t bn = rail_limbs(b, s.level);
         if (std::max(s.acc_limbs, bn) <= chain_basecase_limbs)
             continue;
         ProductShape shape{};
-        const auto rc = product_shape(s.acc_limbs, bn, workers, shape);
+        const auto rc = product_shape(s.acc_limbs, bn, workers, shape, nullptr, transcript);
         if (rc != SBN3_SUPPORTED)
             return rc;
+        s.choice = shape.choice;
         episode = std::max(episode, shape.temporary_bytes());
     }
     bytes = 2 * align_to((c.widest + 8) * 8, 64) + episode + 256;
@@ -313,7 +410,7 @@ const uint64_t *chain_evaluate(const Chain &c, const RailPlan &rail, const uint6
         if (std::max(s.acc_limbs, bn) <= chain_basecase_limbs)
             sbn3_mul_basecase(y, s.acc_limbs + bn, x, s.acc_limbs, entries[s.level], bn);
         else
-            temporary_product(team, workers, scratch, x, s.acc_limbs, entries[s.level], bn, y, c.widest + 8);
+            temporary_product(team, workers, scratch, x, s.acc_limbs, entries[s.level], bn, y, c.widest + 8, s.choice);
         for (size_t i = s.out_limbs; i < s.acc_limbs + bn; ++i)
             require(!y[i], SBN3_FATAL_MATH, "radix power capacity");
         std::swap(x, y);

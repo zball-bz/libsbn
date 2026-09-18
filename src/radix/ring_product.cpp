@@ -1,4 +1,5 @@
 #include "radix/ring_product.hpp"
+#include "radix/programs.hpp"
 #include "product/cost_model.hpp"
 #include "runtime/arena.hpp"
 #include "common/checked.hpp"
@@ -50,37 +51,63 @@ size_t RingPlan::pool_bytes(unsigned groups) const noexcept {
     }
     return align_to(at, 4096);
 }
-bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned workers, RingPlan &out) noexcept {
+bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned workers, RingPlan &out,
+               PlanTranscript *transcript) noexcept {
     out = {};
     const bool deep = fresh > native_policy::small_model_max_words;
     Queried q{};
     double best = INFINITY;
+    auto consider = [&](unsigned np, int T, unsigned algorithm) {
+        size_t ring = 2 * size_t(T);
+        while (ring < minimum_ring)
+            ring *= 2;
+        if ((algorithm == SBN3_MUL_FLAT && ring > (size_t(1) << 19)) || (algorithm == SBN3_MUL_BAILEY && ring < 2048))
+            return;
+        if (!query(fresh, common, ring, np, T, algorithm, workers, 1, q))
+            return;
+        const double cost = cost_model::cached_share(cost_model::cyclic_product(q.consumer_info.mul, deep).nanoseconds);
+        if (!(cost < best))
+            return;
+        best = cost;
+        out = {};
+        out.enabled = true;
+        out.np = np;
+        out.algorithm = algorithm;
+        out.workers = workers;
+        out.trunk_bits = T;
+        out.ring = ring;
+        out.common_limbs = common;
+        out.fresh_limbs = fresh;
+        out.predicted_ns = cost;
+        fill(out, q);
+    };
+    // Transcript entry of the winner: [1][np:7][algorithm:4][0:12][T:12], checked against the request and the
+    // resources of the plan it stands for.
+    auto check = [&] {
+        return PlanTranscript::check(fresh * 3 + common, minimum_ring, workers,
+                                     out.enabled ? out.ring + 31 * (out.table_bytes + 31 * (out.work_bytes + 31 * out.spectrum_bytes)) : 0);
+    };
+    if (transcript && transcript->replay) {
+        const uint64_t e = transcript->next();
+        const unsigned np = unsigned(e >> 1 & 127), algorithm = unsigned(e >> 8 & 15);
+        const int T = int(e >> 24 & 4095);
+        if ((e & 1) && (np == 5 || np == 6 || np == 8 || np == 10) && T >= 24 * int(np) - 32 && T <= 24 * int(np) - 8 &&
+            (algorithm == SBN3_MUL_FLAT || algorithm == SBN3_MUL_BAILEY)) {
+            consider(np, T, algorithm);
+            if (out.enabled && check() == e >> product_choice_bits)
+                return true;
+            out = {};
+            best = INFINITY;
+        }
+        ++transcript->searched;
+    }
     for (unsigned np : {5u, 6u, 8u, 10u})
         for (int T = 24 * int(np) - 8; T >= 24 * int(np) - 32; T -= 8)
-            for (unsigned algorithm : {unsigned(SBN3_MUL_FLAT), unsigned(SBN3_MUL_BAILEY)}) {
-                size_t ring = 2 * size_t(T);
-                while (ring < minimum_ring)
-                    ring *= 2;
-                if ((algorithm == SBN3_MUL_FLAT && ring > (size_t(1) << 19)) || (algorithm == SBN3_MUL_BAILEY && ring < 2048))
-                    continue;
-                if (!query(fresh, common, ring, np, T, algorithm, workers, 1, q))
-                    continue;
-                const double cost = cost_model::cached_share(cost_model::cyclic_product(q.consumer_info.mul, deep).nanoseconds);
-                if (!(cost < best))
-                    continue;
-                best = cost;
-                out = {};
-                out.enabled = true;
-                out.np = np;
-                out.algorithm = algorithm;
-                out.workers = workers;
-                out.trunk_bits = T;
-                out.ring = ring;
-                out.common_limbs = common;
-                out.fresh_limbs = fresh;
-                out.predicted_ns = cost;
-                fill(out, q);
-            }
+            for (unsigned algorithm : {unsigned(SBN3_MUL_FLAT), unsigned(SBN3_MUL_BAILEY)})
+                consider(np, T, algorithm);
+    if (transcript && !transcript->replay)
+        transcript->record(out.enabled ? 1 | uint64_t(out.np) << 1 | uint64_t(out.algorithm) << 8 | uint64_t(out.trunk_bits) << 24 : 0,
+                           check());
     return out.enabled;
 }
 void ring_replay(const RingPlan &p, uint64_t generation, RingStage &stage) noexcept {

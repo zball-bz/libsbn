@@ -65,7 +65,7 @@ int ParseTreePlan::classify(uint64_t n, unsigned w) noexcept {
         if (!(c.frontier && policy.cyclic_products && rail_linear_plan(c.high_limbs, rail_size, c.cached))) {
             c.cached = {};
             const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
-            const auto rc = product_shape(c.high_limbs, rail_size, product_workers, c.product);
+            const auto rc = product_shape(c.high_limbs, rail_size, product_workers, c.product, nullptr, transcript);
             if (rc != SBN3_SUPPORTED) {
                 status = rc;
                 return -1;
@@ -110,7 +110,7 @@ int ParseTreePlan::add_tree(uint64_t fragments) noexcept {
 int ParseTreePlan::add_product(size_t an, size_t bn) noexcept {
     if (status != SBN3_SUPPORTED || extra_count == 2)
         return -1;
-    const auto rc = product_shape(an, bn, workers, extra[extra_count]);
+    const auto rc = product_shape(an, bn, workers, extra[extra_count], nullptr, transcript);
     if (rc != SBN3_SUPPORTED) {
         status = rc;
         return -1;
@@ -120,7 +120,7 @@ int ParseTreePlan::add_product(size_t an, size_t bn) noexcept {
 sbn3_query_result ParseTreePlan::finish() noexcept {
     if (status != SBN3_SUPPORTED)
         return status;
-    status = rail_finish(base, workers, rail);
+    status = rail_finish(base, workers, rail, transcript);
     if (status != SBN3_SUPPORTED)
         return status;
     programs = {};

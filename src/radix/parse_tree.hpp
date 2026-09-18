@@ -50,6 +50,8 @@ struct ParseTreePlan {
     size_t group_limbs[group_fragments + 1]{};
     size_t frontier_region_bytes = 0, frontier_limbs = 0;
     sbn3_query_result status = SBN3_SUPPORTED;
+    // Product searches of the assembly (programs.hpp); set after parse_tree_begin, used until finish().
+    PlanTranscript *transcript = nullptr;
     int add_tree(uint64_t fragments) noexcept;
     // A team product of the owning service (before finish()); returns its index or -1.
     int add_product(size_t an, size_t bn) noexcept;

@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 namespace sbn::v3::radix {
+struct PlanTranscript;
 inline constexpr unsigned ring_max_groups = 8;
 struct RingPlan {
     bool enabled = false;
@@ -21,8 +22,10 @@ struct RingPlan {
     size_t pool_bytes(unsigned groups) const noexcept;
 };
 // The cheapest supported (prime count, trunk width, algorithm) ring of at least minimum_ring limbs by the
-// product cost model. False when nothing is supported.
-bool ring_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, unsigned workers, RingPlan &) noexcept;
+// product cost model. False when nothing is supported. With a transcript (programs.hpp) the query records the
+// winner and the assembly at bind evaluates that one candidate instead of the search.
+bool ring_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, unsigned workers, RingPlan &,
+               PlanTranscript * = nullptr) noexcept;
 // The plans of a ring stage, reproduced from the pinned parameters (bind time; fatal when they moved).
 struct RingStage {
     sbn3_mul_plan producer{}, consumer{};

@@ -40,10 +40,21 @@ struct Plan {
            divide_bytes = 0, work_offset = 0, work_bytes = 0;
     size_t rail_at = 0, side_at = 0, numerator_at = 0, inverse_at = 0, root_at = 0, small_at = 0; // limbs in values
     int root_product = -1; // tree.extra index of numerator * reciprocal
+    size_t divide_alignment = 0;   // of the Newton INVERSE storage (integer tree)
+    unsigned divide_lease_peak = 0;
     uint64_t tree_id = 0, seal = 0;
 };
-static_assert(sizeof(Plan) <= sizeof(sbn3_format_plan));
-uint64_t seal(const Plan &p) noexcept {
+// The plan value: the sealed layout, the Newton plan of the reciprocal and the transcript of the product
+// searches. Bind assembles the tree plan again (it is far larger than a plan value) from these: no search runs
+// twice for one conversion.
+struct PlanValue {
+    Plan plan{};
+    sbn3_newton_plan divide{};
+    uint32_t searches = 0;
+    uint64_t search[PlanTranscript::capacity]{};
+};
+static_assert(sizeof(PlanValue) <= sizeof(sbn3_format_plan));
+uint64_t seal(const Plan &p, const sbn3_newton_plan &divide, const PlanTranscript &t) noexcept {
     uint64_t h = identity::fnv_seed;
     const uint64_t fields[] = {p.marker, p.spec.base, p.spec.limbs, uint64_t(p.spec.exponent2), p.spec.fraction_digits,
                                uint64_t(p.spec.mode), p.options.workers, p.options.memory_budget, p.options.use_alphabet, p.options.repeated,
@@ -52,7 +63,9 @@ uint64_t seal(const Plan &p) noexcept {
                                p.prepared_bytes, p.values_offset, p.values_bytes, p.divide_offset, p.divide_bytes,
                                p.work_offset, p.work_bytes, p.pool_offset, p.pool_bytes, p.rail_at, p.side_at, p.numerator_at, p.inverse_at, uint64_t(p.root_product),
                                p.root_at, p.small_at, p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
-                               p.info.fraction_digits, p.info.integer_digits, p.info.control_bytes};
+                               p.info.fraction_digits, p.info.integer_digits, p.info.control_bytes,
+                               p.divide_alignment, p.divide_lease_peak, t.count,
+                               p.info.storage_alignment, p.info.lease_peak, p.info.workers, p.info.fraction_offset};
     for (uint64_t f : fields)
         h = identity::word(h, f);
     for (unsigned j = 0; j < 64; j += 8) {
@@ -60,6 +73,11 @@ uint64_t seal(const Plan &p) noexcept {
         memcpy(&w, p.options.alphabet + j, 8);
         h = identity::word(h, w);
     }
+    for (uint32_t j = 0; j < t.count; ++j)
+        h = identity::word(h, t.entry[j]);
+    if (p.divide_limbs)
+        for (uint64_t w : divide.opaque)
+            h = identity::word(h, w);
     return h;
 }
 uint64_t tree_identity(const FormatTreePlan &t) noexcept {
@@ -101,12 +119,21 @@ struct Binding {
 struct Assembly {
     Plan &p;
     FormatTreePlan &tree;
+    PlanTranscript &transcript; // records (query) or replays (bind) the product searches
+    const Plan *sealed = nullptr; // bind: the sealed plan, whose Newton plan is in `divide` already
     int integer_root = -1, fraction_root = -1;
     sbn3_newton_plan divide{};
     sbn3_newton_info divide_info{};
+    Chain integer_chain{}; // odd^(64 integer_fragments) with the winners of its products
     sbn3_query_result run() noexcept;
+    sbn3_query_result assemble() noexcept;
 };
 sbn3_query_result Assembly::run() noexcept {
+    const auto rc = assemble();
+    tree.transcript = nullptr; // the tree plan outlives the transcript
+    return rc;
+}
+sbn3_query_result Assembly::assemble() noexcept {
     const auto &s = p.spec;
     BaseInfo base{};
     if (!base_info(s.base, base) || !s.limbs || unsigned(s.mode) > SBN3_RADIX_ENCLOSED || !p.options.workers ||
@@ -160,9 +187,12 @@ sbn3_query_result Assembly::run() noexcept {
     info.digit_bytes = info.fraction_offset + size_t(align_to(digits, fragment_digits));
     if (p.fraction_fragments > max_fragments || p.integer_fragments > max_fragments)
         return SBN3_QUERY_CAPACITY;
-    p.integer_path = !p.integer_bits || p.shift ? integer_none
-                     : p.integer_limbs >= (p.options.repeated ? tree_policy().integer_tree_limbs_repeated : tree_policy().integer_tree_limbs) ? integer_tree
-                                                                 : integer_schoolbook;
+    // Schoolbook or tree (TreePolicy): by execute time for repeated conversions, by the whole call for one.
+    const auto &policy = tree_policy();
+    const bool integer_by_tree = p.options.repeated ? p.integer_limbs >= policy.integer_tree_limbs_repeated
+                                 : p.integer_limbs >= (size_t(1) << 20) ||
+                                       p.integer_limbs * size_t(fragment_words * p.integer_fragments) >= policy.integer_tree_work;
+    p.integer_path = !p.integer_bits || p.shift ? integer_none : integer_by_tree ? integer_tree : integer_schoolbook;
     size_t values = 0, work = 0;
     auto take = [&](size_t limbs) {
         const size_t at = values;
@@ -177,6 +207,7 @@ sbn3_query_result Assembly::run() noexcept {
                                     std::max(p.integer_path == integer_tree ? p.integer_fragments : 0, p.fraction_fragments), tree);
         if (rc != SBN3_SUPPORTED)
             return rc;
+        tree.transcript = &transcript;
         if (p.integer_path == integer_tree) {
             integer_root = tree.add_tree(p.integer_fragments);
             tree.rail.count = std::max(tree.rail.count, top_bit(p.integer_fragments) + 1);
@@ -200,15 +231,27 @@ sbn3_query_result Assembly::run() noexcept {
     }
     if (p.integer_path == integer_tree) {
         p.divide_limbs = tree.root_limbs(integer_root);
-        sbn3_newton_options o{};
-        o.workers = p.options.workers;
-        const auto rc = sbn3_newton_query(SBN3_NEWTON_INVERSE, p.divide_limbs, &o, &divide, &divide_info);
-        if (rc != SBN3_SUPPORTED)
-            return rc;
+        if (reciprocal_is_basecase(p.divide_limbs)) {
+            work = std::max(work, reciprocal_basecase_bytes(p.divide_limbs)); // one schoolbook division at bind
+        } else if (sealed) {
+            // The Newton plan came with the plan value; its resources are sealed.
+            divide_info.storage_bytes = sealed->divide_bytes;
+            divide_info.storage_alignment = sealed->divide_alignment;
+            divide_info.lease_peak = sealed->divide_lease_peak;
+        } else {
+            sbn3_newton_options o{};
+            o.workers = p.options.workers;
+            const auto rc = sbn3_newton_query(SBN3_NEWTON_INVERSE, p.divide_limbs, &o, &divide, &divide_info);
+            if (rc != SBN3_SUPPORTED)
+                return rc;
+        }
+        p.divide_alignment = divide_info.storage_alignment;
+        p.divide_lease_peak = divide_info.lease_peak;
         p.numerator_at = take(p.divide_limbs + 1);
         p.inverse_at = take(p.divide_limbs + 1);
         size_t chain = 0;
-        const auto crc = chain_bytes(tree.base, chain_of(tree.base, p.integer_fragments), p.options.workers, chain);
+        integer_chain = chain_of(tree.base, p.integer_fragments);
+        const auto crc = chain_bytes(tree.base, integer_chain, p.options.workers, chain, &transcript);
         if (crc != SBN3_SUPPORTED)
             return crc;
         // The reciprocal is computed inside the work range at bind; execute multiplies there, then runs the tree.
@@ -223,9 +266,9 @@ sbn3_query_result Assembly::run() noexcept {
         work = std::max(work, tree.work_bytes(fraction_root));
         {
             // Exact tie resolution: odd^(64 F), a copy of the low fraction limbs, and their product.
-            const auto chain = chain_of(tree.base, p.fraction_fragments);
+            auto chain = chain_of(tree.base, p.fraction_fragments);
             size_t bytes = 0;
-            auto rc = chain_bytes(tree.base, chain, p.options.workers, bytes);
+            auto rc = chain_bytes(tree.base, chain, p.options.workers, bytes, &transcript);
             if (rc != SBN3_SUPPORTED)
                 return rc;
             const uint64_t scale = uint64_t(tree.base.twos) * fragment_digits * p.fraction_fragments;
@@ -235,7 +278,7 @@ sbn3_query_result Assembly::run() noexcept {
                 size_t episode = 0, out = an + bn;
                 if (std::max(an, bn) > chain_basecase_limbs) {
                     ProductShape shape{};
-                    rc = product_shape(an, bn, p.options.workers, shape);
+                    rc = product_shape(an, bn, p.options.workers, shape, nullptr, &transcript);
                     if (rc != SBN3_SUPPORTED)
                         return rc;
                     episode = shape.temporary_bytes();
@@ -274,10 +317,18 @@ sbn3_query_result Assembly::run() noexcept {
     info.lease_peak += (p.prepared_bytes != 0) + (p.values_bytes != 0) + (p.work_bytes != 0);
     return SBN3_SUPPORTED;
 }
-Plan load(const sbn3_format_plan &opaque) noexcept {
-    Plan p{};
-    memcpy(&p, opaque.opaque, sizeof p);
-    require(p.marker == plan_magic && p.seal == seal(p), SBN3_FATAL_ARGUMENT, "format plan");
+// The sealed plan; the Newton plan and the transcript (ready to replay) of the plan value.
+Plan load(const sbn3_format_plan &opaque, sbn3_newton_plan &divide, PlanTranscript &transcript) noexcept {
+    PlanValue v{};
+    memcpy(static_cast<void *>(&v), opaque.opaque, sizeof v);
+    const Plan p = v.plan;
+    require(p.marker == plan_magic && v.searches <= PlanTranscript::capacity, SBN3_FATAL_ARGUMENT, "format plan");
+    divide = v.divide;
+    transcript = {};
+    transcript.count = v.searches;
+    memcpy(transcript.entry, v.search, size_t(v.searches) * 8);
+    require(p.seal == seal(p, divide, transcript), SBN3_FATAL_ARGUMENT, "format plan");
+    transcript.replay = true;
     return p;
 }
 Binding &binding(sbn3_format_binding *opaque) noexcept {
@@ -500,23 +551,33 @@ extern "C" sbn3_query_result sbn3_format_query(const sbn3_format_spec *spec, con
     if (!p.options.use_alphabet)
         memset(p.options.alphabet, 0, sizeof p.options.alphabet);
     FormatTreePlan tree{};
-    Assembly a{p, tree};
+    PlanTranscript transcript{};
+    Assembly a{p, tree, transcript};
     const auto rc = a.run();
     *info = p.info;
     if (rc != SBN3_SUPPORTED)
         return rc;
     if (p.options.memory_budget && p.info.storage_bytes > p.options.memory_budget)
         return SBN3_QUERY_CAPACITY;
-    p.seal = seal(p);
+    // The identity covers the transcript and the Newton plan; info.plan_id is the seal, so it is not part of it.
+    p.seal = seal(p, a.divide, transcript);
     p.info.plan_id = info->plan_id = p.seal;
+    PlanValue v{};
+    v.plan = p;
+    if (p.divide_limbs)
+        v.divide = a.divide;
+    v.searches = transcript.count;
+    memcpy(v.search, transcript.entry, size_t(transcript.count) * 8);
     memset(out, 0, sizeof *out);
-    memcpy(out->opaque, &p, sizeof p);
+    memcpy(out->opaque, static_cast<const void *>(&v), sizeof v);
     return SBN3_SUPPORTED;
 }
 extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *arena, size_t offset, sbn3_team *team,
                                  sbn3_format_binding **out) {
     require(opaque && arena && team && out, SBN3_FATAL_ARGUMENT, "format bind arguments");
-    const Plan p = load(*opaque);
+    sbn3_newton_plan divide{};
+    PlanTranscript transcript{};
+    const Plan p = load(*opaque, divide, transcript);
     require(team->arena == arena && team->width >= p.options.workers && pthread_equal(team->creator, pthread_self()) &&
                 !team->busy,
             SBN3_FATAL_TEAM, "format bind team");
@@ -535,14 +596,17 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
     b->team = team;
     b->offset = offset;
     b->control = control;
+    // The assembly again, product by product from the transcript; its identity must be the sealed one.
     Plan replay = p;
-    Assembly a{replay, b->tree_plan};
+    Assembly a{replay, b->tree_plan, transcript, &p};
+    a.divide = divide;
     require(a.run() == SBN3_SUPPORTED && replay.tree_id == p.tree_id && replay.info.storage_bytes == p.info.storage_bytes &&
-                replay.work_bytes == p.work_bytes && replay.prepared_bytes == p.prepared_bytes && replay.pool_bytes == p.pool_bytes,
+                replay.work_bytes == p.work_bytes && replay.prepared_bytes == p.prepared_bytes && replay.pool_bytes == p.pool_bytes &&
+                replay.values_bytes == p.values_bytes && replay.info.control_bytes == p.info.control_bytes,
             SBN3_FATAL_MATH, "format bind plan replay");
     b->integer_root = a.integer_root;
     b->fraction_root = a.fraction_root;
-    b->divide = a.divide;
+    b->divide = divide;
     if (p.prepared_bytes)
         b->prepared = arena->acquire(offset + p.prepared_offset, p.prepared_bytes);
     if (p.values_bytes)
@@ -572,7 +636,7 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
         const auto &base = b->tree_plan.base;
         const size_t n = p.divide_limbs;
         Frame scratch = Frame::borrow(*arena, b->work, b->work.data, b->work.bytes);
-        const auto chain = chain_of(base, p.integer_fragments);
+        const auto &chain = a.integer_chain;
         const uint64_t *power = chain_evaluate(chain, b->tree_plan.rail, b->tree.rail, team, p.options.workers, scratch);
         size_t top = chain.limbs;
         while (top && !power[top - 1])
@@ -587,7 +651,10 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
         uint64_t *divisor = b->limbs(p.numerator_at);
         window(team, divisor, n, power, top, -int64_t(z), 0, uint64_t(64) * top);
     }
-    if (p.integer_path == integer_tree) {
+    if (p.integer_path == integer_tree && reciprocal_is_basecase(p.divide_limbs)) {
+        Frame scratch = Frame::borrow(*arena, b->work, b->work.data, b->work.bytes);
+        reciprocal_basecase(b->limbs(p.numerator_at), p.divide_limbs, b->limbs(p.inverse_at), scratch);
+    } else if (p.integer_path == integer_tree) {
         // Newton INVERSE inside the (still unused) work range: release it for the episode.
         const size_t n = p.divide_limbs;
         arena->release(b->work);

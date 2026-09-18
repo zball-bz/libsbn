@@ -50,9 +50,35 @@ static bool cyclic_product(const sbn3_product_info &i) {
 // Exact geometry and cached bases retain their constraints. Work counts use
 // both operand lengths; unbalanced shapes must not fall into a padded deep tower.
 using cost_model::small_domain;
+// A search candidate is one backend entry queried with the caller's options except for four fields
+// (algorithm, trunk digit, Bailey geometry). The winner's entry and fields are its ProductChoice: repeating
+// that one backend query returns the plan the search returned. Zero: no choice (a field out of range).
+constexpr uint64_t short_entry = 100;
+static ProductChoice encode_choice(uint64_t entry, const sbn3_mul_options &o) {
+    if (entry >= 128 || o.algorithm >= 16 || o.column_log2 >= 64 || o.row_log2 >= 64 || o.trunk_bits < 0 ||
+        o.trunk_bits >= 4096)
+        return 0;
+    return 1 | entry << 1 | uint64_t(o.algorithm) << 8 | uint64_t(o.column_log2) << 12 | uint64_t(o.row_log2) << 18 |
+           uint64_t(o.trunk_bits) << 24;
+}
+template <class Info, class Query>
+static sbn3_query_result query_chosen(const sbn3_mul_options &opt, ProductChoice c, sbn3_mul_plan &plan, Info &info,
+                                      Query query) {
+    const uint64_t entry = c >> 1 & 127;
+    const Backend *backend = entry == short_entry ? &short_backend() : entry >= 4 && entry <= 10 ? lookup(entry) : nullptr;
+    if (!(c & 1) || c >> product_choice_bits || !backend)
+        return SBN3_UNSUPPORTED;
+    auto o = opt;
+    o.algorithm = unsigned(c >> 8 & 15);
+    o.column_log2 = unsigned(c >> 12 & 63);
+    o.row_log2 = unsigned(c >> 18 & 63);
+    o.trunk_bits = int(c >> 24 & 4095);
+    return query(*backend, o, plan, info);
+}
 template <class Info, class Query>
 static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_options &opt,
-                                     sbn3_mul_plan &plan, Info &info, Query query, bool small) {
+                                     sbn3_mul_plan &plan, Info &info, Query query, bool small,
+                                     ProductChoice *choice = nullptr) {
     bool found = false;
     double best = 0;
     auto rejection = SBN3_UNSUPPORTED;
@@ -69,6 +95,8 @@ static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_
                 best = cost;
                 plan = p;
                 info = ci;
+                if (choice)
+                    *choice = encode_choice(np, options);
             }
         } else if (!found && result == SBN3_QUERY_CAPACITY) {
             rejection = result;
@@ -83,8 +111,11 @@ static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_
                    last = opt.prime_count ? opt.prime_count : (!small && opt.workers == 32 ? 10 : 8);
     if (!lookup(first) || !lookup(last))
         return SBN3_UNSUPPORTED;
-    if (!small && opt.prime_count)
+    if (!small && opt.prime_count) {
+        if (choice)
+            *choice = encode_choice(first, opt);
         return query(*lookup(first), opt, plan, info);
+    }
     for (unsigned np = first; np <= last; ++np) {
         consider(np, opt);
         if (!small)
@@ -154,28 +185,37 @@ static bool native_available() {
 }
 template <class Info, class Query>
 static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mul_options &opt,
-                                       sbn3_mul_plan &plan, Info &info, Query query) {
-    if (opt.algorithm >= SBN3_MUL_SCALAR)
+                                       sbn3_mul_plan &plan, Info &info, Query query, ProductChoice *choice = nullptr) {
+    if (choice)
+        *choice = 0;
+    if (opt.algorithm >= SBN3_MUL_SCALAR) {
+        if (choice)
+            *choice = encode_choice(short_entry, opt);
         return query(short_backend(), opt, plan, info);
+    }
     const size_t lo = std::min(s.a_limbs, s.b_limbs), hi = std::max(s.a_limbs, s.b_limbs);
     if (opt.algorithm || !short_options(opt))
-        return select_plan(s, opt, plan, info, query, small_domain(s, opt));
+        return select_plan(s, opt, plan, info, query, small_domain(s, opt), choice);
     if (lo <= 1 || hi <= 8) {
         auto o = opt;
         o.algorithm = SBN3_MUL_SCALAR;
+        if (choice)
+            *choice = encode_choice(short_entry, o);
         return query(short_backend(), o, plan, info);
     }
     bool found = false;
     double best = 0;
     auto rejection = SBN3_UNSUPPORTED;
     auto consider = [&](sbn3_query_result status, const sbn3_mul_plan &p, const Info &candidate,
-                        double cost) {
+                        double cost, ProductChoice candidate_choice) {
         if (status == SBN3_SUPPORTED) {
             if (!found || cost < best) {
                 found = true;
                 best = cost;
                 plan = p;
                 info = candidate;
+                if (choice)
+                    *choice = candidate_choice;
             }
         } else if (!found && status == SBN3_QUERY_CAPACITY) {
             rejection = status;
@@ -202,7 +242,7 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
                    : alg == SBN3_MUL_U52  ? u52_product_cost(s.a_limbs, s.b_limbs, opt.workers)
                                           : pq16_product_cost(i, s.a_limbs, s.b_limbs);
         }
-        consider(status, p, ci, cost);
+        consider(status, p, ci, cost, encode_choice(short_entry, o));
     }
     if (hi >= 1024) {
         auto o = opt;
@@ -211,7 +251,8 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
         sbn3_mul_plan p{};
         Info ci{};
         const bool small = small_domain(s, o);
-        const auto status = select_plan(s, o, p, ci, query, small);
+        ProductChoice inner = 0;
+        const auto status = select_plan(s, o, p, ci, query, small, &inner);
         double cost = 0;
         if (status == SBN3_SUPPORTED) {
             const auto &i = mul_info(ci);
@@ -220,9 +261,57 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
                        ? cost_model::small_ntt(i, operation_kind(ci) == SBN3_PRODUCT_MUL).nanoseconds
                        : deep_score(i) * native_policy::deep_ns_per_work * 16 / std::min(opt.workers, 16u);
         }
-        consider(status, p, ci, cost);
+        consider(status, p, ci, cost, inner);
     }
     return found ? SBN3_SUPPORTED : rejection;
+}
+static sbn3_product_request square_request(size_t limbs) {
+    sbn3_product_request r{};
+    r.kind = SBN3_PRODUCT_SQR;
+    r.a_limbs = limbs;
+    return r;
+}
+sbn3_query_result sbn::v3::mul_query_choose(const sbn3_product_spec &s, const sbn3_mul_options &opt, sbn3_mul_plan &p,
+                                            sbn3_mul_info &i, ProductChoice &choice) noexcept {
+    i = {};
+    choice = 0;
+    if (!native_available())
+        return SBN3_UNSUPPORTED;
+    return select_family(s, opt, p, i,
+                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
+                             sbn3_mul_info &ci) { return b.query(s, co, cp, ci); },
+                         &choice);
+}
+sbn3_query_result sbn::v3::mul_query_chosen(const sbn3_product_spec &s, const sbn3_mul_options &opt, ProductChoice choice,
+                                            sbn3_mul_plan &p, sbn3_mul_info &i) noexcept {
+    i = {};
+    if (!native_available())
+        return SBN3_UNSUPPORTED;
+    return query_chosen(opt, choice, p, i,
+                        [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
+                            sbn3_mul_info &ci) { return b.query(s, co, cp, ci); });
+}
+sbn3_query_result sbn::v3::square_query_choose(size_t limbs, const sbn3_mul_options &opt, sbn3_mul_plan &p,
+                                               sbn3_product_info &i, ProductChoice &choice) noexcept {
+    i = {};
+    choice = 0;
+    if (!native_available())
+        return SBN3_UNSUPPORTED;
+    const auto r = square_request(limbs);
+    return select_family(sbn3_product_spec{limbs, limbs}, opt, p, i,
+                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
+                             sbn3_product_info &ci) { return b.product_query(r, co, cp, ci); },
+                         &choice);
+}
+sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_options &opt, ProductChoice choice,
+                                               sbn3_mul_plan &p, sbn3_product_info &i) noexcept {
+    i = {};
+    if (!native_available())
+        return SBN3_UNSUPPORTED;
+    const auto r = square_request(limbs);
+    return query_chosen(opt, choice, p, i,
+                        [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
+                            sbn3_product_info &ci) { return b.product_query(r, co, cp, ci); });
 }
 extern "C" sbn3_query_result sbn3_mul_query(const sbn3_product_spec *s, const sbn3_mul_options *o,
                                             sbn3_mul_plan *p, sbn3_mul_info *i) {

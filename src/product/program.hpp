@@ -36,6 +36,17 @@ inline sbn3_query_result product_program_query(size_t an,size_t bn,const sbn3_mu
     const auto rc=sbn3_mul_query(&spec,&options,&p.plan,&p.info);
     return rc==SBN3_SUPPORTED?product_program_describe(an,bn,p):rc;
 }
+// The same search, reporting its winning candidate; and the winner's single backend query (backend.hpp).
+inline sbn3_query_result product_program_choose(size_t an,size_t bn,const sbn3_mul_options &options,ProductProgramPlan &p,
+                                                ProductChoice &choice) {
+    const auto rc=mul_query_choose({an,bn},options,p.plan,p.info,choice);
+    return rc==SBN3_SUPPORTED?product_program_describe(an,bn,p):rc;
+}
+inline sbn3_query_result product_program_chosen(size_t an,size_t bn,const sbn3_mul_options &options,ProductChoice choice,
+                                                ProductProgramPlan &p) {
+    const auto rc=mul_query_chosen({an,bn},options,choice,p.plan,p.info);
+    return rc==SBN3_SUPPORTED?product_program_describe(an,bn,p):rc;
+}
 inline sbn3_query_result product_program_replay(size_t an,size_t bn,const sbn3_mul_options &options,
                                                uint64_t backend_id,ProductProgramPlan &p) {
     const auto *backend=backend_lookup(backend_id);

@@ -41,7 +41,9 @@ typedef struct sbn3_format_spec {
     uint64_t fraction_digits; /* requested digits after the point */
     sbn3_radix_mode mode;
 } sbn3_format_spec;
-typedef struct sbn3_format_plan {uint64_t opaque[64];} sbn3_format_plan;
+/* A plan is a plain value: the layout, the Newton plan of the reciprocal and the winners of the product
+ * searches, so that bind plans nothing a second time. */
+typedef struct sbn3_format_plan {uint64_t opaque[512];} sbn3_format_plan;
 typedef struct sbn3_format_info {
     unsigned workers, lease_peak;
     uint64_t integer_digits;  /* bytes of the integer area, leading zero digits included (0: X < 1 always) */
@@ -89,7 +91,7 @@ typedef struct sbn3_parse_spec {
     uint64_t fraction_digits; /* digit bytes after the point */
     uint64_t fraction_bits;   /* the result is M = floor(value * 2^fraction_bits), exactly */
 } sbn3_parse_spec;
-typedef struct sbn3_parse_plan {uint64_t opaque[64];} sbn3_parse_plan;
+typedef struct sbn3_parse_plan {uint64_t opaque[512];} sbn3_parse_plan;
 typedef struct sbn3_parse_info {
     unsigned workers, lease_peak;
     size_t limbs;      /* output capacity: M < 2^(64 * limbs) */

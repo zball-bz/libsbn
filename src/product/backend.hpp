@@ -64,6 +64,21 @@ struct Backend {
                               sbn3_const_limbs, sbn3_limbs) = nullptr;
 };
 const Backend *backend_lookup(uint64_t) noexcept;
+// The winning candidate of a plain product search (sbn3_mul_query, or sbn3_product_query of a plain square), in
+// product_choice_bits bits; zero is "none". A planner that has to build the same plan again (a service whose
+// plan value cannot hold its product plans replays them at bind) repeats the winner's single backend query
+// instead of the search: *_chosen returns exactly what *_choose returned for the same request and options.
+// The caller still compares the identity of the replayed plan with the one it planned for.
+using ProductChoice = uint64_t;
+inline constexpr unsigned product_choice_bits = 36;
+sbn3_query_result mul_query_choose(const sbn3_product_spec &, const sbn3_mul_options &, sbn3_mul_plan &, sbn3_mul_info &,
+                                   ProductChoice &) noexcept;
+sbn3_query_result mul_query_chosen(const sbn3_product_spec &, const sbn3_mul_options &, ProductChoice, sbn3_mul_plan &,
+                                   sbn3_mul_info &) noexcept;
+sbn3_query_result square_query_choose(size_t limbs, const sbn3_mul_options &, sbn3_mul_plan &, sbn3_product_info &,
+                                      ProductChoice &) noexcept;
+sbn3_query_result square_query_chosen(size_t limbs, const sbn3_mul_options &, ProductChoice, sbn3_mul_plan &,
+                                      sbn3_product_info &) noexcept;
 const Backend &short_backend() noexcept;
 const Backend &fft_backend() noexcept;
 const Backend &np4_backend() noexcept;

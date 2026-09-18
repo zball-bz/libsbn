@@ -69,7 +69,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         out.low_bytes = align_to((out.low_limbs + out.low_rail_limbs) * 8, 64);
         if (std::max(out.low_limbs, out.low_rail_limbs) > chain_basecase_limbs) {
             ProductShape low{};
-            cyclic = product_shape(out.low_limbs, out.low_rail_limbs, 1, low) == SBN3_SUPPORTED;
+            cyclic = product_shape(out.low_limbs, out.low_rail_limbs, 1, low, nullptr, transcript) == SBN3_SUPPORTED;
             out.low_bytes = align_to(low.output_limbs * 8, 64) + low.temporary_bytes();
         }
     }
@@ -81,7 +81,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
     out = {};
     const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
     if (!c.frontier && policy.ring_products && c.limbs >= policy.ring_node_limbs && count >= policy.ring_min_count &&
-        ring_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), product_workers, out.ring)) {
+        ring_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), product_workers, out.ring, transcript)) {
         bool ok = true;
         out.gap_limbs = out.ring.ring - wrapped_ring + 1;
         out.low_limbs = c.split_limbs + rail_size - out.ring.ring + 1;
@@ -90,7 +90,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         out.low_bytes = align_to((out.low_limbs + out.low_rail_limbs) * 8, 64);
         if (std::max(out.low_limbs, out.low_rail_limbs) > chain_basecase_limbs) {
             ProductShape low{};
-            ok = product_shape(out.low_limbs, out.low_rail_limbs, product_workers, low) == SBN3_SUPPORTED;
+            ok = product_shape(out.low_limbs, out.low_rail_limbs, product_workers, low, nullptr, transcript) == SBN3_SUPPORTED;
             out.low_bytes = align_to(low.output_limbs * 8, 64) + low.temporary_bytes();
         }
         if (ok) {
@@ -101,7 +101,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         }
         out = {};
     }
-    return product_shape(c.split_limbs, rail_size, product_workers, out.product);
+    return product_shape(c.split_limbs, rail_size, product_workers, out.product, nullptr, transcript);
 }
 int FormatTreePlan::classify(uint64_t n) noexcept {
     for (unsigned j = 0; j < class_count; ++j)
@@ -173,7 +173,7 @@ int FormatTreePlan::add_tree(uint64_t fragments) noexcept {
 int FormatTreePlan::add_product(size_t an, size_t bn) noexcept {
     if (status != SBN3_SUPPORTED || extra_count == 2)
         return -1;
-    const auto rc = product_shape(an, bn, workers, extra[extra_count]);
+    const auto rc = product_shape(an, bn, workers, extra[extra_count], nullptr, transcript);
     if (rc != SBN3_SUPPORTED) {
         status = rc;
         return -1;
@@ -183,7 +183,7 @@ int FormatTreePlan::add_product(size_t an, size_t bn) noexcept {
 sbn3_query_result FormatTreePlan::finish() noexcept {
     if (status != SBN3_SUPPORTED)
         return status;
-    status = rail_finish(base, workers, rail);
+    status = rail_finish(base, workers, rail, transcript);
     if (status != SBN3_SUPPORTED)
         return status;
     const auto &policy = tree_policy();

@@ -103,6 +103,8 @@ struct FormatTreePlan {
     size_t frontier_region_bytes = 0;
     size_t frontier_limbs = 0; // nodes below this size are frontier tasks (set by format_tree_begin)
     sbn3_query_result status = SBN3_SUPPORTED;
+    // Product searches of the assembly (programs.hpp); set after format_tree_begin, used until finish().
+    PlanTranscript *transcript = nullptr;
     // Adds the tree of `fragments` fragments; returns its index in trees[] or -1.
     int add_tree(uint64_t fragments) noexcept;
     // A team product of the owning service (before finish()); returns its index or -1.

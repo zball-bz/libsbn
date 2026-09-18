@@ -1298,7 +1298,8 @@
       "depends_on": [
         "src/common/base.cpp",
         "src/product/api.cpp",
-        "src/runtime/team.cpp"
+        "src/runtime/team.cpp",
+        "src/value/divrem_basecase.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],
@@ -1351,7 +1352,8 @@
       "requires": [],
       "depends_on": [
         "src/common/base.cpp",
-        "src/product/api.cpp"
+        "src/product/api.cpp",
+        "src/radix/programs.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],
