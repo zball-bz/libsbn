@@ -635,9 +635,9 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
     b.prepared = true;
 }
 // One exact quotient limb by word division. x holds X = R*B + n0 on dn+1
-// limbs with R < D', so q = floor(X/D') < B. The 3/2 estimate from the top
-// limbs is q or q+1 (the sbpi1 schoolbook step); every team part subtracts
-// its own slice of qhat*D' and the slice carries are stitched exactly.
+// limbs with R < D', so q = floor(X/D') < B. The step follows GMP's sbpi1_div_qr (3/2
+// estimate q or q+1, multiply-subtract, add-back; notice in value/divrem_basecase.cpp); each
+// team part subtracts its own slice of qhat*D' and the slice carries are stitched exactly.
 uint64_t word_step(sbn3_team *team, uint64_t *x, const uint64_t *Dn, size_t dn, uint64_t dinv) {
     const uint64_t d1 = Dn[dn - 1], d0 = Dn[dn - 2];
     uint64_t q = UINT64_MAX; // <x[dn],x[dn-1]> == <d1,d0>: the quotient limb is B-1
