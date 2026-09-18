@@ -43,6 +43,14 @@ bool same_info(const sbn3_mul_info &a, const sbn3_mul_info &b) {
            a.execution_id == b.execution_id;
 }
 uint64_t padding_bits = 0, compared_bits = 0;
+// AddressSanitizer keeps locals on a fake stack of its own (detect_stack_use_after_return), which dirty_stack
+// cannot reach; this gate turns that one option off so that the calibration works there too (every other ASan
+// check stays on).
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+extern "C" const char *__asan_default_options() { return "detect_stack_use_after_return=0"; }
+#endif
+#endif
 void same_plan(const sbn3_mul_plan &searched, const sbn3_mul_plan &zeros, const sbn3_mul_plan &ones) {
     for (unsigned j = 0; j < 384; ++j) {
         const uint64_t padding = zeros.opaque[j] ^ ones.opaque[j];
