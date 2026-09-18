@@ -344,13 +344,15 @@ struct Candidate {
     ProductChoice u{}, t{};
     Queried uq{}, tq{};
     double total = INFINITY;
-    bool word_head = false; // the total serves qn mod in by word division instead of a padded block
 };
 // Block-size ordering uses the linear residual recipe only; the cyclic
 // lattice (the expensive part of the query) runs for the size that is taken.
+// The total prices whole blocks, the quotient limbs a size leaves over as one
+// more product pair: the word-division head serves what the taken size leaves
+// over, it is no reason to take a size (divrem_tuning).
 bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
-    const size_t blocks = (qn + in - 1) / in, head = qn % in;
+    const size_t blocks = (qn + in - 1) / in;
     const double reuse = std::max(1u, p.options.reuse_hint);
     Cost uc{}, tc{};
     if (!choose_u(p, in, c.u, c.uq, uc))
@@ -363,10 +365,7 @@ bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
     // The residual buffer bounds the head: X = R*B^head + block needs dn+head limbs.
     const size_t xlen = c.ring ? c.ring : dn + in;
     c.head = std::min(head_limit(p, dn, in, uc.apply + tc.apply), xlen - dn);
-    c.word_head = head && head <= c.head;
-    c.total = inverse_estimate(p, in) + uc.prepare + tc.prepare +
-              reuse * (double(blocks - c.word_head) * (uc.apply + tc.apply) +
-                       (c.word_head ? double(head) * head_step_cost(p, dn) : 0));
+    c.total = inverse_estimate(p, in) + uc.prepare + tc.prepare + reuse * double(blocks) * (uc.apply + tc.apply);
     return std::isfinite(c.total);
 }
 // Block-size candidates in cost order; take() hands them out one at a time so
@@ -374,18 +373,17 @@ bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
 struct Ranked {
     size_t in = 0;
     double total = INFINITY;
-    bool word_head = false;
 };
 struct Ranking {
-    Ranked ordered[4]{}, padded[4]{};
-    unsigned count = 0, next = 0, padded_count = 0, padded_next = 0;
+    Ranked ordered[4]{};
+    unsigned count = 0, next = 0;
     bool single = false; // a requested block size: nothing to order, evaluated once by take()
 };
-void insert(Ranked *list, unsigned &count, const Candidate &c) {
-    unsigned at = count++;
-    for (; at && c.total < list[at - 1].total; --at)
-        list[at] = list[at - 1];
-    list[at] = {c.in, c.total, c.word_head};
+void insert(Ranking &r, const Candidate &c) {
+    unsigned at = r.count++;
+    for (; at && c.total < r.ordered[at - 1].total; --at)
+        r.ordered[at] = r.ordered[at - 1];
+    r.ordered[at] = {c.in, c.total};
 }
 void rank(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
@@ -421,32 +419,20 @@ void rank(const Plan &p, Ranking &r) {
     for (unsigned j = 0; j < count; ++j) {
         Candidate c{};
         if (evaluate(p, candidates[j], c, false))
-            insert(r.ordered, r.count, c);
+            insert(r, c);
     }
 }
-// Next block size with its final recipes. A size ordered under a
-// word-division head is a plan of that order only while the final recipe
-// keeps the head. The lattice may choose a ring without room for it
-// (ring - dn < head) or a cheaper cyclic pair that lowers the head limit;
-// the head is then a padded whole block, a plan the order never priced
-// (complete dn-limb blocks plus a padded block lose to the same number of
-// shorter blocks), so that size stands behind every other one.
+// Next block size with its final recipes. The order priced whole blocks, so
+// the final recipe owes it no head: the plan serves by word division what
+// that recipe allows (nothing when the ring leaves no room above the divisor
+// or the product pair is cheaper than the word steps) and pads a block otherwise.
 bool take(const Plan &p, Ranking &r, Candidate &out) {
     while (r.next < r.count) {
-        const Ranked &ranked = r.ordered[r.next++];
+        const size_t in = r.ordered[r.next++].in;
         out = {};
-        if (!evaluate(p, ranked.in, out, true)) {
-            if (!r.single && evaluate(p, ranked.in, out, false)) // as ordered
-                return true;
-            continue;
-        }
-        if (!ranked.word_head || out.word_head)
+        if (evaluate(p, in, out, true))
             return true;
-        insert(r.padded, r.padded_count, out);
-    }
-    while (r.padded_next < r.padded_count) {
-        out = {};
-        if (evaluate(p, r.padded[r.padded_next++].in, out, true))
+        if (!r.single && evaluate(p, in, out, false)) // as ordered
             return true;
     }
     return false;

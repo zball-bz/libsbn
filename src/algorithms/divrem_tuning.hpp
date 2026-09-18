@@ -58,13 +58,20 @@ inline constexpr double head_cost_margin = 0.6;
 // 2d/d (experiments results/divrem_stageA_2026-09-18/final,
 // divrem_stageA2_2026-09-18/final/ab-zone*, divrem_stageA3_2026-09-18).
 // Promotion needs fresh-call cost, boundary and equal-budget evidence.
-// The order credits a word-division head to whichever block size it serves,
-// and the final recipe must keep that head: when the cyclic recipe cannot
-// (the ring leaves ring-dn < head limbs above the divisor, or its cheaper
-// pair lowers the head limit) the size stands behind the others. Complete
-// blocks plus a padded one measured 1.22-1.28 of near-equal blocks at
-// dn=387141..1310717 and 1.56 at 147454
-// (results/divrem_stageA2_2026-09-18/wip2, W16, 8 executions).
+// The block-size order prices whole blocks and gives the word-division head
+// no credit: the head serves what the taken size leaves over, within the
+// limit above. An order that credited it changed the policy's size for
+// quotients of 9-23 limbs above dn=2^20 (experiments
+// docs/divrem-stageA-2026-09-18 section 11, one to eight workers, arithmetic
+// diagnostics): 0.43-0.82 of the whole-block order where a smaller size under
+// a head replaced one larger block, 1.03-1.14 where it only added word steps
+// to the same number of product pairs. Crediting it again needs the evidence
+// named above and a check that the final recipe keeps the credited head (the
+// cyclic ring may leave ring-dn < head limbs above the divisor, its cheaper
+// pair a lower limit; complete blocks plus a padded one measured 1.22-1.28 of
+// near-equal blocks at dn=387141..1310717 and 1.56 at 147454,
+// results/divrem_stageA2_2026-09-18/wip2, W16, 8 executions), gated on a
+// policy plan that reaches it.
 // The 3/2 estimate exceeds the quotient limb by at most one.
 inline constexpr unsigned head_correction_limit = 2;
 } // namespace sbn::v3::divrem_tuning

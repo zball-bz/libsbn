@@ -466,6 +466,7 @@ int main() {
     shift_gates(70, 141, 0, 1);
     shift_gates(300, 601, 300, 1);
     // The word-division head is live under the policy's own plans (shorter numerators), not only on requested block sizes.
+    // A head the policy plans for its longest numerator exists only above 2^20 divisor limbs: divrem_contract_test.
     assert(total_short_heads);
     printf("divrem policy plans: %u executions of shorter numerators served their leftover limbs by word division\n", total_short_heads);
     puts("exact division gates PASS");
