@@ -167,6 +167,13 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
     for (size_t j = 0; j < divs.size(); ++j) {
         const auto &d = divs[j];
         s.prepare(d);
+        sbn3_divrem_metrics before{};
+        sbn3_divrem_get_metrics(s.bound, &before);
+        // D-1 as limbs, to recognize the pattern whose second head limb is B-1.
+        std::vector<uint64_t> dm1(d);
+        for (size_t k = 0; k < dn && !dm1[k]--; ++k) {
+        }
+        const bool normalized = d.back() >> 63;
         auto nums = numerators(d, nn);
         if (nn > 2 * dn && j == 0)
             for (auto &n : numerators(d, nn - dn / 2))
@@ -182,6 +189,9 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
             assert(out.quotient_limbs == trim(q.data(), q.size()) && out.remainder_limbs == trim(r.data(), dn));
             assert(out.corrections <= 8 * (s.info.block_limbs ? (q.size() + s.info.block_limbs - 1) / s.info.block_limbs : 1));
             certify(n.data(), count, d.data(), dn, q.data(), out.quotient_limbs, r.data(), out.remainder_limbs, exact);
+            // Word-division head, <n2,n1> == <d1,d0>: below a zero first limb the second head limb is exactly B-1.
+            if (normalized && count == nn && s.info.head_limbs >= 2 && std::equal(dm1.begin(), dm1.end(), n.begin() + (nn - dn)))
+                assert(q[q.size() - 1] == 0 && q[q.size() - 2] == UINT64_MAX);
             corrections += out.corrections;
             ++executes;
             if (first_n.empty() && count == nn) {
@@ -190,6 +200,16 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
                 first_r = r;
             }
         }
+        // The planned head is served product-free, and on a normalized divisor with a nonzero low part the
+        // crafted <d1,d0>-over-zeros numerator forces the 3/2 estimate's add-back.
+        sbn3_divrem_metrics after{};
+        sbn3_divrem_get_metrics(s.bound, &after);
+        if (s.info.head_limbs) {
+            assert(after.head_limbs >= before.head_limbs + s.info.head_limbs);
+            if (normalized && dn >= 3 && nn > dn)
+                assert(after.head_corrections > before.head_corrections);
+        } else if (s.info.algorithm != SBN3_DIVREM_BARRETT)
+            assert(!after.head_limbs && !after.head_corrections);
     }
     // Signed wrapper on the last prepared divisor.
     {

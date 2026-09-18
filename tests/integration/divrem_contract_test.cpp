@@ -105,6 +105,11 @@ bool run(const Case &c) {
     check(d0, n0, true);
     check(d0, n1, false);
     check(d0, n2, false);
+    if (c.head) { // team-wide word division: the crafted numerator takes the add-back through the stitched parts
+        sbn3_divrem_metrics head{};
+        sbn3_divrem_get_metrics(s.bound, &head);
+        assert(head.head_limbs >= 2 * c.head && head.head_corrections >= 1);
+    }
     s.prepare(d1);
     check(d1, n0, false);
     s.prepare(d0);

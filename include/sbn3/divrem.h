@@ -71,6 +71,7 @@ typedef struct sbn3_divrem_metrics {
     uint64_t prepare_ns,execute_ns;        /* last prepare / execute, timing option only */
     uint64_t prepares,executes,corrections; /* since bind */
     unsigned products_executed;            /* last execute */
+    uint64_t head_limbs,head_corrections;  /* since bind: quotient limbs by word division; their add-backs */
 } sbn3_divrem_metrics;
 typedef struct sbn3_divrem_binding sbn3_divrem_binding;
 
