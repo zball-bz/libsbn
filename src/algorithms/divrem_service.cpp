@@ -389,7 +389,7 @@ void insert(Ranked *list, unsigned &count, const Candidate &c) {
 }
 void rank(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
-    size_t candidates[4]{}, whole = 0; // whole: complete dn-limb blocks, offered only under their word-division head
+    size_t candidates[4]{};
     unsigned count = 0;
     auto add = [&](size_t in) {
         in = std::min(in, std::min(dn, qn));
@@ -409,17 +409,9 @@ void rank(const Plan &p, Ranking &r) {
         const size_t bmin = (qn + dn - 1) / dn;
         add((qn + bmin - 1) / bmin);
         add((qn + bmin) / (bmin + 1));
-        // Complete dn-limb blocks under a short word-division head (2d/d has
-        // qn = dn+1: one full-inverse block plus the first quotient limb),
-        // where the larger preparation is amortized; the cost order decides.
-        const double applications = double(std::max(1u, p.options.reuse_hint)) * double(qn / dn);
-        if (qn % dn <= divrem_tuning::head_candidate_limbs && dn >= divrem_tuning::head_candidate_min_divisor &&
-            p.options.workers > 1 && applications >= divrem_tuning::head_candidate_min_applications) {
-            const unsigned before = count;
-            add(dn);
-            if (count > before && qn % dn)
-                whole = dn;
-        }
+        // Complete dn-limb blocks (a full inverse for 2d/d) are served on
+        // request (block_limbs) and are not a policy candidate: see
+        // divrem_tuning.
     }
     if (count == 1) {
         r.single = true;
@@ -428,7 +420,7 @@ void rank(const Plan &p, Ranking &r) {
     }
     for (unsigned j = 0; j < count; ++j) {
         Candidate c{};
-        if (evaluate(p, candidates[j], c, false) && (candidates[j] != whole || c.word_head))
+        if (evaluate(p, candidates[j], c, false))
             insert(r.ordered, r.count, c);
     }
 }

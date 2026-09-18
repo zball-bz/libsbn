@@ -41,7 +41,8 @@ typedef struct sbn3_divrem_options {
     unsigned prime_count;   /* 0 selects; explicit 4..10 pins the NTT family of every product */
     size_t memory_budget;   /* 0: no filter; otherwise the policy passes over block sizes whose storage_bytes exceed it */
     unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot */
-    size_t block_limbs;     /* 0: policy; otherwise the requested Barrett block size (tests/experiments) */
+    size_t block_limbs;     /* 0: policy (near-equal blocks); otherwise the requested Barrett block size:
+                               denominator_limbs asks for complete blocks under a full inverse */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */
     unsigned algorithm;     /* 0: policy; otherwise force SBN3_DIVREM_SCHOOLBOOK or SBN3_DIVREM_BARRETT (dn>=3; experiments) */
     unsigned timing;        /* 1 records prepare/execute durations */

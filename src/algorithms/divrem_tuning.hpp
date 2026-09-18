@@ -47,33 +47,24 @@ inline constexpr size_t head_cache_limbs = size_t(1) << 21; // divisor + residua
 // 24, 24, 8, 25 and 6: the product-pair estimate is up to 1.4x high, and a
 // head past the true crossover would cost more than the padded block.
 inline constexpr double head_cost_margin = 0.6;
-// Candidate rule: complete dn-limb blocks (a full inverse for 2d/d) are
-// considered when the head they leave is at most head_candidate_limbs, the
-// divisor has at least head_candidate_min_divisor limbs, the team is wider
-// than one worker and the prepared divisor serves at least
-// head_candidate_min_applications block applications (reuse hint times
-// complete blocks); the cost order still decides among candidates.
-// Measured (experiments results/divrem_stageA_2026-09-18/final, arithmetic
-// diagnostics): a full inverse never pays for a single application (one-shot
-// 2d/d: 9-29% behind the best of two or three blocks at W16, 74% at 4096 W1)
-// and lost 5-21% at two (one-shot 3d/d, dn=16384, W4, pre-amortization-2f87681);
-// it pays back within 1-4 reuses, and every chosen point with seven or more
-// applications at W4, W8 and W16 from dn=11585 up is faster than the previous
-// default or level with it (0.49-1.01). Below dn=2896 the short-product cost
-// order picks it wrongly (1.03-1.82, wip1) and at one worker it is mixed
-// (0.90-1.12): neither is enabled.
-// The candidate stands only with its word-division head. When the final
-// cyclic recipe cannot serve the head (the ring leaves ring-dn < head limbs
-// above the divisor, or its cheaper pair lowers the head limit) the policy
-// returns to the other block sizes: complete blocks plus a padded one
-// measured 1.22-1.28 of the previous default at dn=387141..1310717 and 1.56
-// at 147454 (results/divrem_stageA2_2026-09-18/wip2, W16, 8 executions).
-// Moving to the next ring with room instead was measured there and not
-// adopted: 0.57-0.94 at six ring-growth representatives but 1.18 at
-// dn=147454 (ring 1.28x); the cost order does not price that trade reliably.
-inline constexpr size_t head_candidate_limbs = 8;
-inline constexpr size_t head_candidate_min_divisor = 8192;
-inline constexpr double head_candidate_min_applications = 4.0;
+// Complete dn-limb blocks (a full inverse for 2d/d, the quotient limbs above
+// them by word division) are served on request (options.block_limbs) and are
+// not a policy candidate. As one they measured (stage A, 2026-09-18,
+// arithmetic diagnostics of prepare + 8 executions, not fresh-call timing)
+// 0.49-0.91 of the near-equal blocks up to dn~49k and 0.54-0.92 above
+// dn~262k, but level or behind in between (0.92-1.15 at 16 workers, 1.03-1.06
+// at 8, 1.09 for a one-shot 8d/d), where the cost order's modelled ratio does
+// not predict the measured one, and they hold 1.24-3.29 times the storage for
+// 2d/d (experiments results/divrem_stageA_2026-09-18/final,
+// divrem_stageA2_2026-09-18/final/ab-zone*, divrem_stageA3_2026-09-18).
+// Promotion needs fresh-call cost, boundary and equal-budget evidence.
+// The order credits a word-division head to whichever block size it serves,
+// and the final recipe must keep that head: when the cyclic recipe cannot
+// (the ring leaves ring-dn < head limbs above the divisor, or its cheaper
+// pair lowers the head limit) the size stands behind the others. Complete
+// blocks plus a padded one measured 1.22-1.28 of near-equal blocks at
+// dn=387141..1310717 and 1.56 at 147454
+// (results/divrem_stageA2_2026-09-18/wip2, W16, 8 executions).
 // The 3/2 estimate exceeds the quotient limb by at most one.
 inline constexpr unsigned head_correction_limit = 2;
 } // namespace sbn::v3::divrem_tuning
