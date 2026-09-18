@@ -5,8 +5,13 @@ namespace sbn::v3::divrem_tuning {
 // Clang 21.1.8. Calibrated by experiments/results/divrem_2026-09-18 (crossover
 // sweep of the schoolbook entry against the block-Barrett service); the
 // values only choose between exact algorithms and never change results.
+// Forced-algorithm sweep (results/divrem_2026-09-18/crossover2): the block
+// Barrett execute beats the 3/2 schoolbook from dn=64 on balanced shapes
+// (1.8x at 64x128, 2.9x at 64x512) and from 12 quotient limbs at any dn
+// (1.5-2.7x at 12, 1.4-5.6x at 16); at 8 quotient limbs the two are within
+// noise. The thresholds below keep the schoolbook where it is at least as fast.
 inline constexpr size_t schoolbook_max_divisor = 64;   // dn <= this: 3/2 schoolbook
-inline constexpr size_t schoolbook_max_quotient = 16;  // quotient limbs <= this: schoolbook (O(dn) per limb)
+inline constexpr size_t schoolbook_max_quotient = 8;   // quotient limbs <= this: schoolbook (O(dn) per limb)
 // Planning seed for the block inverse: a Newton ladder to precision n costs
 // about this many linear n x n products (rungs sum to ~2 products of the
 // final size plus the smaller rungs). Only orders block-size candidates.

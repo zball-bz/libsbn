@@ -40,6 +40,7 @@ typedef struct sbn3_divrem_options {
     unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot */
     size_t block_limbs;     /* 0: policy; otherwise the requested Barrett block size (tests/experiments) */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */
+    unsigned algorithm;     /* 0: policy; otherwise force SBN3_DIVREM_SCHOOLBOOK or SBN3_DIVREM_BARRETT (dn>=3; experiments) */
     unsigned timing;        /* 1 records prepare/execute durations */
 } sbn3_divrem_options;
 typedef enum sbn3_divrem_algorithm {
@@ -47,7 +48,8 @@ typedef enum sbn3_divrem_algorithm {
     SBN3_DIVREM_SCHOOLBOOK=1, /* 3/2 quotient estimates, submul updates */
     SBN3_DIVREM_BARRETT=2     /* block quotients from a Newton inverse, cyclic residual */
 } sbn3_divrem_algorithm;
-typedef struct sbn3_divrem_plan {uint64_t opaque[128];} sbn3_divrem_plan;
+/* Carries the resolved block inverse and product recipes so bind performs no plan search. */
+typedef struct sbn3_divrem_plan {uint64_t opaque[2560];} sbn3_divrem_plan;
 typedef struct sbn3_divrem_info {
     size_t numerator_limbs,denominator_limbs,quotient_limbs,remainder_limbs;
     unsigned algorithm,workers,products,blocks; /* blocks: quotient blocks for the longest numerator */

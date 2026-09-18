@@ -42,13 +42,21 @@ struct Plan {
     size_t xbuf_offset = 0, tbuf_offset = 0, ubuf_offset = 0, pbuf_offset = 0, qbuf_offset = 0, rbuf_offset = 0;
     size_t tcap = 0, pcap = 0, scratch_words = 0;
 };
-static_assert(sizeof(Plan) <= sizeof(sbn3_divrem_plan));
 struct Queried {
     sbn3_mul_plan producer{}, consumer{};
     sbn3_product_info producer_info{}, consumer_info{};
     sbn3_spectrum_desc future{};
     bool cached = false;
 };
+// The opaque plan carries the resolved recipes: bind neither searches nor
+// re-queries; it only checks the seal and rebuilds the layout from them.
+struct Stored {
+    Plan plan{};
+    Queried uq{}, tq{};
+    sbn3_newton_plan nplan{};
+    sbn3_newton_info ninfo{};
+};
+static_assert(sizeof(Stored) <= sizeof(sbn3_divrem_plan));
 struct Binding {
     uint64_t marker = magic;
     Plan plan{};
@@ -75,7 +83,7 @@ uint64_t seal(const Plan &p) {
     uint64_t h = feed(1469598103934665603ULL, p.marker);
     const uint64_t words[] = {p.request.numerator_limbs, p.request.denominator_limbs, p.options.workers,
                               p.options.prime_count, p.options.memory_budget, p.options.reuse_hint,
-                              p.options.block_limbs, p.options.residual, p.options.timing, p.info.algorithm, p.info.storage_bytes,
+                              p.options.block_limbs, p.options.residual, p.options.algorithm, p.options.timing, p.info.algorithm, p.info.storage_bytes,
                               p.info.plan_id, p.in, p.ring, p.xlen, p.u.np, p.u.algorithm, p.u.workers,
                               uint64_t(p.u.T), p.u.ring, p.u.cached, p.t.np, p.t.algorithm, p.t.workers,
                               uint64_t(p.t.T), p.t.ring, p.t.cached, p.persistent_offset, p.shared_offset,
@@ -84,11 +92,9 @@ uint64_t seal(const Plan &p) {
         h = feed(h, w);
     return h;
 }
-Plan load(const sbn3_divrem_plan &p) {
-    Plan q{};
-    memcpy(&q, p.opaque, sizeof q);
-    require(q.marker == magic && q.seal == seal(q), SBN3_FATAL_ARGUMENT, "division plan identity");
-    return q;
+void load(const sbn3_divrem_plan &p, Stored &s) {
+    memcpy(&s, p.opaque, sizeof s);
+    require(s.plan.marker == magic && s.plan.seal == seal(s.plan), SBN3_FATAL_ARGUMENT, "division plan identity");
 }
 size_t aligned(size_t n, size_t a) {
     size_t r = 0;
@@ -255,13 +261,17 @@ struct Candidate {
     Queried uq{}, tq{};
     double total = INFINITY;
 };
-bool evaluate(const Plan &p, size_t in, Candidate &c) {
+// Block-size ordering uses the linear residual recipe only; the cyclic
+// lattice (the expensive part of the query) runs once for the chosen size.
+bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
     const size_t blocks = (qn + in - 1) / in;
     const double reuse = std::max(1u, p.options.reuse_hint);
     Cost uc{}, tc{};
     if (!choose_u(p, in, c.u, c.uq, uc))
         return false;
+    if (!lattice && !p.options.residual)
+        p.options.residual = 1;
     if (!choose_t(p, dn, in, reuse * double(blocks), c.t, c.tq, tc, c.ring))
         return false;
     c.in = in;
@@ -272,9 +282,8 @@ bool evaluate(const Plan &p, size_t in, Candidate &c) {
 // choices are re-queried exactly.
 bool assemble(Plan &p, bool replay, Queried &uq, Queried &tq) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
-    if (replay) {
+    if (replay) // exact re-query of stored choices (tests/diagnostics; bind uses the stored recipes)
         return query_product(p.in + 1, p.in, p.u, 1, uq) && query_product(dn, p.in, p.t, 2, tq);
-    }
     size_t candidates[4]{};
     unsigned count = 0;
     auto add = [&](size_t in) {
@@ -299,11 +308,16 @@ bool assemble(Plan &p, bool replay, Queried &uq, Queried &tq) {
     Candidate best{};
     for (unsigned j = 0; j < count; ++j) {
         Candidate c{};
-        if (evaluate(p, candidates[j], c) && c.total < best.total)
+        if (evaluate(p, candidates[j], c, count == 1) && c.total < best.total)
             best = c;
     }
     if (!std::isfinite(best.total))
         return false;
+    if (count > 1) {
+        Candidate full{};
+        if (evaluate(p, best.in, full, true))
+            best = full;
+    }
     p.in = best.in;
     p.ring = best.ring;
     p.u = best.u;
@@ -623,9 +637,9 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     *info = {};
     Plan p{};
     p.request = *request;
-    p.options = options ? *options : sbn3_divrem_options{1, 0, 0, 0, 0, 0, 0};
+    p.options = options ? *options : sbn3_divrem_options{1, 0, 0, 0, 0, 0, 0, 0};
     const size_t dn = request->denominator_limbs, nn = request->numerator_limbs;
-    if (!dn || !p.options.workers || p.options.workers > 32 || p.options.timing > 1 || p.options.residual > 2 ||
+    if (!dn || !p.options.workers || p.options.workers > 32 || p.options.timing > 1 || p.options.residual > 2 || p.options.algorithm > 2 ||
         (p.options.prime_count && (p.options.prime_count < newton_limits::first_ntt_prime_count ||
                                    p.options.prime_count > newton_limits::last_ntt_prime_count)))
         return SBN3_UNSUPPORTED;
@@ -638,35 +652,38 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     i.remainder_limbs = dn;
     if (dn <= 2)
         i.algorithm = SBN3_DIVREM_WORD;
+    else if (p.options.algorithm)
+        i.algorithm = p.options.algorithm == SBN3_DIVREM_BARRETT && i.quotient_limbs ? SBN3_DIVREM_BARRETT : SBN3_DIVREM_SCHOOLBOOK;
     else if (dn <= divrem_tuning::schoolbook_max_divisor || i.quotient_limbs <= divrem_tuning::schoolbook_max_quotient)
         i.algorithm = SBN3_DIVREM_SCHOOLBOOK;
     else
         i.algorithm = SBN3_DIVREM_BARRETT;
-    Queried uq{}, tq{};
-    sbn3_newton_info ninfo{};
+    Stored s{};
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
-        if (!assemble(p, false, uq, tq))
+        if (!assemble(p, false, s.uq, s.tq))
             return SBN3_UNSUPPORTED;
-        sbn3_newton_plan nplan{};
         const auto no = newton_options(p);
-        const auto status = sbn3_newton_query(SBN3_NEWTON_INVERSE, p.in, &no, &nplan, &ninfo);
+        const auto status = sbn3_newton_query(SBN3_NEWTON_INVERSE, p.in, &no, &s.nplan, &s.ninfo);
         if (status != SBN3_SUPPORTED)
             return status;
     }
-    if (!layout(p, uq, tq, &ninfo))
+    if (!layout(p, s.uq, s.tq, &s.ninfo))
         return SBN3_QUERY_CAPACITY;
     *info = p.info;
     if (p.options.memory_budget && p.info.storage_bytes > p.options.memory_budget)
         return SBN3_QUERY_CAPACITY;
     p.seal = seal(p);
+    s.plan = p;
     memset(out, 0, sizeof *out);
-    memcpy(out->opaque, &p, sizeof p);
+    memcpy(out->opaque, &s, sizeof s);
     return SBN3_SUPPORTED;
 }
 extern "C" void sbn3_divrem_bind(const sbn3_divrem_plan *opaque, sbn3_arena *arena, size_t offset, sbn3_team *team,
                                  sbn3_divrem_binding **out) {
     require(opaque && arena && team && out, SBN3_FATAL_ARGUMENT, "division bind arguments");
-    Plan p = load(*opaque);
+    Stored s{};
+    load(*opaque, s);
+    Plan p = s.plan;
     require(team->arena == arena && team->width >= p.info.workers && pthread_equal(team->creator, pthread_self()) &&
                 !team->busy,
             SBN3_FATAL_TEAM, "division bind team");
@@ -675,18 +692,15 @@ extern "C" void sbn3_divrem_bind(const sbn3_divrem_plan *opaque, sbn3_arena *are
                 !(reinterpret_cast<uintptr_t>(arena->base + offset) & (p.info.storage_alignment - 1)) &&
                 arena->unleased(offset, p.info.storage_bytes),
             SBN3_FATAL_WORKSPACE, "division prepared unleased range");
-    Queried uq{}, tq{};
-    sbn3_newton_info ninfo{};
-    sbn3_newton_plan nplan{};
-    if (p.info.algorithm == SBN3_DIVREM_BARRETT) {
-        require(assemble(p, true, uq, tq), SBN3_FATAL_MATH, "division bind product replay");
-        const auto no = newton_options(p);
-        require(sbn3_newton_query(SBN3_NEWTON_INVERSE, p.in, &no, &nplan, &ninfo) == SBN3_SUPPORTED, SBN3_FATAL_MATH,
-                "division bind inverse replay");
-    }
+    // Layout replay from the stored recipes proves the plan's own consistency;
+    // the product and Newton plans carry their own seals.
     const auto expected = p.info;
-    require(layout(p, uq, tq, &ninfo) && p.info.plan_id == expected.plan_id && p.info.storage_bytes == expected.storage_bytes,
+    require(layout(p, s.uq, s.tq, &s.ninfo) && p.info.plan_id == expected.plan_id &&
+                p.info.storage_bytes == expected.storage_bytes,
             SBN3_FATAL_ARGUMENT, "division query/bind equivalence");
+    const Queried &uq = s.uq, &tq = s.tq;
+    const sbn3_newton_plan &nplan = s.nplan;
+    const sbn3_newton_info &ninfo = s.ninfo;
     auto control = arena->acquire(offset, p.info.control_bytes);
     auto *b = ::new (control.data) Binding{};
     b->plan = p;

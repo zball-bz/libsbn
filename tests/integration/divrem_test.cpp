@@ -177,9 +177,9 @@ struct Service {
     sbn3_divrem_info info{};
     sbn3_divrem_binding *bound = nullptr;
     size_t offset = 0;
-    Service(Fixture &fixture, size_t nn, size_t dn, size_t block = 0, unsigned reuse = 0, unsigned residual = 0) : f(fixture) {
+    Service(Fixture &fixture, size_t nn, size_t dn, size_t block = 0, unsigned reuse = 0, unsigned residual = 0, unsigned algorithm = 0) : f(fixture) {
         sbn3_divrem_request request{nn, dn};
-        sbn3_divrem_options options{sbn3_team_workers(f.team), 0, 0, reuse, block, residual, 1};
+        sbn3_divrem_options options{sbn3_team_workers(f.team), 0, 0, reuse, block, residual, algorithm, 1};
         allocation_watch_start();
         const auto rc = sbn3_divrem_query(&request, &options, &plan, &info);
         assert(!allocation_watch_stop());
@@ -224,9 +224,9 @@ struct Service {
     }
     ~Service() { close(); }
 };
-static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block = 0, unsigned reuse = 0, unsigned residual = 0) {
+static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block = 0, unsigned reuse = 0, unsigned residual = 0, unsigned algorithm = 0) {
     Fixture f(workers);
-    Service s(f, nn, dn, block, reuse, residual);
+    Service s(f, nn, dn, block, reuse, residual, algorithm);
     const bool exact = nn * dn <= (size_t(1) << 20);
     unsigned executes = 0;
     uint64_t corrections = 0;
@@ -309,6 +309,9 @@ int main() {
         service_gates(1000, 2000, 1, block);
     service_gates(300, 4096, 1);
     service_gates(1000, 2000, 1, 0, 0, 1);
+    service_gates(32, 64, 1, 0, 0, 0, 2);
+    service_gates(4096, 4100, 1, 0, 0, 0, 2);
+    service_gates(1000, 2000, 1, 0, 0, 0, 1);
     service_gates(1000, 2000, 1, 0, 0, 2);
     service_gates(65536, 131072, 16, 0, 0, 2);
     service_gates(4096, 8192, 16, 0, 8);
