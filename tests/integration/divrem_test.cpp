@@ -147,6 +147,7 @@ static void basecase_gates() {
                 }
     printf("divrem basecase: %u shapes/patterns, exact oracle, signed wrapper PASS\n", cases);
 }
+static unsigned total_short_heads = 0; // executions under policy plans (no requested block size) that used the word-division head
 static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block = 0, unsigned reuse = 0, unsigned residual = 0, unsigned algorithm = 0,
                           const std::vector<size_t> &lengths = {}, int expected_head = -1) {
     Fixture f(workers);
@@ -158,7 +159,7 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
                size_t(s.info.blocks) * s.info.block_limbs + s.info.head_limbs >= s.info.quotient_limbs &&
                size_t(s.info.blocks) * s.info.block_limbs + s.info.head_limbs < s.info.quotient_limbs + s.info.block_limbs);
     const bool exact = nn * dn <= (size_t(1) << 20);
-    unsigned executes = 0;
+    unsigned executes = 0, short_heads = 0;
     uint64_t corrections = 0;
     std::vector<uint64_t> first_q, first_r, first_n;
     auto divs = divisors(dn);
@@ -182,6 +183,14 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
             for (size_t length : lengths)
                 for (auto &n : numerators(d, length))
                     nums.push_back(n);
+        // Shorter numerators that leave one to three quotient limbs above complete blocks of the plan, and quotients
+        // of one to three limbs: the use every plan, the policy's included, makes of the word-division head.
+        if (j == 0 && s.info.algorithm == SBN3_DIVREM_BARRETT)
+            for (size_t complete : {size_t(s.info.blocks) - 1, size_t(0)})
+                for (size_t left = 1; left <= 3; ++left)
+                    if (const size_t length = dn + complete * s.info.block_limbs + left - 1; length < nn)
+                        for (auto &n : numerators(d, length))
+                            nums.push_back(n);
         for (auto &n : nums) {
             const size_t count = n.size();
             std::vector<uint64_t> q(count >= dn ? count - dn + 1 : 0, 0xdead), r(dn, 0xdead);
@@ -190,9 +199,17 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
             const auto out = s.execute(n, q, r);
             sbn3_divrem_get_metrics(s.bound, &exit);
             assert(out.quotient_limbs == trim(q.data(), q.size()) && out.remainder_limbs == trim(r.data(), dn));
-            // A full-length numerator takes exactly the planned head limbs by word division and the planned product pairs.
-            if (s.info.algorithm == SBN3_DIVREM_BARRETT && trim(n.data(), count) == nn)
-                assert(exit.head_limbs - entry.head_limbs == s.info.head_limbs && exit.products_executed == 2 * s.info.blocks);
+            // Every execution serves the quotient limbs left over by the block size either by word division, without a
+            // product pair, or as one padded block; a full-length numerator does exactly what the plan states.
+            if (const size_t live = trim(n.data(), count); s.info.algorithm == SBN3_DIVREM_BARRETT && live >= dn) {
+                const size_t in = s.info.block_limbs, quotient = live - dn + 1, left = quotient % in;
+                const uint64_t by_words = exit.head_limbs - entry.head_limbs;
+                assert((by_words == left && exit.products_executed == 2 * (quotient / in)) ||
+                       (!by_words && exit.products_executed == 2 * ((quotient + in - 1) / in)));
+                if (live == nn)
+                    assert(by_words == s.info.head_limbs && exit.products_executed == 2 * s.info.blocks);
+                short_heads += by_words && live < nn;
+            }
             assert(out.corrections <= 8 * (s.info.block_limbs ? (q.size() + s.info.block_limbs - 1) / s.info.block_limbs : 1));
             certify(n.data(), count, d.data(), dn, q.data(), out.quotient_limbs, r.data(), out.remainder_limbs, exact);
             // Word-division head, <n2,n1> == <d1,d0>: below a zero first limb the second head limb is exactly B-1.
@@ -250,12 +267,13 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
     std::vector<uint64_t> q(first_q.size()), r(dn);
     s.execute(first_n, q, r);
     assert(q == first_q && r == first_r);
-    printf("divrem service dn=%zu nn=%zu W%u alg=%u in=%zu ring=%zu blocks=%u head=%zu: %u executes, %zu divisors, "
-           "%llu corrections, storage %zu KiB (spectra %zu KiB, shared %zu KiB), rebind identical PASS\n",
-           dn, nn, workers, s.info.algorithm, s.info.block_limbs, s.info.ring_limbs, s.info.blocks, s.info.head_limbs, executes,
+    printf("divrem service dn=%zu nn=%zu W%u alg=%u in=%zu ring=%zu blocks=%u head=%zu: %u executes (%u shorter numerators with a "
+           "word-division head), %zu divisors, %llu corrections, storage %zu KiB (spectra %zu KiB, shared %zu KiB), rebind identical PASS\n",
+           dn, nn, workers, s.info.algorithm, s.info.block_limbs, s.info.ring_limbs, s.info.blocks, s.info.head_limbs, executes, short_heads,
            divs.size(), (unsigned long long)corrections, s.info.storage_bytes >> 10, s.info.spectrum_bytes >> 10,
            s.info.shared_bytes >> 10);
     fflush(stdout);
+    total_short_heads += block ? 0 : short_heads;
 }
 // Every normalization shift against one binding (64 re-prepares), on a shape
 // whose quotient has a two-limb word-division head above one complete block
@@ -447,5 +465,8 @@ int main() {
     shift_gates(70, 141, 70, 1);
     shift_gates(70, 141, 0, 1);
     shift_gates(300, 601, 300, 1);
+    // The word-division head is live under the policy's own plans (shorter numerators), not only on requested block sizes.
+    assert(total_short_heads);
+    printf("divrem policy plans: %u executions of shorter numerators served their leftover limbs by word division\n", total_short_heads);
     puts("exact division gates PASS");
 }
