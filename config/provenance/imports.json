@@ -42,6 +42,14 @@
       ]
     },
     {
+      "source": "libsbn/src/x86_64/submul_1.s",
+      "destination": "src/core/x86_64/submul_1.s",
+      "sha256": "1bfb17f067900970a7d08589d1a2ed08d8e78e45fa4bd1a724965e97049be7ae",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
       "source": "libsbn/src/x86_64/mul_basecase_le6.S",
       "destination": "src/core/x86_64/mul_basecase_le6.S",
       "sha256": "305075269cca071272d5baab64ac69c9b28c23d25eac29e842063641392217cc",

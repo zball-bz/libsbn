@@ -80,6 +80,16 @@
           "group": "reference"
         }
       ]
+    },
+    {
+      "name": "divrem",
+      "sources": [
+        {
+          "path": "examples/divrem.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
     }
   ]
 }

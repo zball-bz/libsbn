@@ -19,6 +19,9 @@ boundary. Do not bypass the guard or relabel an approximate intermediate as an
 exact result. The series sum service combines working-precision components and
 certifies the final value, including signed coefficients and cancellation.
 
+Exact integer division (divrem.h) returns the true quotient and remainder;
+its contracts are summarized in [division](division.md).
+
 The headers newton.h, series.h, formula.h, formula_sum.h and constants.h define
 precise public domains. Tests include independent integer references, modular
 checks, range/capacity checks and numerical-boundary cases.

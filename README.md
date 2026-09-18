@@ -33,6 +33,7 @@ see [LICENSE.md](LICENSE.md).
 - Small, FFT and NTT multiplication; squares, cached operands and supported product windows/rings.
 - Inverse, approximate division and reciprocal square root services.
 - Exact finite binary splitting and precision-bounded series; e, pi, ArcCoth and integer logarithms.
+- Exact integer division with remainder (unsigned and signed truncating), one-shot or with a reusable prepared divisor.
 - Formatting and parsing in bases 2 through 64 for integers and dyadic values.
 
 Individual query functions define supported domains and required storage.
@@ -49,7 +50,7 @@ Out-of-core execution/checkpointing and general-purpose arbitrary-precision floa
 
 See [building](docs/building.md), [runtime contracts](docs/runtime.md),
 [architecture](docs/architecture.md), [arithmetic](docs/arithmetic.md),
-[radix conversion](docs/radix.md) and [testing](docs/testing.md).
+[radix conversion](docs/radix.md), [exact division](docs/division.md) and [testing](docs/testing.md).
 Public declarations are in [include/sbn3](include/sbn3); runnable examples are in [examples](examples).
 
 ## Research checkout

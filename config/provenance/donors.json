@@ -40,7 +40,8 @@
         "libsbn/src/x86_64/addmul_2_adx.s",
         "libsbn/src/x86_64/mul_basecase_le6.S",
         "src/x86_64/addmul_basecase_le6.S",
-        "libsbn/include/sbn/detail/basecase_le6.h"
+        "libsbn/include/sbn/detail/basecase_le6.h",
+        "libsbn/src/x86_64/submul_1.s"
       ],
       "first_actions": [
         "preserve algorithm/ABI/attribution",

@@ -101,6 +101,22 @@
       ]
     },
     {
+      "path": "src/core/x86_64/submul_1.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_submul_1"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
       "path": "src/core/x86_64/mul_basecase_le6.S",
       "language": "asm_cpp",
       "group": "common",
@@ -807,6 +823,30 @@
       "donor_ids": []
     },
     {
+      "path": "src/algorithms/divrem_service.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/value/divrem_basecase.cpp",
+        "src/runtime/team.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_divrem_query",
+        "sbn3_divrem_bind",
+        "sbn3_divrem_prepare",
+        "sbn3_divrem_execute",
+        "sbn3_int_divrem_execute",
+        "sbn3_divrem_get_metrics",
+        "sbn3_divrem_unbind"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
       "path": "src/product/fft_backend.cpp",
       "language": "cxx",
       "group": "common",
@@ -843,6 +883,35 @@
         "sbn3_int_rshift"
       ],
       "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/value/divrem_basecase.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/core/x86_64/word.cpp",
+        "src/core/x86_64/submul_1.s",
+        "src/core/x86_64/add_n.s",
+        "src/core/x86_64/sub_n.s",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_divrem_basecase",
+        "sbn3_int_divrem_basecase",
+        "sbn::v3::divrem_words::schoolbook",
+        "sbn::v3::divrem_words::sbpi1_div_qr",
+        "sbn::v3::divrem_words::divrem_1",
+        "sbn::v3::divrem_words::divrem_2"
+      ],
+      "requires_symbols": [
+        "sbn3i_submul_1",
+        "sbn3i_add_n",
+        "sbn3i_sub_n"
+      ],
       "donor_ids": [
         "word_asm"
       ]
