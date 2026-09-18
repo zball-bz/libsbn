@@ -104,7 +104,13 @@ struct Binding {
     sbn3_team *team = nullptr;
     size_t offset = 0;
     sbn3_lease control{}, prepared{}, values{}, work{};
-    FormatTreePlan tree_plan{};
+    // The tree plan (175 KB) is constructed by format_tree_begin, once, and only for plans that have a tree; nothing
+    // reads it otherwise. The user-provided constructor keeps value-initialisation of the binding from
+    // zero-filling it first.
+    alignas(FormatTreePlan) unsigned char tree_plan_storage[sizeof(FormatTreePlan)];
+    FormatTreePlan &tree_plan() noexcept { return *reinterpret_cast<FormatTreePlan *>(tree_plan_storage); }
+    const FormatTreePlan &tree_plan() const noexcept { return *reinterpret_cast<const FormatTreePlan *>(tree_plan_storage); }
+    Binding() noexcept {}
     FormatTree tree{};
     int integer_root = -1, fraction_root = -1;
     sbn3_newton_plan divide{};
@@ -122,12 +128,14 @@ struct Assembly {
     sbn3_newton_plan divide{};
     sbn3_newton_info divide_info{};
     Chain integer_chain{}; // odd^(64 integer_fragments) with the winners of its products
+    bool tree_begun = false; // `tree` is raw storage until *_tree_begin constructed it
     sbn3_query_result run() noexcept;
     sbn3_query_result assemble() noexcept;
 };
 sbn3_query_result Assembly::run() noexcept {
     const auto rc = assemble();
-    tree.transcript = nullptr; // the tree plan outlives the transcript
+    if (tree_begun)
+        tree.transcript = nullptr; // the tree plan outlives the transcript
     return rc;
 }
 sbn3_query_result Assembly::assemble() noexcept {
@@ -202,6 +210,7 @@ sbn3_query_result Assembly::assemble() noexcept {
     if (trees) {
         auto rc = format_tree_begin(s.base, p.options.workers,
                                     std::max(p.integer_path == integer_tree ? p.integer_fragments : 0, p.fraction_fragments), tree);
+        tree_begun = true;
         if (rc != SBN3_SUPPORTED)
             return rc;
         tree.transcript = &transcript;
@@ -403,7 +412,7 @@ void integer_tree_run(Binding &b, const uint64_t *m, unsigned char *digits) noex
         numerator[sh / 64 + 1] |= 1;
     // root = floor(numerator * reciprocal / B^n): within four units of B^n (a + 3/4) / b^(64 F)
     {
-        const auto &shape = b.tree_plan.extra[p.root_product];
+        const auto &shape = b.tree_plan().extra[p.root_product];
         Frame scratch = Frame::borrow(*b.arena, b.work, b.work.data, b.work.bytes);
         auto *z = scratch.alloc<uint64_t>(shape.output_limbs);
         auto work = scratch.subframe(shape.work_bytes, shape.work_alignment);
@@ -420,7 +429,7 @@ void integer_tree_run(Binding &b, const uint64_t *m, unsigned char *digits) noex
 // prefix must be incremented.
 bool resolve(Binding &b, const uint64_t *m, const unsigned char *digits, sbn3_format_result &result) noexcept {
     const auto &p = b.plan;
-    const auto &base = b.tree_plan.base;
+    const auto &base = b.tree_plan().base;
     const size_t count = p.spec.limbs;
     const uint64_t bits = p.fraction_bits;
     // frac(X) * base^tree_digits is an integer: the computed string is that integer minus one.
@@ -442,7 +451,7 @@ bool resolve(Binding &b, const uint64_t *m, const unsigned char *digits, sbn3_fo
     const uint64_t scale = uint64_t(base.twos) * fragment_digits * fragments;
     Frame scratch = Frame::borrow(*b.arena, b.work, b.work.data, b.work.bytes);
     const auto chain = chain_of(base, fragments);
-    const uint64_t *power = chain_evaluate(chain, b.tree_plan.rail, b.tree.rail, b.team, p.options.workers, scratch);
+    const uint64_t *power = chain_evaluate(chain, b.tree_plan().rail, b.tree.rail, b.team, p.options.workers, scratch);
     uint64_t exact = 0;
     if (bits <= scale) {
         uint64_t low = 0;
@@ -472,7 +481,7 @@ bool resolve(Binding &b, const uint64_t *m, const unsigned char *digits, sbn3_fo
 }
 void fraction_tree_run(Binding &b, const uint64_t *m, unsigned char *out, sbn3_format_result &result) noexcept {
     const auto &p = b.plan;
-    const size_t n = b.tree_plan.root_limbs(b.fraction_root), count = p.spec.limbs;
+    const size_t n = b.tree_plan().root_limbs(b.fraction_root), count = p.spec.limbs;
     const int64_t position = p.point - int64_t(64) * int64_t(n);
     const uint64_t *y = nullptr;
     if (position >= 0 && !(p.point & 63) && uint64_t(p.point) <= uint64_t(64) * count) {
@@ -550,7 +559,9 @@ extern "C" sbn3_query_result sbn3_format_query(const sbn3_format_spec *spec, con
         p.options.workers = 1;
     if (!p.options.use_alphabet)
         memset(p.options.alphabet, 0, sizeof p.options.alphabet);
-    FormatTreePlan tree{};
+    // Raw storage: format_tree_begin constructs the tree plan, for plans that have a tree.
+    alignas(FormatTreePlan) unsigned char tree_storage[sizeof(FormatTreePlan)];
+    auto &tree = *reinterpret_cast<FormatTreePlan *>(tree_storage);
     PlanTranscript transcript{};
     Assembly a{p, tree, transcript};
     const auto rc = a.run();
@@ -598,7 +609,7 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
     b->control = control;
     // The assembly again, product by product from the transcript; its identity must be the sealed one.
     Plan replay = p;
-    Assembly a{replay, b->tree_plan, transcript, &p};
+    Assembly a{replay, b->tree_plan(), transcript, &p};
     a.divide = divide;
     require(a.run() == SBN3_SUPPORTED && replay.tree_id == p.tree_id && replay.info.storage_bytes == p.info.storage_bytes &&
                 replay.work_bytes == p.work_bytes && replay.prepared_bytes == p.prepared_bytes && replay.pool_bytes == p.pool_bytes &&
@@ -623,21 +634,21 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
     } else {
         auto *programs = reinterpret_cast<ProductProgram *>(static_cast<uint8_t *>(control.data) +
                                                             align_to(sizeof(Binding), 64));
-        auto *cyclic = reinterpret_cast<RailProduct *>(programs + b->tree_plan.program_slots());
+        auto *cyclic = reinterpret_cast<RailProduct *>(programs + b->tree_plan().program_slots());
         auto *rings = reinterpret_cast<RingStage *>(
             static_cast<uint8_t *>(control.data) +
-            align_to(size_t(reinterpret_cast<uint8_t *>(cyclic + b->tree_plan.class_count) - static_cast<uint8_t *>(control.data)), 64));
-        format_tree_bind(b->tree, b->tree_plan, p.options.use_alphabet ? p.options.alphabet : nullptr, *arena, *team,
+            align_to(size_t(reinterpret_cast<uint8_t *>(cyclic + b->tree_plan().class_count) - static_cast<uint8_t *>(control.data)), 64));
+        format_tree_bind(b->tree, b->tree_plan(), p.options.use_alphabet ? p.options.alphabet : nullptr, *arena, *team,
                          b->prepared, b->work, b->limbs(p.rail_at), programs, cyclic, rings, offset + p.pool_offset);
     }
     if (p.integer_path == integer_tree) {
         // Normalized divisor: odd^(64 F) shifted to the top of divide_limbs limbs; the numerator shift
         // absorbs the power of two of the base.
-        const auto &base = b->tree_plan.base;
+        const auto &base = b->tree_plan().base;
         const size_t n = p.divide_limbs;
         Frame scratch = Frame::borrow(*arena, b->work, b->work.data, b->work.bytes);
         const auto &chain = a.integer_chain;
-        const uint64_t *power = chain_evaluate(chain, b->tree_plan.rail, b->tree.rail, team, p.options.workers, scratch);
+        const uint64_t *power = chain_evaluate(chain, b->tree_plan().rail, b->tree.rail, team, p.options.workers, scratch);
         size_t top = chain.limbs;
         while (top && !power[top - 1])
             --top;

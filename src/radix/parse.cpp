@@ -90,7 +90,13 @@ struct Binding {
     sbn3_team *team = nullptr;
     size_t offset = 0;
     sbn3_lease control{}, prepared{}, values{}, work{};
-    ParseTreePlan tree_plan{};
+    // The tree plan (163 KB) is constructed by parse_tree_begin, once, and only for plans that have a tree; nothing
+    // reads it otherwise. The user-provided constructor keeps value-initialisation of the binding from
+    // zero-filling it first.
+    alignas(ParseTreePlan) unsigned char tree_plan_storage[sizeof(ParseTreePlan)];
+    ParseTreePlan &tree_plan() noexcept { return *reinterpret_cast<ParseTreePlan *>(tree_plan_storage); }
+    const ParseTreePlan &tree_plan() const noexcept { return *reinterpret_cast<const ParseTreePlan *>(tree_plan_storage); }
+    Binding() noexcept {}
     ParseTree tree{};
     int root = -1;
     sbn3_newton_plan divide{};
@@ -108,12 +114,14 @@ struct Assembly {
     sbn3_newton_plan divide{};
     sbn3_newton_info divide_info{};
     Chain power_chain{}; // odd^(64 power_fragments) with the winners of its products
+    bool tree_begun = false; // `tree` is raw storage until *_tree_begin constructed it
     sbn3_query_result run() noexcept;
     sbn3_query_result assemble() noexcept;
 };
 sbn3_query_result Assembly::run() noexcept {
     const auto rc = assemble();
-    tree.transcript = nullptr; // the tree plan outlives the transcript
+    if (tree_begun)
+        tree.transcript = nullptr; // the tree plan outlives the transcript
     return rc;
 }
 sbn3_query_result Assembly::assemble() noexcept {
@@ -155,6 +163,7 @@ sbn3_query_result Assembly::assemble() noexcept {
         if (p.fragments > max_fragments)
             return SBN3_QUERY_CAPACITY;
         auto rc = parse_tree_begin(s.base, p.options.workers, p.fragments, tree);
+        tree_begun = true;
         if (rc != SBN3_SUPPORTED)
             return rc;
         tree.transcript = &transcript;
@@ -363,7 +372,9 @@ extern "C" sbn3_query_result sbn3_parse_query(const sbn3_parse_spec *spec, const
         p.options.workers = 1;
     if (!p.options.use_alphabet)
         memset(p.options.alphabet, 0, sizeof p.options.alphabet);
-    ParseTreePlan tree{};
+    // Raw storage: parse_tree_begin constructs the tree plan, for plans that have a tree.
+    alignas(ParseTreePlan) unsigned char tree_storage[sizeof(ParseTreePlan)];
+    auto &tree = *reinterpret_cast<ParseTreePlan *>(tree_storage);
     PlanTranscript transcript{};
     Assembly a{p, tree, transcript};
     const auto rc = a.run();
@@ -410,7 +421,7 @@ extern "C" void sbn3_parse_bind(const sbn3_parse_plan *opaque, sbn3_arena *arena
     b->control = control;
     // The assembly again, product by product from the transcript; its identity must be the sealed one.
     Plan replay = p;
-    Assembly a{replay, b->tree_plan, transcript, &p};
+    Assembly a{replay, b->tree_plan(), transcript, &p};
     a.divide = divide;
     require(a.run() == SBN3_SUPPORTED && replay.tree_id == p.tree_id && replay.info.storage_bytes == p.info.storage_bytes &&
                 replay.work_bytes == p.work_bytes && replay.prepared_bytes == p.prepared_bytes &&
@@ -430,12 +441,12 @@ extern "C" void sbn3_parse_bind(const sbn3_parse_plan *opaque, sbn3_arena *arena
     b->values = arena->acquire(offset + p.values_offset, p.values_bytes);
     b->work = arena->acquire(offset + p.work_offset, p.work_bytes);
     auto *programs = reinterpret_cast<ProductProgram *>(static_cast<uint8_t *>(control.data) + align_to(sizeof(Binding), 64));
-    auto *cached = reinterpret_cast<RailProduct *>(programs + b->tree_plan.class_count);
-    parse_tree_bind(b->tree, b->tree_plan, p.options.use_alphabet ? p.options.alphabet : nullptr, *arena, *team,
+    auto *cached = reinterpret_cast<RailProduct *>(programs + b->tree_plan().class_count);
+    parse_tree_bind(b->tree, b->tree_plan(), p.options.use_alphabet ? p.options.alphabet : nullptr, *arena, *team,
                     b->prepared, b->work, b->limbs(p.rail_at), programs, cached);
     if (p.divide_limbs) {
         // denominator = odd^fraction_digits, normalized to divide_limbs limbs
-        const auto &base = b->tree_plan.base;
+        const auto &base = b->tree_plan().base;
         const size_t n = p.divide_limbs;
         Frame scratch = Frame::borrow(*arena, b->work, b->work.data, b->work.bytes);
         const size_t capacity = limbs_for_bits(power_bits(base.log2_odd, p.spec.fraction_digits)) + 8;
@@ -457,7 +468,7 @@ extern "C" void sbn3_parse_bind(const sbn3_parse_plan *opaque, sbn3_arena *arena
         size_t limbs = 0;
         if (p.power_fragments) {
             const auto &chain = a.power_chain;
-            const uint64_t *big = chain_evaluate(chain, b->tree_plan.rail, b->tree.rail, team, p.options.workers, scratch);
+            const uint64_t *big = chain_evaluate(chain, b->tree_plan().rail, b->tree.rail, team, p.options.workers, scratch);
             power = scratch.alloc<uint64_t>(capacity + 8);
             limbs = chain.limbs + small_limbs;
             require(limbs <= capacity + 8, SBN3_FATAL_MATH, "radix divisor capacity");
@@ -546,7 +557,7 @@ extern "C" void sbn3_parse_execute(sbn3_parse_binding *opaque, const unsigned ch
     const uint64_t g = b.quotient_shift;
     int state = 0;
     {
-        const auto &shape = b.tree_plan.extra[p.quotient_product];
+        const auto &shape = b.tree_plan().extra[p.quotient_product];
         Frame scratch = Frame::borrow(*b.arena, b.work, b.work.data, b.work.bytes);
         auto *z = scratch.alloc<uint64_t>(shape.output_limbs);
         auto work = scratch.subframe(shape.work_bytes, shape.work_alignment);
