@@ -336,7 +336,7 @@ double head_step_cost(const Plan &p, size_t dn) {
 // Longest short head block worth serving by word division instead of one
 // padded block's product pair.
 size_t head_limit(const Plan &p, size_t dn, size_t in, double pair_ns) {
-    const double limit = std::floor(pair_ns / head_step_cost(p, dn));
+    const double limit = std::floor(divrem_tuning::head_cost_margin * pair_ns / head_step_cost(p, dn));
     return limit >= double(in - 1) ? in - 1 : limit > 0 ? size_t(limit) : 0;
 }
 struct Candidate {

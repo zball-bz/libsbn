@@ -39,6 +39,13 @@ inline constexpr double head_ns_per_limb = 0.45;
 inline constexpr double head_parallel_ns_per_limb = 0.13;
 inline constexpr double head_memory_ns_per_limb = 0.6;
 inline constexpr size_t head_cache_limbs = size_t(1) << 21; // divisor + residual within the 64 MiB shared cache
+// The head limit takes this fraction of the modelled crossover. Measured
+// crossovers (results/divrem_stageA_2026-09-18/final/headcross and headcost,
+// forced full block): 42 limbs at dn=1000 W1, 17 at 20000 W16, 19 at 300000
+// W16, ~55 at 2^20 W16, ~11 at 2^22 W16, against unscaled model limits of
+// 24, 24, 8, 25 and 6: the product-pair estimate is up to 1.4x high, and a
+// head past the true crossover would cost more than the padded block.
+inline constexpr double head_cost_margin = 0.6;
 // Candidate rule: complete dn-limb blocks (a full inverse for 2d/d) are
 // considered when the head they leave is at most head_candidate_limbs, the
 // divisor has at least head_candidate_min_divisor limbs and the team is
