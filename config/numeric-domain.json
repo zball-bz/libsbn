@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "fft-numeric-domain-20260910-preserved",
+  "evidence_level": "adversarially_validated_not_universal_fp_proof",
+  "implementation": "src/backend/pq16/numeric_domain.hpp",
+  "implementation_sha256": "cfca00060fbff6b2c4e4ba532055b5eba28c72e44744e7ebd1e2d161bf1be398",
+  "target": {
+    "compiler": "Clang 21.1.8",
+    "cpu": "Zen5 Strix Halo"
+  },
+  "restrictions": [
+    "coefficient error strictly below 0.25 in the recorded adversarial envelope",
+    "numerical gates remain independent of cost selection",
+    "no extension of the envelope by editing a performance profile"
+  ],
+  "gates": [
+    "pq16_test",
+    "fft_cyclic_precision",
+    "wide_cyclic_precision",
+    "plus_cyclic_precision"
+  ],
+  "evidence": [
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/backend/pq16/tuning.hpp",
+      "sha256": "2042c7a406d10a43ab5219c12b05e83f7abd438282f242e5cf6b08cc72b3ead9",
+      "role": "preserved caps and detailed original experiment references"
+    }
+  ]
+}

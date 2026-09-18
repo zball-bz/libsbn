@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "examples": [
+    {
+      "name": "sqrt2",
+      "sources": [
+        {
+          "path": "examples/sqrt2.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "e",
+      "sources": [
+        {
+          "path": "examples/e.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "pi",
+      "sources": [
+        {
+          "path": "examples/pi.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "bbp",
+      "sources": [
+        {
+          "path": "examples/bbp.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "formula_series",
+      "sources": [
+        {
+          "path": "examples/formula_series.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "formula_constants",
+      "sources": [
+        {
+          "path": "examples/formula_constants.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "log_constants",
+      "sources": [
+        {
+          "path": "examples/log_constants.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "radix",
+      "sources": [
+        {
+          "path": "examples/radix.c",
+          "language": "c",
+          "group": "reference"
+        }
+      ]
+    }
+  ]
+}

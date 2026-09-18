@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source": "libsbn/src/avx512/recip_u1024_mono.s",
+  "source_sha256": "de56314f08543b961a95d771387fd1ad26a6fd4bc689c316d9970ee0d068693e",
+  "destination": "libsbn_v3/src/core/x86_64/recip_u1024.s",
+  "changes": [
+    "symbol prefix only"
+  ],
+  "actual_requires": [
+    "bmi2",
+    "adx"
+  ],
+  "note": "No vector instructions, despite the donor avx512 directory."
+}

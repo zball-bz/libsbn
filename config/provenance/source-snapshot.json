@@ -1,0 +1,1417 @@
+{
+  "schema_version": 1,
+  "created_date": "2026-09-06",
+  "kind": "source_inventory_not_build_receipt",
+  "repository_head": "f47ce782c586c434d6a7fac4574c465105398b5b",
+  "includes_untracked_inputs": true,
+  "path_base": "repository_root",
+  "root_paths": [
+    "labs/cr",
+    "libsbn/include",
+    "libsbn/src",
+    "libsbn/tests",
+    "labs/prims",
+    "include",
+    "src/x86_64"
+  ],
+  "exclusions": [
+    ".git",
+    "__pycache__",
+    "bin_old",
+    "build",
+    "old",
+    "results"
+  ],
+  "selection_note": "Source/script/docs extensions plus explicit build files and v3 discussion evidence; no binaries. Compiler dependency closure not yet verified.",
+  "snapshot_id": "7275447aca689dfc968ffb864e257caf6ad6fa2439f37d78dde04f9c8cd467f0",
+  "id_encoding": "sorted path + NUL + decimal bytes + NUL + sha256 + LF, UTF-8",
+  "file_count": 277,
+  "total_bytes": 4266341,
+  "files": [
+    {
+      "path": "Makefile",
+      "bytes": 14255,
+      "sha256": "d78127d329919c7ca8c4c53fd030502ba907b67df21219c8fbcdbb93f11a7d95"
+    },
+    {
+      "path": "ROADMAP.md",
+      "bytes": 43649,
+      "sha256": "71bba4bcd66c15bb5de982dc8c00a283b425255fcc49fbc5292c628aa7760e4b"
+    },
+    {
+      "path": "docs/libsbn-engine2-ooc-io.md",
+      "bytes": 13830,
+      "sha256": "f60c718ddafc9fc19580655a57be728b2beeb6a9b10c567794d31d1577b6c353"
+    },
+    {
+      "path": "docs/libsbn-swapio-design.md",
+      "bytes": 25831,
+      "sha256": "5e3d799bd753b603a1ca8a6bf09802059b3a6e7e76d0c6c4bf1b73b698b1019d"
+    },
+    {
+      "path": "docs/libsbn-v3-5b-scratch-io-2026-09-06.md",
+      "bytes": 11778,
+      "sha256": "1fa4c0c29914d55c3bfe1410df1278c91791729a41087d5dfba4d0660149dbd5"
+    },
+    {
+      "path": "docs/libsbn-v3-audit-architecture.md",
+      "bytes": 47629,
+      "sha256": "efbb3fffac380ead8aa221e7a50c03dc4c1cdd2ec6a55e9fd84dd2abc41de4d2"
+    },
+    {
+      "path": "docs/libsbn-v3-compilation-api-2026-09-06.md",
+      "bytes": 8744,
+      "sha256": "c298f4ac3be6ab8f92e7afca167a596bc85571c8ca66458553e1f56efaeaef02"
+    },
+    {
+      "path": "docs/libsbn-v3-contracts-2026-09-05.md",
+      "bytes": 27434,
+      "sha256": "378cefe67d184e389114c0c105af4db0e1af25f8bf73dffb4f3df2bca0ba240d"
+    },
+    {
+      "path": "docs/libsbn-v3-design.md",
+      "bytes": 45313,
+      "sha256": "afacc7d695efb9ebb83dfee906cac8d4969e0b5c1da66fea0b78aca33405b4da"
+    },
+    {
+      "path": "docs/libsbn-v3-discussion-2026-09-05.md",
+      "bytes": 28554,
+      "sha256": "e5928e43d70b923cccd6045e180b998b5ad048cfca9f212ed1f56dfdcae29d60"
+    },
+    {
+      "path": "docs/libsbn-v3-doc-amendments-2026-09-05.md",
+      "bytes": 22276,
+      "sha256": "d9659d292579d2ec654e5cb45054dcbdd3202289d9fce435a2031a5728e52cba"
+    },
+    {
+      "path": "docs/libsbn-v3-failable-checkpoint-2026-09-05.md",
+      "bytes": 46283,
+      "sha256": "ac1ff6e37cb074e94568e92251cea2cfeac2d50e9cfdf19da69f3f18625e21ad"
+    },
+    {
+      "path": "docs/libsbn-v3-isa-tiers-2026-09-05.md",
+      "bytes": 21718,
+      "sha256": "a172fc56a7038ce88d6b423aff1a4623ef84a23bf6db6c36f70c4596883d7f86"
+    },
+    {
+      "path": "include/addsub_n.h",
+      "bytes": 3365,
+      "sha256": "8de6485f7bb917ce9e4d44ea21cdcd8d1d14fdb344a7c5a7c948ccc520e82d98"
+    },
+    {
+      "path": "include/canon.h",
+      "bytes": 17053,
+      "sha256": "08cf10bda33dabfe207908d6609cfdf22257e83a025422e0b261796834386034"
+    },
+    {
+      "path": "include/dc_div.h",
+      "bytes": 7693,
+      "sha256": "d1c3d06eed2cf9d88d0719973459d8435cdf5ee9984a237418af2b2a020d4dde"
+    },
+    {
+      "path": "include/div2b.h",
+      "bytes": 33703,
+      "sha256": "299a4e39b27b5e7fffe94296abcfa471b173c8842ed2a1dc7a2b242e40e6c9da"
+    },
+    {
+      "path": "include/interp_helpers.h",
+      "bytes": 11963,
+      "sha256": "d385b967e294936e7245a62c248f85260bc0c9d628efc8513efdcdb29d04bc4f"
+    },
+    {
+      "path": "include/mul.h",
+      "bytes": 36641,
+      "sha256": "0f9a715bba568043424f02a9d6cbda1398cfda8b2cfbe9691607b8b23e52ebf2"
+    },
+    {
+      "path": "include/mul_basecase_le6.h",
+      "bytes": 1066,
+      "sha256": "f0b0d3b7f06de6383e1fa662d25a59074725090bb31c2b2cf03ab212647d7514"
+    },
+    {
+      "path": "include/mul_vec.h",
+      "bytes": 8003,
+      "sha256": "bc0119d1e0a7423b72fd723ef82980e20931aa2f8b430f8d3eebdf369680d80b"
+    },
+    {
+      "path": "include/mulmid.h",
+      "bytes": 21945,
+      "sha256": "b3320d60d77d2855fc94a0014cb0c146a24a868cdbb5f1db11696a060dee5d62"
+    },
+    {
+      "path": "include/mulmid_fft.h",
+      "bytes": 6910,
+      "sha256": "8c0f15aa6f852514335657fa0dce6b75143a10c4d47677b76d3993cb81a571ef"
+    },
+    {
+      "path": "include/mulmid_kara.h",
+      "bytes": 25262,
+      "sha256": "49760e5fcf2506ad5e784bedb8c73bd4a3b26fbf1b691605c2f69b126eaf6374"
+    },
+    {
+      "path": "include/mulmid_mpn.h",
+      "bytes": 5807,
+      "sha256": "374e937437997782c3b4c38eaa5a09b219f08cd556b275041ceb573a5f17a0c3"
+    },
+    {
+      "path": "include/mulmid_ntt.h",
+      "bytes": 24444,
+      "sha256": "05d163f86c0336b9b46f495ad0d7c616b228b13109c57d01589117204175d4df"
+    },
+    {
+      "path": "include/mulmid_p50.h",
+      "bytes": 36721,
+      "sha256": "1f2fb52ce9b57140b09c4bedcff355cc9730eb9b190312ec252ee7ca48b61e15"
+    },
+    {
+      "path": "include/nt_div.h",
+      "bytes": 14735,
+      "sha256": "0272f48f8c02af9486131a0df28de45b8c5b3481692516271a9659744bfce7a9"
+    },
+    {
+      "path": "include/nt_invert.h",
+      "bytes": 18374,
+      "sha256": "4fe2f997282a785126cc452f5c0040e7f57893f3a0322652120b1f6d306fd2d1"
+    },
+    {
+      "path": "include/nt_mpn.h",
+      "bytes": 11463,
+      "sha256": "5e2c9d5ec60d68655ec37ed80b6063c6f9bb01ad53e845d309004be9c4334352"
+    },
+    {
+      "path": "include/nt_spec.h",
+      "bytes": 8985,
+      "sha256": "d5adb988b15dec1e76f7a48443d60a9d61d99e7dbf3dc3504376950de64e619a"
+    },
+    {
+      "path": "include/ntmul.h",
+      "bytes": 3217,
+      "sha256": "3c512812d3afe2ab14993560eb2d07c9c8b785dbb520a86dcf019cf8e20548ca"
+    },
+    {
+      "path": "include/p30.h",
+      "bytes": 99860,
+      "sha256": "6e79dfe9a71ffd43c38c0ce67cbe626a8ec2c5dd752bb02180c524b8091b9904"
+    },
+    {
+      "path": "include/p30_ref.h",
+      "bytes": 123797,
+      "sha256": "425839a699d1854762dbc05d34bae8553155087dab157c392db1cab8698401a5"
+    },
+    {
+      "path": "include/p50.h",
+      "bytes": 55326,
+      "sha256": "2fc68421da5d331512b55ce479a14b319aa975feb7dec45c949b14dae637973f"
+    },
+    {
+      "path": "include/pq16.h",
+      "bytes": 95843,
+      "sha256": "771e2df80581261e40d47c94bb3d7781a1bfce1abb6156523f93ef45b1e1daf4"
+    },
+    {
+      "path": "include/recip_3by2.h",
+      "bytes": 1102,
+      "sha256": "b2e3bce5cde05e31b292195f378ecf1a00038b498e5513307f48b99bfb194032"
+    },
+    {
+      "path": "include/recip_3by2_seed.h",
+      "bytes": 833,
+      "sha256": "a99fe91691afa3a9e7ccb8d52df00d6cec62acb4fe1865d8f383144537e62733"
+    },
+    {
+      "path": "include/sbn_div.h",
+      "bytes": 5631,
+      "sha256": "5d57acf3dbc50ac944e43c34f49caee07aef4cec44d6a44acee1ddb7fa30798a"
+    },
+    {
+      "path": "include/sbn_mpn.h",
+      "bytes": 862,
+      "sha256": "5353c24c79949332aab1d4c55c73d387051fc0523f46c2ffc21a664b9c0be772"
+    },
+    {
+      "path": "include/scratch.h",
+      "bytes": 14840,
+      "sha256": "674a173fe54c37683ba08f451c99b6fd02e219a5da5eefdeb4778eb9b5c2f097"
+    },
+    {
+      "path": "include/types.h",
+      "bytes": 16673,
+      "sha256": "183c275b111099ce04964caac3801f6340db61dfc85b85ac9814f609d9738171"
+    },
+    {
+      "path": "include/u52-mparam.h",
+      "bytes": 1019,
+      "sha256": "bf25805fa4af2ed4f46b99410e45ea33e6c4c79851bca12e3fba194d34a4c9a6"
+    },
+    {
+      "path": "include/u64cvt.h",
+      "bytes": 6203,
+      "sha256": "756b7d57edfc9879c8d3e39bd0f245e630a78edfe01c6bc6450da1f7b80c7267"
+    },
+    {
+      "path": "labs/cr/DESIGN.md",
+      "bytes": 9461,
+      "sha256": "eb54e78724021bcae834bda3eaab5d02fe08a471c0335b00007d9b794ec108a2"
+    },
+    {
+      "path": "labs/cr/Makefile",
+      "bytes": 2211,
+      "sha256": "19789613244ca3868e555095cc1090db88134628826f0dbd578ee9f04a87f3f4"
+    },
+    {
+      "path": "labs/cr/NOTES.md",
+      "bytes": 185790,
+      "sha256": "e045a36aaca6e0dd5db8e3d88e30733f94e701344e3ba387714ae9a8ab521dac"
+    },
+    {
+      "path": "labs/cr/cr_arith.hpp",
+      "bytes": 10042,
+      "sha256": "c21a38c14e3a8526d7753719ccbc8551d45a6dbba0ee9ebe62e2fbb33149ebc9"
+    },
+    {
+      "path": "labs/cr/cr_bench.cpp",
+      "bytes": 61782,
+      "sha256": "e386732c31d247cd336d5d7689297a523c81a140c7d60cfcd6ea8eb00df14391"
+    },
+    {
+      "path": "labs/cr/cr_check.hpp",
+      "bytes": 3700,
+      "sha256": "47789aa4dd4cc60b388f0398dc998b3b81567f3e31aab84e322d8fb59c640628"
+    },
+    {
+      "path": "labs/cr/cr_codec.hpp",
+      "bytes": 22226,
+      "sha256": "c3f60d56808665f40525480ef13d81326c8916f436731f264383872aaeb45886"
+    },
+    {
+      "path": "labs/cr/cr_col.hpp",
+      "bytes": 21881,
+      "sha256": "275c0e0b59f7fb202f9f97ab790c3a284d955cd48b9f97e50447ec65f637e893"
+    },
+    {
+      "path": "labs/cr/cr_dbg.cpp",
+      "bytes": 2049,
+      "sha256": "20d6ba51da78554983ff8d6086c2c43534c10b0c46472440210ea07bd8a34484"
+    },
+    {
+      "path": "labs/cr/cr_emit.hpp",
+      "bytes": 31059,
+      "sha256": "21326dc5249a45dc59271165f88bb4b4aab030d030e52eae56e81a0f62577072"
+    },
+    {
+      "path": "labs/cr/cr_engine.hpp",
+      "bytes": 60716,
+      "sha256": "0fe4a615e43921ec71a8043f88c4f8221b6ef6be2ff6998cc05d69e42475d2e2"
+    },
+    {
+      "path": "labs/cr/cr_fuse.hpp",
+      "bytes": 24621,
+      "sha256": "e458217fd9030d25b7388ed6b9c12a91e722e712f73b6c5f772755fa250d45bc"
+    },
+    {
+      "path": "labs/cr/cr_geom.hpp",
+      "bytes": 21012,
+      "sha256": "6ae121cef8d8ee11b6ce26e881934dfd560018184b12ce3e867596fb3a7c1ffa"
+    },
+    {
+      "path": "labs/cr/cr_ref.hpp",
+      "bytes": 7326,
+      "sha256": "a5b80439f21275e57a18c7f7f6b1de4068774a35786fe8f0fc084d30a058e841"
+    },
+    {
+      "path": "labs/cr/cr_rows.hpp",
+      "bytes": 51108,
+      "sha256": "f2036c25aec68502b1aa70808613fa4d4a89989df5f1116142cb7d9f7505a8fc"
+    },
+    {
+      "path": "labs/cr/cr_tables.hpp",
+      "bytes": 4836,
+      "sha256": "e6b5adc5d466a5f900c76fb2eced152aeb14d2a4920c267d5d3df91e9c00bb7d"
+    },
+    {
+      "path": "labs/cr/cr_test.cpp",
+      "bytes": 46778,
+      "sha256": "108b7b75aa46268c0e7ae856671ce09ebb07ce80af6e8523cb7feb6d85f52b9a"
+    },
+    {
+      "path": "labs/cr/cr_tile.hpp",
+      "bytes": 13364,
+      "sha256": "c702977147f8bbcd464082dcf650572a76655b7b0167926f40bbe2b0e1278733"
+    },
+    {
+      "path": "labs/cr/cr_workspace.hpp",
+      "bytes": 10123,
+      "sha256": "f8465d5fcd74456780f7a861273715e2bb478c047c4de43d3f5073fa156642fe"
+    },
+    {
+      "path": "labs/cr/docs_capacity_cache_smoothness_2026-09-05.md",
+      "bytes": 17450,
+      "sha256": "22b00541e7529a23285a38149ace11610f59f9eb48c913a1174427c732013f27"
+    },
+    {
+      "path": "labs/cr/docs_capacity_experiments_2026-09-05.md",
+      "bytes": 8809,
+      "sha256": "b81e1cd54feed265a1b16b34e542e049e7f065e9ac3a7f2648043b6c52ce8a7b"
+    },
+    {
+      "path": "labs/cr/docs_optimization_review_2026-09-05.md",
+      "bytes": 11623,
+      "sha256": "1e9a660e3143b5957dc37df6e450f3e04c2222f2cd5b03052de10b713210aa47"
+    },
+    {
+      "path": "labs/cr/docs_p48_engine.md",
+      "bytes": 23808,
+      "sha256": "124e2e7477f8f9f902cca075ffa0a8856f0af2919c2ba788a9729273e1416d19"
+    },
+    {
+      "path": "labs/cr/docs_planner_theory_2026-09-05.md",
+      "bytes": 8103,
+      "sha256": "c13f7b3e5e24697dfd140eb421e6217286ca90f0879c899574502339ac83d9c0"
+    },
+    {
+      "path": "labs/cr/docs_ycruncher_memory_2026-09-05.md",
+      "bytes": 6373,
+      "sha256": "f8502f5c2326616e50508816160d631b981309702b321040968687cf9e4ce447"
+    },
+    {
+      "path": "labs/cr/docs_ycruncher_n63_dynamic.md",
+      "bytes": 70070,
+      "sha256": "866a30f209b6dc87d977d19d01522326bb6988b45b6eda551f71255b43eb81cc"
+    },
+    {
+      "path": "labs/cr/docs_ycruncher_vt3_alu.md",
+      "bytes": 32543,
+      "sha256": "169758d60240cb0387efeb8d26b824ab52a44e38509589c5663dcac25c7033af"
+    },
+    {
+      "path": "labs/cr/probes/README.md",
+      "bytes": 2081,
+      "sha256": "dc2172d7b31defebafb92b0e1eb61e2e873c069145674515ea5e2e8720e55bdf"
+    },
+    {
+      "path": "labs/cr/probes/bfprobe.cpp",
+      "bytes": 4366,
+      "sha256": "6afb4dc03abee55e0f32131d59a646db95fbc751e20a5739a20e07e106c861c1"
+    },
+    {
+      "path": "labs/cr/probes/bwprobe.cpp",
+      "bytes": 5982,
+      "sha256": "f751a4e8d1d14d2b3e1ffc72b5f3ece0d2614637a3e246d0ee2fb86b12c0db53"
+    },
+    {
+      "path": "labs/cr/probes/bwprobe2.cpp",
+      "bytes": 4009,
+      "sha256": "93f636408a3e85cf5553867c04a48e984fc87e11db3e8d361805eca218940644"
+    },
+    {
+      "path": "labs/cr/probes/bwprobe3.cpp",
+      "bytes": 4226,
+      "sha256": "75082edfe62afa0b7304e8e994d821fd38cb1c4654626ad0543ac698ee02d96e"
+    },
+    {
+      "path": "labs/cr/probes/bwprobe4.cpp",
+      "bytes": 3059,
+      "sha256": "b8b9aa4d39fafc9dc827cdd2ec9e7ec752cbf471136aeaacdcec8b531ba18ac7"
+    },
+    {
+      "path": "labs/cr/probes/capacity_bench.cpp",
+      "bytes": 10072,
+      "sha256": "6d3c41ba67d3a75e11c15c5eaee5706f976f933fdd5fbd37813519e7d8f204dd"
+    },
+    {
+      "path": "labs/cr/probes/cpumul.cpp",
+      "bytes": 3873,
+      "sha256": "b8400e4a982e998112eb09f82b262bb13569bdc93200aa56a722713ab16f2770"
+    },
+    {
+      "path": "labs/cr/probes/crtprobe.cpp",
+      "bytes": 2095,
+      "sha256": "cf16ba0ec9b2665fcbba7061769a656d7fcc273e92d40b30e6934056bb8499c0"
+    },
+    {
+      "path": "labs/cr/probes/dfsprobe.cpp",
+      "bytes": 1725,
+      "sha256": "cdb1009cc68527279f74db763c41ad8f6d3a4631230718227d4513953d2340ad"
+    },
+    {
+      "path": "labs/cr/probes/gprobe.cpp",
+      "bytes": 3477,
+      "sha256": "42efc0bc90a45e7572495c51ac10af7fd0a389ded218df5e0d7a018f5168d571"
+    },
+    {
+      "path": "labs/cr/probes/helperprobe.cpp",
+      "bytes": 8733,
+      "sha256": "a21eb4d0070e00e47ed83d23bae53c7efdcd8e6ac33988351fb05171db710b2a"
+    },
+    {
+      "path": "labs/cr/probes/kprobe.cpp",
+      "bytes": 7650,
+      "sha256": "07367a4df47bbb06c909adaf3886cbe1d01411039e6e5ba235d91d7fe9935fac"
+    },
+    {
+      "path": "labs/cr/probes/kprobe3.cpp",
+      "bytes": 7728,
+      "sha256": "845a002881b2eec29594e22ff6cd778304ad2d5695ac465947099dba79d72818"
+    },
+    {
+      "path": "labs/cr/probes/l3probe.cpp",
+      "bytes": 3254,
+      "sha256": "63ea6d40bba38e2fedb58182f5809a6798699bdeeae478137042ae85892b149b"
+    },
+    {
+      "path": "labs/cr/probes/leafprobe.cpp",
+      "bytes": 3727,
+      "sha256": "cf96a12b3b9988166ff37dd2c9aa0d22f0d553e73f8fce10fe4828e5dc770934"
+    },
+    {
+      "path": "labs/cr/probes/leafprobe2.cpp",
+      "bytes": 4655,
+      "sha256": "8b125216a7d16a18c59d3e9a2c8c38a5cfd72a4dce6e381f3c3b2a6806af1005"
+    },
+    {
+      "path": "labs/cr/probes/memprobe.cpp",
+      "bytes": 6786,
+      "sha256": "d3d5929b0eb6a326949eb7af669bb10dd205ba69a543a907063c0a132940d6de"
+    },
+    {
+      "path": "labs/cr/probes/p62_probe.cpp",
+      "bytes": 12473,
+      "sha256": "18a3f81392ccc66f91abcbad2d2f48202d0a38e18a1109bef43cd6272db480cc"
+    },
+    {
+      "path": "labs/cr/probes/p62_probe2.cpp",
+      "bytes": 16518,
+      "sha256": "440058d67f1a6c626a040429496058f417da6b4fbe1e03f9733dcf61e2e120dc"
+    },
+    {
+      "path": "labs/cr/probes/pfprobe.cpp",
+      "bytes": 2739,
+      "sha256": "039321a354338fe8703791974a09dc687a9214adad1bb4b173bdff5cd3314f6d"
+    },
+    {
+      "path": "labs/cr/probes/pfprobe2.cpp",
+      "bytes": 2493,
+      "sha256": "b90d5523639bcc3e27b27d23c54177534f44b02c9f2b4ec4efb6e94eb3a6b51c"
+    },
+    {
+      "path": "labs/cr/probes/pipeprobe.cpp",
+      "bytes": 2761,
+      "sha256": "a1e00ade5d2e0e0da4138aca08df72be17d2b25a9d5505b447b0eb98c63adc0f"
+    },
+    {
+      "path": "labs/cr/probes/rankprobe.cpp",
+      "bytes": 749,
+      "sha256": "7862a5b6ab8acc8a9033e2b8d56e045624e9989d3089127653669a24fd0c06db"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/README.md",
+      "bytes": 2469,
+      "sha256": "8cfb8b94005a4f1c7121e5a413298546f2feda9a0be8cc49f0624fb2bd39e358"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/crt_direct_probe.cpp",
+      "bytes": 5004,
+      "sha256": "63da13c2ef89f341fde6273ec66b54de2377846b03a516645394fba95f170465"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/direct_variant.py",
+      "bytes": 3289,
+      "sha256": "4ba01c78e7fe7521c3837a520242c33500ab2ad8c0f6898f9588bff7824a6a16"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/engine_probe.cpp",
+      "bytes": 3037,
+      "sha256": "3b742a5fede97f2ab625a53c10d6f1eab1fa6ec26a0b8d360e2ba668436dad22"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/micro.cpp",
+      "bytes": 6124,
+      "sha256": "f447d958704708d252490af9cabfc48c10744e96308d44e34e1c7a1de6857354"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/rows_probe.cpp",
+      "bytes": 1693,
+      "sha256": "d82c49f2d4367ac62c8dba83e609fa5381dfdc12c0c32ea175313f915e7f08e0"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/run.py",
+      "bytes": 3009,
+      "sha256": "7f8f560b00716512f3d5111d588b2615682d49e9f0636fdeb120c1c5ef2c5812"
+    },
+    {
+      "path": "labs/cr/probes/review_20260905/variants.py",
+      "bytes": 4151,
+      "sha256": "aaa387fc635bb848ecddbd15c18626e196f5412cc70a5005a85b19f0eee5ec86"
+    },
+    {
+      "path": "labs/cr/probes/run_capacity_experiments.py",
+      "bytes": 3950,
+      "sha256": "47f9d8a10abdb2d7235a5fd47be50ff4eadfd059d96eca83481c7928dd428b2d"
+    },
+    {
+      "path": "labs/cr/probes/sizeprobe.cpp",
+      "bytes": 1707,
+      "sha256": "9537fa74aa517502ece8a647d7272ba578da978ba0e22e9cfbc63be375f92ed7"
+    },
+    {
+      "path": "labs/cr/probes/tftprobe.cpp",
+      "bytes": 3040,
+      "sha256": "a59384b041521adb467caf6ff6a2dc40fc7f08b3a045062b3f287ee4e797889e"
+    },
+    {
+      "path": "labs/cr/probes/xprobe.cpp",
+      "bytes": 3577,
+      "sha256": "8fef1f7c229e02e16897f19e69bde45aca45f89655cec6149d1fcd296e36bd20"
+    },
+    {
+      "path": "labs/prims/NOTES.md",
+      "bytes": 8633,
+      "sha256": "23ad5b3e266aaf85fb53f45feb38db90ec422293f23f946c417dedc14a66e224"
+    },
+    {
+      "path": "labs/prims/bench_prims.c",
+      "bytes": 10585,
+      "sha256": "1651a9087fdb3a1eb95ff58f8574e44afbc0d8d8a01f646bbd150c79cb8213e9"
+    },
+    {
+      "path": "labs/prims/plot_prims.py",
+      "bytes": 6114,
+      "sha256": "629f2579bd5145ee454f4dbe224865e0b7d96729e6aa0cee77721afadc81fed6"
+    },
+    {
+      "path": "libsbn/Makefile",
+      "bytes": 39565,
+      "sha256": "2ae8ad51382fc8826423c6457dadfecfadb4bfd94e89477ff689683d3c0d79b7"
+    },
+    {
+      "path": "libsbn/include/sbn/addsub.h",
+      "bytes": 3907,
+      "sha256": "3b183f50152328f4b61263712b46ae1ffa6ff29f8baa376f71d96cc438c8a7d3"
+    },
+    {
+      "path": "libsbn/include/sbn/base/integrity.h",
+      "bytes": 13450,
+      "sha256": "cf5cd373b751533349d4552a8caf66d5b0b0669c50ae2d6f30adeda2e791bc9f"
+    },
+    {
+      "path": "libsbn/include/sbn/base/ios.h",
+      "bytes": 6150,
+      "sha256": "737b8cd3e16e14ad411444bd36fd20e8513c8b7de7d09cdc0ad2ee50535f612a"
+    },
+    {
+      "path": "libsbn/include/sbn/base/memc.h",
+      "bytes": 1191,
+      "sha256": "35d90ae11b3388c7029a114c6d3c952fa6d6805703472d99cbe54bc061640d58"
+    },
+    {
+      "path": "libsbn/include/sbn/base/pal.h",
+      "bytes": 17122,
+      "sha256": "8ea97086cd051e8d11bd3b160cfb86e47817642ce6cf1be41396fe2df3b0b897"
+    },
+    {
+      "path": "libsbn/include/sbn/base/pal_uring.h",
+      "bytes": 3381,
+      "sha256": "7b0e7799418fb546904cd9610a0e62c46155314924322f0ab4242f2c9d234c61"
+    },
+    {
+      "path": "libsbn/include/sbn/base/scratch.h",
+      "bytes": 413,
+      "sha256": "996f5f2995d8854f5461fed9e6bfa3b42ff51cb632fba571feddd04d7f341f19"
+    },
+    {
+      "path": "libsbn/include/sbn/base/status.h",
+      "bytes": 1162,
+      "sha256": "46d63bb777fbc3017dee9a0d11da6b94cf6b8203bb973de452fcb020747a898f"
+    },
+    {
+      "path": "libsbn/include/sbn/base/swapio.h",
+      "bytes": 10892,
+      "sha256": "03fba7e52efbaaa3fd6bddfda8c79213a82625a79aa445396a6e1ba11e3947b2"
+    },
+    {
+      "path": "libsbn/include/sbn/base/team.h",
+      "bytes": 4471,
+      "sha256": "31b69ebd058dbf994197ec149bb733553e681269d769bd33ff67078365e19c33"
+    },
+    {
+      "path": "libsbn/include/sbn/cert.h",
+      "bytes": 995,
+      "sha256": "ef0be3fe604f4cdc409a8e7dc7bff457065c4c9bb5330a4693fe1bce3879a51f"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/addsub_n.inc",
+      "bytes": 2214,
+      "sha256": "3bc618ec852c602619627309a3b50dc4658bb1471b5046d59ba767c8ad056e48"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/basecase_le6.h",
+      "bytes": 576,
+      "sha256": "f0b3e82d27bab7d95372b008046dfb9f0ab03cf9e1914a5c25fd247c6cd7bc61"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/div/dc_div.h",
+      "bytes": 7617,
+      "sha256": "031071e63780f7c917e91be19380a074e3f2b25a1b676ecbfcc41d95ede26404"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/div/div2b.h",
+      "bytes": 34550,
+      "sha256": "eac5f814d9e847aad296cb944bdb71f8d801611837f854d1ec9628704434ede6"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/e2seam.h",
+      "bytes": 1676,
+      "sha256": "a126ca5577d495dfb5e64ce3becfdb16c5483f39e0c64b71a079f0098053e93c"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/mulmid_p50.h",
+      "bytes": 71943,
+      "sha256": "0a56f2be65c0446e21e4ca39f9a16098b6119ed011e8f8b142c58c846f3092e8"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p30.h",
+      "bytes": 111181,
+      "sha256": "04d8d15e001da0b14023a0853510a045467a1fcbaf36ce4cce3171ccd331880d"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50.h",
+      "bytes": 169800,
+      "sha256": "a3f069a0cf78f57fa2eef8e54bc8d37352df70c5cc2397558e3b0f267016b7fb"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_bailey.h",
+      "bytes": 24947,
+      "sha256": "277a79ae3b53072d14962e04a6e73c18635aedcbd05dc7865232d2fe1e64a479"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_citft.inc",
+      "bytes": 9720,
+      "sha256": "fc862a4abfd77b74311d5b547f27a2c9212dbf76a80e8134aff016454e90eb54"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_colpass.inc",
+      "bytes": 3023,
+      "sha256": "184b720f0d86a04b3bcb6b19e9a55f447c83aa8b9c3d08a22046cf8fcc256949"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_mid.h",
+      "bytes": 26970,
+      "sha256": "35131f9ab8357db8f5801c3c0c0c855964abba4b7f0c3b253f5de270b368b881"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_mirror.h",
+      "bytes": 38366,
+      "sha256": "5bb7a288f716860c8b450286199c88e0e96c80171d5be0808a1e4b1494ad93f9"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_txp.h",
+      "bytes": 1965,
+      "sha256": "9844be0d3f0f26d508f353245e668f86c8a11be9c01ce913e4bbeaaed7bc6129"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/p50_wrap.h",
+      "bytes": 47340,
+      "sha256": "c2cb0ea8ae6e8f7fe6a5d4c284bbc46b499a15c7e973afe79824fb1f19c9688a"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/engine/pq16.h",
+      "bytes": 121188,
+      "sha256": "14b2a6fe097935823830e8f697b845633041ffc5adb1793f8466613733d58919"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/invx.h",
+      "bytes": 10841,
+      "sha256": "86fb7bb5a2be0451c7d6847dc2cc80d2e4826ea3d099b9df59a01b3b462d2182"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/limbwin.h",
+      "bytes": 1796,
+      "sha256": "8d43b7937dbc299cb7516a717a72faf1270fa9616331b43518db0ac44c6b112e"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/mulmid/mulmid.h",
+      "bytes": 22198,
+      "sha256": "5a22d4b601fad517fc8561735e394c136e010456a928a4a74a06a3c64d342abb"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/mulmid/mulmid_fft.h",
+      "bytes": 5392,
+      "sha256": "20c4d4ff51af8823c413dc36e1b590f63c23fdd910c4d622db4c749fc3356bbe"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/mulmid/mulmid_kara.h",
+      "bytes": 25472,
+      "sha256": "f479ba380c3fc598f5722a7b881ecfb108c6e7cee9bad5800d0ba16d671320ac"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/mulmid/mulmid_mpn.h",
+      "bytes": 8596,
+      "sha256": "14afbbdea151f9301f75561e111f086f43f9e0735f0ed6ea210a19f06c1b5876"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/nt/ntmul.h",
+      "bytes": 5792,
+      "sha256": "afa99290f0ef289df4c4a25e7bd4255ca202793d4afafeaae2296a3252ba5a2c"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/radix/d2c.h",
+      "bytes": 18808,
+      "sha256": "3ea611bc020a5de6f36634f8b352fcc68cad03ff71d745d89968d433a7a6df51"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/txx.h",
+      "bytes": 9458,
+      "sha256": "e3e51d24568fa8fc8ef4d379670fc8955b5f6ff9ffcc11d14cdc76e54ba3628e"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/addsub_nc.inc",
+      "bytes": 489,
+      "sha256": "328fb7b7f220e532a9859e9d754d9ec4be10396c62f3aa08e3d07f9f48bb0036"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/canon.h",
+      "bytes": 17400,
+      "sha256": "766f6d15f0cb5f6452105a3ec2d6eda864d37b43f3bea974c563f03d7292f153"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/cvt.h",
+      "bytes": 2720,
+      "sha256": "40c5d4906021534d82304f94ac4d25f3fb26a90c024ebd7e6311d21c5d369b01"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/interp.h",
+      "bytes": 12012,
+      "sha256": "228c69684e64c9390133057247343b775a7ed0e2e40834ffa1ec80e73151090e"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/mparam.h",
+      "bytes": 763,
+      "sha256": "4a0f573c1943386dc9dbd5eab413058167164a6822fb7a30cb161e0ef3d2bdb3"
+    },
+    {
+      "path": "libsbn/include/sbn/detail/u52/mul.h",
+      "bytes": 37426,
+      "sha256": "1df5c37eac1c31cff9b6a19deda0809e0b73f609d3c5ce5d256412180073cc78"
+    },
+    {
+      "path": "libsbn/include/sbn/div.h",
+      "bytes": 18591,
+      "sha256": "2fd68fcc0392e24c9cf501a27a3162a901b4c73245aa94480e242e03349bda94"
+    },
+    {
+      "path": "libsbn/include/sbn/divrem.h",
+      "bytes": 3418,
+      "sha256": "91acd9ebae07e4d617e7315a3c32ef5ec2fe4b4e1ff24625c7893d9fa8828b31"
+    },
+    {
+      "path": "libsbn/include/sbn/gmp-compat.h",
+      "bytes": 8854,
+      "sha256": "83fe7429d67b5cd013a754c593ddbae9df81ca58a5fe8436126778720307b781"
+    },
+    {
+      "path": "libsbn/include/sbn/invert.h",
+      "bytes": 17924,
+      "sha256": "8c20ea6a7adab785a0bff14b76e81b8efd56fe386590478f9dde51350548cf15"
+    },
+    {
+      "path": "libsbn/include/sbn/kernels.h",
+      "bytes": 3139,
+      "sha256": "9817627a6c49e170e0af4d53df28eac6a9a07d314026ae6dc259e62c2d9bbb4a"
+    },
+    {
+      "path": "libsbn/include/sbn/mul.h",
+      "bytes": 5526,
+      "sha256": "772c42a84be6117a58ff59dd9bf33928306666b0223625247b2dd088d3e6d701"
+    },
+    {
+      "path": "libsbn/include/sbn/nt.h",
+      "bytes": 19810,
+      "sha256": "14842ae8e9d1f0e9ae12b9ef7a5209e690054971b1bb9a162c39c053b91445e4"
+    },
+    {
+      "path": "libsbn/include/sbn/radix.h",
+      "bytes": 108832,
+      "sha256": "42f0458702ab56c999df3fab510b69ef001343bb9b66b120b492273fa2c3a630"
+    },
+    {
+      "path": "libsbn/include/sbn/scalar.h",
+      "bytes": 20420,
+      "sha256": "6392cbe960bed68f6518d238ac2c019fefd4a4e561c34cef9dc332d6018a8e98"
+    },
+    {
+      "path": "libsbn/include/sbn/scratch.h",
+      "bytes": 20252,
+      "sha256": "098c39cb74cf26d610e85881620285330189c10ab9f2743564db0f9a77aa8bd5"
+    },
+    {
+      "path": "libsbn/include/sbn/team.h",
+      "bytes": 6998,
+      "sha256": "1b26e951a3d1ccd5a556b1d0a0c3181012f801bdcb7598b054d1113202f927b9"
+    },
+    {
+      "path": "libsbn/include/sbn/tpool.h",
+      "bytes": 5848,
+      "sha256": "c762958294e135183eb10bd5ba21dd370fca5a2d7a5f22a7d36f36bf8115cd2f"
+    },
+    {
+      "path": "libsbn/include/sbn/tx-mparam.h",
+      "bytes": 2793,
+      "sha256": "806d62ee9f4ed798dad1c26807e6ad29216a8725154b851f508176341130d6f9"
+    },
+    {
+      "path": "libsbn/include/sbn/tx.h",
+      "bytes": 46483,
+      "sha256": "0f865afbdb459ede4a2161831dfb53a4c880e0be185c898422321d3d2adeaf1b"
+    },
+    {
+      "path": "libsbn/include/sbn/vec.h",
+      "bytes": 20692,
+      "sha256": "66851abb1d47c4cf7d1bdce50ebc9d4b4a7095808283a226abb53912ad481d76"
+    },
+    {
+      "path": "libsbn/src/avx512/recip_3by2.s",
+      "bytes": 14484,
+      "sha256": "9472c6e468ee2500592439bd82fdb109a82510a67809e742af365edf8e1db08e"
+    },
+    {
+      "path": "libsbn/src/avx512/recip_3by2_seed.s",
+      "bytes": 7576,
+      "sha256": "816e04c0f0dd6f7b6c241447d412e656fd6e82aa4ef8cf542a8c2fe3016416da"
+    },
+    {
+      "path": "libsbn/src/avx512/recip_u1024_mono.s",
+      "bytes": 18582,
+      "sha256": "de56314f08543b961a95d771387fd1ad26a6fd4bc689c316d9970ee0d068693e"
+    },
+    {
+      "path": "libsbn/src/base/ios.c",
+      "bytes": 21648,
+      "sha256": "545198560865fb0d636f1f55466587089eb857ead4635da290cea9be2e7ce08a"
+    },
+    {
+      "path": "libsbn/src/base/memc.c",
+      "bytes": 1182,
+      "sha256": "ea34e2ecc66f674cfafc7a2cc92e4e1d4fbe4a934fc09daec6de95ca4b92e841"
+    },
+    {
+      "path": "libsbn/src/base/pal_uring.c",
+      "bytes": 6412,
+      "sha256": "b6c8202c83f5063a53001656cd61dac000b0edcbbb4ff323efd4f00026eb406b"
+    },
+    {
+      "path": "libsbn/src/base/scratch_tls.c",
+      "bytes": 426,
+      "sha256": "295992258ac525d5105e4164dff4cdbf4ecd1a5a73a507eae30e6deb7affcead"
+    },
+    {
+      "path": "libsbn/src/base/swapio.c",
+      "bytes": 34334,
+      "sha256": "db62de90bef08fd7616dcd2d031a7fdd5f56584062883768fdb382a482235e48"
+    },
+    {
+      "path": "libsbn/src/engine/core/codec.hpp",
+      "bytes": 4736,
+      "sha256": "f79080d67a9bbef67777bd173774fa7041330605363f335d8ebbb6238efcd1f4"
+    },
+    {
+      "path": "libsbn/src/engine/core/geom.hpp",
+      "bytes": 5727,
+      "sha256": "5970d43f61a86b965e9a9dd44465a9bd82a53e496e43e41c016624cad6072003"
+    },
+    {
+      "path": "libsbn/src/engine/core/ooc.hpp",
+      "bytes": 4705,
+      "sha256": "459162ac6bde74a19bf4fa6ecb4261604527665b52d9aefc2855bbea31e473a0"
+    },
+    {
+      "path": "libsbn/src/engine/core/plan.hpp",
+      "bytes": 3475,
+      "sha256": "4d98323106cc65bbf45e98c27b34ef98579b0f7a75a93e90ae6c01dcc3369eb7"
+    },
+    {
+      "path": "libsbn/src/engine/core/planner.cpp",
+      "bytes": 17497,
+      "sha256": "52d63070844be0b6716b13807a8795311a3b41c2c5823ad9169ad4053ea42089"
+    },
+    {
+      "path": "libsbn/src/engine/core/pods.hpp",
+      "bytes": 9035,
+      "sha256": "c966d72e71fd1e05f81c488b4713157700b01f10531969f22cabc9d3e59d9e2b"
+    },
+    {
+      "path": "libsbn/src/engine/core/primes.cpp",
+      "bytes": 17424,
+      "sha256": "522ff689f62c1a145d40832168257c6c49e7fea7fcf0f1e4ec5a35188166b9c7"
+    },
+    {
+      "path": "libsbn/src/engine/core/primes.hpp",
+      "bytes": 6848,
+      "sha256": "295af1b5c19373e8ad415ef4b8803dd16342b18e7819d91b547f81c79b999708"
+    },
+    {
+      "path": "libsbn/src/engine/core/tables.hpp",
+      "bytes": 2519,
+      "sha256": "91ff8aa23590343fb8d8322a85260cad738a419563f26142b8ab31d788883845"
+    },
+    {
+      "path": "libsbn/src/engine/e2api.h",
+      "bytes": 10324,
+      "sha256": "119cd734b223b80fd0c0387f63c63f6eed21a831dc1279a69127dd2ef442a062"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/citft.hpp",
+      "bytes": 8503,
+      "sha256": "d73c8ac904d45f43cd0551debff7b7a407cc7ba78932e1188fb15a1050e2108f"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/colpass.hpp",
+      "bytes": 4655,
+      "sha256": "eed3e170d6a3319bf6ef708b8b67d4f5437d66366b1c08ae9efdf9fca53aa8da"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/decode.hpp",
+      "bytes": 8306,
+      "sha256": "f1be0fc000eb023e884e09b289f70a4abf41182c57636e64542d6ff53b041cab"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/emit.hpp",
+      "bytes": 16705,
+      "sha256": "4d7ad72966277f92f977ae5e7d264158afe5400ff142cd658cb9cc805b0c0ec8"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/leaf.hpp",
+      "bytes": 6754,
+      "sha256": "bc9ee876bae376182bc8e12f0f370688d9b279804eaa8a500aa57d4cd26b43e4"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/pcol.hpp",
+      "bytes": 4509,
+      "sha256": "decf35202a95a6921d683f9c5c2c32320e343b39b7b29b65357e6ed5f21645ab"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/rows.hpp",
+      "bytes": 19575,
+      "sha256": "e45a4f0826228e8d3d9e29e1226d80aa98bd0734127b08781174259fce08e74c"
+    },
+    {
+      "path": "libsbn/src/engine/kernels/tile.hpp",
+      "bytes": 10208,
+      "sha256": "df8ec67dd82b0fcc26a6e3dac525b102895a090d9930aa7c449522eecabac8a7"
+    },
+    {
+      "path": "libsbn/src/engine/pipeline/staged.cpp",
+      "bytes": 75493,
+      "sha256": "b36493e614a45d3a2e7286bb870c40151561a0ba92d97bcfdb5b6ac3c6e87291"
+    },
+    {
+      "path": "libsbn/src/engine/pipeline/stages.cpp",
+      "bytes": 19100,
+      "sha256": "1d2536a1d5a7fc7db760d76bf6131b6d78cf7316c1a60dee5c284e879e4fa805"
+    },
+    {
+      "path": "libsbn/src/engine/pipeline/swapmul.cpp",
+      "bytes": 61652,
+      "sha256": "83f5b3e464623c2897108ff421cecec0ba78d1e5241b33628688c524f12f6ed8"
+    },
+    {
+      "path": "libsbn/src/engine/shadow_kernels.cpp",
+      "bytes": 5196,
+      "sha256": "c519550e755f6b5bc3b5c67bc34efd88246277c75d4377dfe3da4034ebb4e039"
+    },
+    {
+      "path": "libsbn/src/engine/spectra.cpp",
+      "bytes": 6130,
+      "sha256": "ba44aea7ec4459fddb7e08f1bec2d422c1b0b900cdc2b4ecbf291d7edd42f571"
+    },
+    {
+      "path": "libsbn/src/engine/tables.cpp",
+      "bytes": 3825,
+      "sha256": "f2599d12c550c0aedc9814bdde6158dacd6f9957cec7b4932aa100a6c9a6268b"
+    },
+    {
+      "path": "libsbn/src/plans.cpp",
+      "bytes": 1744,
+      "sha256": "cbc6d33b1f040892109da40b30087d1b4b7d218b13ab5baa645073eddebdefff"
+    },
+    {
+      "path": "libsbn/src/team.cpp",
+      "bytes": 38462,
+      "sha256": "ff749f07dabc48b71c4871c8ec167eddf5b389540ed39f4367748a80558720f9"
+    },
+    {
+      "path": "libsbn/src/x86_64/add_n.s",
+      "bytes": 1555,
+      "sha256": "b08f26d376a193f27b97671862b4c9a913f9780f6c6289dd99d5fc16ece1f9bf"
+    },
+    {
+      "path": "libsbn/src/x86_64/addmul_1.s",
+      "bytes": 1743,
+      "sha256": "8b8cef5e1b80aa8d47c82913e35d57109011095b610443cdd0dda8972b603a7f"
+    },
+    {
+      "path": "libsbn/src/x86_64/addmul_1_adx.s",
+      "bytes": 2544,
+      "sha256": "02928c035903500c06fcf96e339e365630322f3d49fdcac4a80e004419604468"
+    },
+    {
+      "path": "libsbn/src/x86_64/addmul_2.s",
+      "bytes": 2834,
+      "sha256": "b879d4b638ae9b733244cba86eff4a10844adfa92d035e4821881951110fe4de"
+    },
+    {
+      "path": "libsbn/src/x86_64/addmul_2_adx.s",
+      "bytes": 2373,
+      "sha256": "c1ea816c6f00f13d864be387ee6704a076fde15a171de5f9010887d4d7ff52d9"
+    },
+    {
+      "path": "libsbn/src/x86_64/mul_1.s",
+      "bytes": 1861,
+      "sha256": "d64b0be3f02d2db4bb32945d8d4b735e803acc572504dadd0b2c7de0c02140f4"
+    },
+    {
+      "path": "libsbn/src/x86_64/mul_basecase_le6.S",
+      "bytes": 8087,
+      "sha256": "305075269cca071272d5baab64ac69c9b28c23d25eac29e842063641392217cc"
+    },
+    {
+      "path": "libsbn/src/x86_64/sub_n.s",
+      "bytes": 1555,
+      "sha256": "0f8d74ac2f101b7bf9eb41f574a74fd3d3e5cf50ca55869fcd4ee75ad8321118"
+    },
+    {
+      "path": "libsbn/src/x86_64/submul_1.s",
+      "bytes": 1743,
+      "sha256": "1bfb17f067900970a7d08589d1a2ed08d8e78e45fa4bd1a724965e97049be7ae"
+    },
+    {
+      "path": "libsbn/tests/base_integrity_test.c",
+      "bytes": 5815,
+      "sha256": "ea6a1c3429d6e2007866fc8ba0074f8a2e8927beab6aef6b711fb5ac9aa7ca7d"
+    },
+    {
+      "path": "libsbn/tests/base_ios_test.c",
+      "bytes": 14391,
+      "sha256": "6b448b83910659715a4dbf0dc8a534e9427ca80b44a26838a3c0444e1a4a1c9f"
+    },
+    {
+      "path": "libsbn/tests/base_pal_test.c",
+      "bytes": 8122,
+      "sha256": "4630adb8516e62fb75a2d33bb68bafe8df2621a6e55956eb690d1a88482345eb"
+    },
+    {
+      "path": "libsbn/tests/base_scratch_test.c",
+      "bytes": 9622,
+      "sha256": "be1d588a1a1d9bd29b16c413ed0f112052ce9a8c1557510f90d0811be3ac97e8"
+    },
+    {
+      "path": "libsbn/tests/base_team_test.c",
+      "bytes": 15662,
+      "sha256": "237764acaefb4412307dbbc93f1c4fc75f3cd3ff297d68702bb1328890ffa88b"
+    },
+    {
+      "path": "libsbn/tests/compile_cxx.cpp",
+      "bytes": 7755,
+      "sha256": "c38c0de86f89712b8f1132e9bcfd4ec99e7783ee20969e1fd94c65e8f5f0a989"
+    },
+    {
+      "path": "libsbn/tests/crc32z_test.c",
+      "bytes": 4205,
+      "sha256": "34fd913567749a6fda4f39dfab541527b7eda3ae04cc3be32d2a379fe38e7d11"
+    },
+    {
+      "path": "libsbn/tests/dc_div_test.c",
+      "bytes": 8053,
+      "sha256": "de9d416d9f9a7395db24e558ff44aebf7438dc3e8326c9a1bad4c1245e5afa95"
+    },
+    {
+      "path": "libsbn/tests/e0_life_test.c",
+      "bytes": 6378,
+      "sha256": "f932f4b6e9d3662fd06cb8be941b496f4db7ba44f22b82ea53c6f1f326dbb9ae"
+    },
+    {
+      "path": "libsbn/tests/e0_p0_test.c",
+      "bytes": 10282,
+      "sha256": "c2adfd360f9a4fd2a7b5f4dd0c641d499f4545222559eddc8349884fb9f21f01"
+    },
+    {
+      "path": "libsbn/tests/e2_gate.h",
+      "bytes": 3544,
+      "sha256": "88d9cc0ebd79538e1dc3c146de7951ba4b4896b60d814bea166cb20697694d43"
+    },
+    {
+      "path": "libsbn/tests/e2_life_test.c",
+      "bytes": 6252,
+      "sha256": "4d31909d0e033adeec95e1b16d87f79d565dda628507630dcd53cca11aedc433"
+    },
+    {
+      "path": "libsbn/tests/e2_n0_test.c",
+      "bytes": 9197,
+      "sha256": "d4e541c7a5052013a37a90dd3317f21b42c4720cd6c368f6c0abd45d017281f1"
+    },
+    {
+      "path": "libsbn/tests/e2_ooc_test.c",
+      "bytes": 12319,
+      "sha256": "666bf81c997a39467c4ab146769c04a99212c606f15ce1b80290531472445374"
+    },
+    {
+      "path": "libsbn/tests/e2_s1_test.c",
+      "bytes": 7739,
+      "sha256": "2195fe2c424f4821e3fc3da486b473fb08d92b2af0f9b2b4adc69c6810e6dff3"
+    },
+    {
+      "path": "libsbn/tests/e2_s2_test.c",
+      "bytes": 11231,
+      "sha256": "6daa4022a97457cc6c88cebfcaac3b3177f3da5ef4d8c5995990ac73959578b5"
+    },
+    {
+      "path": "libsbn/tests/e2_s4_test.c",
+      "bytes": 6340,
+      "sha256": "61cbe1e66dc072fc0a8c33ae198c08206f68346acb3c7674b3060cffbd4eeac4"
+    },
+    {
+      "path": "libsbn/tests/e2_s5_test.c",
+      "bytes": 10904,
+      "sha256": "8c9f597a0313e698879c1542f051bea7c36166fa566a76baa961503cde0bc735"
+    },
+    {
+      "path": "libsbn/tests/e2_scaffold_test.c",
+      "bytes": 6516,
+      "sha256": "eb872918a403fb9b43115ac120249364d1d529e8e8580a3c96fc3dfd49012f7a"
+    },
+    {
+      "path": "libsbn/tests/e2_shadow_test.c",
+      "bytes": 14237,
+      "sha256": "638fe9afcb00d37af217c1ef1917d92fac1ed443ca1a3d576a4a203b0c4a3b89"
+    },
+    {
+      "path": "libsbn/tests/e2_swapmul_test.c",
+      "bytes": 11854,
+      "sha256": "7d765c7b9b75964ded2276f940f966a26a7ad1a849e71635fcd9965dac93e380"
+    },
+    {
+      "path": "libsbn/tests/e3_leaf_test.c",
+      "bytes": 5687,
+      "sha256": "98da1c02d3adc865021f643de066396b98a1f7c33b43205b5cca0aaf526d7223"
+    },
+    {
+      "path": "libsbn/tests/gmp_compat_hdr_check.c",
+      "bytes": 4775,
+      "sha256": "84572ce78f0e6cde828cf1462e9547dc7022f420f5496a63d236bbaa307ae0bb"
+    },
+    {
+      "path": "libsbn/tests/gmp_compat_hdr_ref.c",
+      "bytes": 891,
+      "sha256": "cb0aa82451ac21ef1779a1d0c87c6013c50dbaaa81fd16c00b4fefc2d4bb7945"
+    },
+    {
+      "path": "libsbn/tests/gmp_shim_check.c",
+      "bytes": 13597,
+      "sha256": "a1725aced0eeeac757b18819bfde1887c9067a87a5061be339841ad626bf8d7b"
+    },
+    {
+      "path": "libsbn/tests/p30_par_test.c",
+      "bytes": 4529,
+      "sha256": "418bf2235d177204e17ac3316cc4b126b4f34e51dd3ff7cefc40e3f09b220b39"
+    },
+    {
+      "path": "libsbn/tests/p30_test.c",
+      "bytes": 4739,
+      "sha256": "9dd311b5dadc23b58731d82ff120b83f383592e8ceeb7fa7becc6fb28ce03a66"
+    },
+    {
+      "path": "libsbn/tests/p50_par_test.c",
+      "bytes": 6891,
+      "sha256": "ea59a956e34923262e3fb5b5c3f19604edbbf429654a4df4f3ea898e4c6382ad"
+    },
+    {
+      "path": "libsbn/tests/p50_test.c",
+      "bytes": 4524,
+      "sha256": "eabe27cfa16ff471225bfecbafbed16508fa403461ce9a7da1c9e7ce07f63750"
+    },
+    {
+      "path": "libsbn/tests/plans_test.c",
+      "bytes": 6744,
+      "sha256": "7bc3d87354d293ec5947b1fefce3f74a4c26f25548028fd7c3b643843383d668"
+    },
+    {
+      "path": "libsbn/tests/pq16_par_test.c",
+      "bytes": 3322,
+      "sha256": "fdbe20e3710477f5abcca50f492ba5d0fa4b3e27d9d012bfc019ecfee63d681b"
+    },
+    {
+      "path": "libsbn/tests/pq16_test.c",
+      "bytes": 4539,
+      "sha256": "19fc375b793523c0bdfb2e2f1aa28937775505e2281239fbe8a2076f2aa67501"
+    },
+    {
+      "path": "libsbn/tests/smoke_addsub.c",
+      "bytes": 2910,
+      "sha256": "1f171b8afd177ca34b1e5cda2b58da9b1c0929396e4231b9238b30d73a6fc5bc"
+    },
+    {
+      "path": "libsbn/tests/smoke_divrem.c",
+      "bytes": 10613,
+      "sha256": "ab9bc1b88f560502faf5d83aa4e941c917686d021ccecb29232aa37a469213f4"
+    },
+    {
+      "path": "libsbn/tests/smoke_invx.c",
+      "bytes": 3374,
+      "sha256": "eaa4a9e1e5bd7f50d44304278f7f7b74889e6d0bf705fb09f59231ab29115682"
+    },
+    {
+      "path": "libsbn/tests/smoke_kernels.c",
+      "bytes": 7103,
+      "sha256": "6a24f8a0b95cb1a471129142b7f811d21661745419c071f64a0a2fcf5f82badd"
+    },
+    {
+      "path": "libsbn/tests/smoke_mul.c",
+      "bytes": 4978,
+      "sha256": "1994e8e2629a090cacada01aba10b079401f9742c6625383804b1dc23cc5fe02"
+    },
+    {
+      "path": "libsbn/tests/smoke_mulmid.c",
+      "bytes": 11114,
+      "sha256": "9b03eed44e6b1ff3907b862157a33b2e16b5fe12e94dfec126c196da7a6472ee"
+    },
+    {
+      "path": "libsbn/tests/smoke_nt.c",
+      "bytes": 14847,
+      "sha256": "f32426d2dcda8d96ce309bfb636a0c1cb0a9e562a085fa035721146494de6b4d"
+    },
+    {
+      "path": "libsbn/tests/smoke_p50.c",
+      "bytes": 7759,
+      "sha256": "b42ee7f46af3eac83c54072abaa80c75b6fdfeed4aa1ca05610505a9726da5cf"
+    },
+    {
+      "path": "libsbn/tests/smoke_pq16.c",
+      "bytes": 4109,
+      "sha256": "c300ca8ab2ed4fa2764d43c73bc103c11800af71077c8a3d0f86b84a883e4edb"
+    },
+    {
+      "path": "libsbn/tests/smoke_radix.c",
+      "bytes": 16818,
+      "sha256": "91904d1d35c6340a6e62f9606139e00e77ecc818a618b0b1ba68c6c03bb1ea8f"
+    },
+    {
+      "path": "libsbn/tests/smoke_scalar.c",
+      "bytes": 11823,
+      "sha256": "81e3c24962ce56cddd55eefef7ff433d0f6c7cfc94a8f0023397f01817a9fd02"
+    },
+    {
+      "path": "libsbn/tests/smoke_scratch.c",
+      "bytes": 2477,
+      "sha256": "6cf4ca9054bce96dd854a67fc92bc80f1a5109a30a34fca4859254fefd81c46d"
+    },
+    {
+      "path": "libsbn/tests/swapio_test.c",
+      "bytes": 13234,
+      "sha256": "ad73a331ae70df882c87e0ba6f5c8e359cc2f31d31bf16fe2197955cc20870c9"
+    },
+    {
+      "path": "libsbn/tests/team_smt_probe.c",
+      "bytes": 2367,
+      "sha256": "f0b17a3f8d35de0213a51f28f82f16b23336d987fb2c745e4e1455776408a73c"
+    },
+    {
+      "path": "libsbn/tests/team_test.c",
+      "bytes": 10644,
+      "sha256": "7a7b1afe4d5d6f342d2a6ef59b2900d456f89d9b11e0d536957957de3bc94233"
+    },
+    {
+      "path": "libsbn/tests/tpool_test.c",
+      "bytes": 5101,
+      "sha256": "42c95768691fa12a0038d56c771ef5003d12079c2b0eb1a3ef12eaebb023bb5b"
+    },
+    {
+      "path": "libsbn/tests/tx_div_test.c",
+      "bytes": 3851,
+      "sha256": "1c13e689b00fb1a19a9f8521b8ab624bc12f6d28392765692a9f55743d322c32"
+    },
+    {
+      "path": "libsbn/tests/tx_invert_test.c",
+      "bytes": 3608,
+      "sha256": "cf6b228aa0a546afe18666db15cced2af77f9492775bbdec2016a8245686afc7"
+    },
+    {
+      "path": "libsbn/tests/tx_mul_test.c",
+      "bytes": 9664,
+      "sha256": "a69322c7d6f50a5359b42cb94452e3e71777ed12a05de47de6287dd0ac874ba3"
+    },
+    {
+      "path": "libsbn/tests/tx_oracle_test.c",
+      "bytes": 6235,
+      "sha256": "1ca734074d775c9ea500934f4dca48fb43cbcee6e7da16a1af71de74e1855d4e"
+    },
+    {
+      "path": "libsbn/tests/tx_p50_test.c",
+      "bytes": 5783,
+      "sha256": "1e62a7bb3af58d4f36fb0d55a338281322eae1a20a4f2c867492208e58e967f5"
+    },
+    {
+      "path": "libsbn/tests/tx_parity.c",
+      "bytes": 8225,
+      "sha256": "e70f622b949971811149938736000a0e7dac22a77db7336b1ea2c83347ad0854"
+    },
+    {
+      "path": "libsbn/tests/tx_parity_old.c",
+      "bytes": 7254,
+      "sha256": "13ed64ba67832381cce7077fcb17ceb1e54bc27ee745a0c730e8ee06876d2a56"
+    },
+    {
+      "path": "libsbn/tests/tx_pq16_test.c",
+      "bytes": 8177,
+      "sha256": "3af2252ba7755a548d36baa4c6b003348010b813872548f5a1da04872662ccc1"
+    },
+    {
+      "path": "src/x86_64/add_n.s",
+      "bytes": 1555,
+      "sha256": "b08f26d376a193f27b97671862b4c9a913f9780f6c6289dd99d5fc16ece1f9bf"
+    },
+    {
+      "path": "src/x86_64/addmul_1.s",
+      "bytes": 1743,
+      "sha256": "8b8cef5e1b80aa8d47c82913e35d57109011095b610443cdd0dda8972b603a7f"
+    },
+    {
+      "path": "src/x86_64/addmul_1_adx.s",
+      "bytes": 2544,
+      "sha256": "02928c035903500c06fcf96e339e365630322f3d49fdcac4a80e004419604468"
+    },
+    {
+      "path": "src/x86_64/addmul_2.s",
+      "bytes": 2834,
+      "sha256": "b879d4b638ae9b733244cba86eff4a10844adfa92d035e4821881951110fe4de"
+    },
+    {
+      "path": "src/x86_64/addmul_2_adx.s",
+      "bytes": 2373,
+      "sha256": "c1ea816c6f00f13d864be387ee6704a076fde15a171de5f9010887d4d7ff52d9"
+    },
+    {
+      "path": "src/x86_64/addmul_basecase_le6.S",
+      "bytes": 5618,
+      "sha256": "9947da0f12625143fa078cb7f512d5bf0231488ab9097f56bf481f5a5d74924e"
+    },
+    {
+      "path": "src/x86_64/mul_1.s",
+      "bytes": 1861,
+      "sha256": "d64b0be3f02d2db4bb32945d8d4b735e803acc572504dadd0b2c7de0c02140f4"
+    },
+    {
+      "path": "src/x86_64/mul_basecase_le6.S",
+      "bytes": 8117,
+      "sha256": "52ececafffea073f587ee909e0f8a5105ad5c081139184cf58ff54d137f75035"
+    },
+    {
+      "path": "src/x86_64/sub_n.s",
+      "bytes": 1555,
+      "sha256": "0f8d74ac2f101b7bf9eb41f574a74fd3d3e5cf50ca55869fcd4ee75ad8321118"
+    },
+    {
+      "path": "src/x86_64/submul_1.s",
+      "bytes": 1743,
+      "sha256": "1bfb17f067900970a7d08589d1a2ed08d8e78e45fa4bd1a724965e97049be7ae"
+    }
+  ]
+}

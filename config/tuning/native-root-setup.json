@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "zen5-clang21-root-setup-20260917",
+  "kind": "cold_preparation_model",
+  "target": {
+    "cpu": "Zen5 AI Max 395 (Strix Halo)",
+    "compiler": "Clang 21.1.8",
+    "isa": "x86v4ifma"
+  },
+  "domain": {
+    "mode": "serial native Primes constructor (compressed tower, vectorized exact rec derivation)",
+    "measured_np": [
+      4,
+      6,
+      10
+    ],
+    "notes": "Twelve structural shapes, three builds each (median); caller-owned table lines flushed before timing. Other structural sizes extrapolate the same root/factor work counts. This model never grants arithmetic legality."
+  },
+  "evidence": [
+    {
+      "path": "results/log_followup_2026-09-17/root-cost/receipt.json",
+      "sha256": "2924fc0f02cd5691d5e98d922630ea52e7989fce42a15a7b70fe71171eaf87dd",
+      "role": "source/binary/protocol"
+    },
+    {
+      "path": "results/log_followup_2026-09-17/root-cost/runs.jsonl",
+      "sha256": "5ec333eded1765c5936ae2668b04807fb55fa7eb32a888322108e301ff10d0ba",
+      "role": "raw repetitions"
+    },
+    {
+      "path": "results/log_followup_2026-09-17/root-cost/model.json",
+      "sha256": "6c0fd9d35ac7fe7b3082c16a126241012e5e6ea6162fd227dba3c5d4bb444e7f",
+      "role": "nonnegative fit and leave-one-out errors"
+    }
+  ],
+  "parameters": {
+    "coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "0.10630585212477935",
+        "0.45053547850785952",
+        "472.67815040524312",
+        "79.591243785789629"
+      ],
+      "unit": "ns per np*entries, np*factor_levels*M2, np, np*root_order_log2 (Bailey only)"
+    },
+    "data_sha256": {
+      "type": "sha256",
+      "value": "5ec333eded1765c5936ae2668b04807fb55fa7eb32a888322108e301ff10d0ba"
+    }
+  }
+}

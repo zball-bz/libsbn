@@ -1,0 +1,14 @@
+#pragma once
+#include "sbn3/product.h"
+namespace sbn::v3 {
+// Generated from config/tuning/native-root-setup.json.
+// Data SHA-256: SBN3_CFG_DATA_SHA256
+// Cold constructor calibration, Zen5/Clang 21.1.8. Counts
+// actual root/factor entries; it does not change transform admissibility.
+inline double root_prepare_cost(const sbn3_mul_info &i) {
+    if(!i.np)return 0;
+    constexpr double c[]={SBN3_CFG_COEFFICIENTS};
+    return c[0]*i.np*double(i.table_entries)+c[1]*i.np*double(i.factor_levels)*i.M2+
+           c[2]*i.np+c[3]*i.np*(i.factor_levels?i.root_order_log2:0);
+}
+}

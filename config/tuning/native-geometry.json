@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "id": "zen5-p48-geometry-20260912-smt",
+  "kind": "selection_policy",
+  "target": {
+    "cpu": "Zen5 Strix Halo",
+    "compiler": "Clang 21.1.8",
+    "isa": "x86v4ifma"
+  },
+  "domain": {
+    "mode": "Bailey NTT geometry proposal only",
+    "notes": "Legality remains checked by the transform planner. Measured knee and near-full rules are not arithmetic constraints.",
+    "smt_transfer": "W32 plain LIN MUL, NP6..10; explicit geometry and cached basis remain fixed"
+  },
+  "evidence": [
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/backend/ntt_p48/geom.hpp",
+      "role": "preserved measured rules and original experiment references",
+      "sha256": "b741dd27bbde3508c4b4e1c1da4dcf944122b360d4ec1f9273d8041e99d2c12b"
+    },
+    {
+      "path": "results/ram_smt_parity_2026-09-12/geometry-row2/receipt.json",
+      "role": "fixed 191M-limb shape, row2, full equality",
+      "sha256": "27594331368938802d09cc546264f201715b9c80cd5be125c5fe15b3d335368d"
+    },
+    {
+      "path": "results/ram_smt_parity_2026-09-12/geometry-row2-mid/receipt.json",
+      "role": "actual 5B third merge shape, full equality",
+      "sha256": "785ca7426f7f06fb5fb10358785db85f8c0c6a8cfc513623a1a439c647997825"
+    },
+    {
+      "path": "results/ram_smt_parity_2026-09-12/geometry-row2-dense/receipt.json",
+      "role": "2^26.5 limb dense-row class, NP9/10, full equality",
+      "sha256": "4858ae01e876c040a11fb7825b0078e62df408efe90089586182f3569bc5d1b9"
+    }
+  ],
+  "parameters": {
+    "linear_deep_log_m": {
+      "type": "numbers",
+      "tokens": [
+        "24"
+      ],
+      "unit": "log2 outer transform size"
+    },
+    "linear_deep_log_c": {
+      "type": "numbers",
+      "tokens": [
+        "13"
+      ],
+      "unit": "log2 columns"
+    },
+    "linear_row_log": {
+      "type": "numbers",
+      "tokens": [
+        "11"
+      ],
+      "unit": "log2 row slots"
+    },
+    "linear_min_log_c": {
+      "type": "numbers",
+      "tokens": [
+        "8"
+      ],
+      "unit": "log2 columns"
+    },
+    "linear_middle_max_log_c": {
+      "type": "numbers",
+      "tokens": [
+        "11"
+      ],
+      "unit": "log2 columns"
+    },
+    "lattice_min_log_m": {
+      "type": "numbers",
+      "tokens": [
+        "18"
+      ],
+      "unit": "log2 outer transform size"
+    },
+    "lattice_max_log_m": {
+      "type": "numbers",
+      "tokens": [
+        "21"
+      ],
+      "unit": "log2 outer transform size"
+    },
+    "lattice_fill_percent": {
+      "type": "numbers",
+      "tokens": [
+        "92"
+      ],
+      "unit": "percent"
+    },
+    "near_full_numerator": {
+      "type": "numbers",
+      "tokens": [
+        "19"
+      ],
+      "unit": "fraction numerator"
+    },
+    "near_full_denominator": {
+      "type": "numbers",
+      "tokens": [
+        "20"
+      ],
+      "unit": "fraction denominator"
+    },
+    "full_row_log": {
+      "type": "numbers",
+      "tokens": [
+        "7"
+      ],
+      "unit": "log2 row slots"
+    },
+    "truncated_row_log": {
+      "type": "numbers",
+      "tokens": [
+        "10"
+      ],
+      "unit": "log2 row slots"
+    },
+    "smt_column_transfer": {
+      "type": "numbers",
+      "tokens": [
+        "32",
+        "6",
+        "10",
+        "13",
+        "11",
+        "12",
+        "0"
+      ],
+      "unit": "workers, first_np, last_np, from_lgC, from_lgM2, to_lgC, minimum live inverse-row payload bytes"
+    },
+    "smt_dense_row_transfer": {
+      "type": "numbers",
+      "tokens": [
+        "32",
+        "9",
+        "10",
+        "11",
+        "12",
+        "12",
+        "67108864"
+      ],
+      "unit": "workers, first_np, last_np, from_lgC, from_lgM2, to_lgC, minimum live inverse-row payload bytes"
+    }
+  }
+}

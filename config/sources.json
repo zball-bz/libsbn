@@ -1,0 +1,1292 @@
+{
+  "schema_version": 1,
+  "status": "implementation_started",
+  "path_base": "libsbn_v3",
+  "allow_wildcards": false,
+  "required_entry_fields": [
+    "path",
+    "language",
+    "group",
+    "requires",
+    "depends_on",
+    "provides_symbols",
+    "requires_symbols",
+    "donor_ids"
+  ],
+  "entry_notes": {
+    "requires": "Per TU/asm actual feature list, including transitive intrinsics.",
+    "depends_on": "Registered TU paths for feature/symbol closure; private header deps also captured in compiler depfiles.",
+    "path": "Real .c/.cpp/.s/.S file; header-only fragments are not independent production TUs."
+  },
+  "entries": [
+    {
+      "path": "src/core/x86_64/add_n.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_add_nc",
+        "sbn3i_add_n"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/sub_n.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_sub_nc",
+        "sbn3i_sub_n"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/mul_1.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mul_1c",
+        "sbn3i_mul_1"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/addmul_1_adx.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_addmul_1_adx"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/addmul_2_adx.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_addmul_2_adx"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/mul_basecase_le6.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mul_basecase_le6"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/common/base.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3_build_version",
+        "sbn3_set_fatal_hook"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/core/x86_64/word.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/core/x86_64/add_n.s",
+        "src/core/x86_64/sub_n.s",
+        "src/core/x86_64/mul_1.s",
+        "src/core/x86_64/addmul_1_adx.s",
+        "src/core/x86_64/addmul_2_adx.s",
+        "src/core/x86_64/mul_basecase_le6.S",
+        "src/core/x86_64/addmul_1.s",
+        "src/core/x86_64/addmul_2.s"
+      ],
+      "provides_symbols": [
+        "sbn3_add_n",
+        "sbn3_int_mul_basecase",
+        "sbn3_mul_basecase",
+        "sbn3_sub_n"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/runtime/linux/arena.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_arena_acquire",
+        "sbn3_arena_create",
+        "sbn3_arena_destroy",
+        "sbn3_arena_get_stats",
+        "sbn3_arena_prepare",
+        "sbn3_arena_release",
+        "sbn3_arena_trim"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "runtime"
+      ]
+    },
+    {
+      "path": "src/runtime/team.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [
+        "sse2"
+      ],
+      "depends_on": [
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_region_barrier",
+        "sbn3_region_rank",
+        "sbn3_region_width",
+        "sbn3_team_create",
+        "sbn3_team_destroy",
+        "sbn3_team_first_worker",
+        "sbn3_team_for",
+        "sbn3_team_invoke2",
+        "sbn3_team_region_run",
+        "sbn3_team_run",
+        "sbn3_team_stack_resident_bytes",
+        "sbn3_team_stack_virtual_bytes",
+        "sbn3_team_storage_bytes",
+        "sbn3_team_width",
+        "sbn3_team_workers"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "runtime"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np4.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np4_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np5.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np5_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np7.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np7_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np8.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np8_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np10.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np10_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np9.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np9_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/np6.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512cd",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::np6_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "p48"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/product/api.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/instances/x86v4ifma/np4.cpp",
+        "src/instances/x86v4ifma/np5.cpp",
+        "src/instances/x86v4ifma/np6.cpp",
+        "src/instances/x86v4ifma/np7.cpp",
+        "src/instances/x86v4ifma/np8.cpp",
+        "src/common/base.cpp",
+        "src/instances/x86v4ifma/np9.cpp",
+        "src/instances/x86v4ifma/np10.cpp",
+        "src/product/short_backend.cpp",
+        "src/product/fft_backend.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_mul_bind",
+        "sbn3_mul_execute",
+        "sbn3_mul_execute_on_scope",
+        "sbn3_mul_get_metrics",
+        "sbn3_mul_query",
+        "sbn3_mul_unbind",
+        "sbn3_product_query",
+        "sbn3_product_bind",
+        "sbn3_product_execute",
+        "sbn3_product_execute_on_scope",
+        "sbn3_product_get_metrics",
+        "sbn3_spectrum_prepare",
+        "sbn3_spectrum_describe",
+        "sbn3_spectrum_can_apply",
+        "sbn3_spectrum_retain",
+        "sbn3_spectrum_release",
+        "sbn3_int_mul_execute",
+        "sbn3_spectrum_query",
+        "sbn3_spectrum_reserve",
+        "sbn3_spectrum_compute",
+        "sbn3_spectrum_reserve_plan",
+        "sbn3_spectrum_compute_square"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/instances/x86v4ifma/u52.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2"
+      ],
+      "depends_on": [
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::u52::scratch_bytes",
+        "sbn::v3::u52::multiply",
+        "sbn::v3::u52::middle_scratch_bytes",
+        "sbn::v3::u52::middle"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/instances/x86v4ifma/pq16.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512vbmi",
+        "fma"
+      ],
+      "depends_on": [
+        "src/runtime/linux/arena.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::pq16::query",
+        "sbn::v3::pq16::table_bytes",
+        "sbn::v3::pq16::scratch_bytes",
+        "sbn::v3::pq16::prepare",
+        "sbn::v3::pq16::multiply",
+        "sbn::v3::pq16::supported",
+        "sbn::v3::pq16::cached_scratch_bytes",
+        "sbn::v3::pq16::forward_spectrum",
+        "sbn::v3::pq16::apply_spectrum",
+        "sbn::v3::pq16::cyclic_shape",
+        "sbn::v3::pq16::cyclic_supported",
+        "sbn::v3::pq16::cyclic_multiply",
+        "sbn::v3::pq16::plus_shape",
+        "sbn::v3::pq16::plus_supported",
+        "sbn::v3::pq16::plus_multiply"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "fp"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/addmul_1.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_addmul_1"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/addmul_2.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_addmul_2"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/product/short_backend.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/core/x86_64/word.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/instances/x86v4ifma/pq16.cpp",
+        "src/product/fft_backend.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::short_backend"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/inverse_rung.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::inverse_rung"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/core/x86_64/recip_u1024.s",
+      "language": "asm",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_recip_u1024"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/algorithms/inverse_seed.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/core/x86_64/recip_u1024.s",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::inverse_seed"
+      ],
+      "requires_symbols": [
+        "sbn3i_recip_u1024"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/inverse_program.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/inverse_seed.cpp",
+        "src/algorithms/inverse_rung.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::inverse_program"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/rsqrt.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::rsqrt_seed",
+        "sbn::v3::rsqrt_rung",
+        "sbn::v3::rsqrt_program"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/divide_terminal.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::divide_terminal"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/sqrt2_finish.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::sqrt2_from_rsqrt",
+        "sbn::v3::sqrt2_certify"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/sqrt2_rational.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::rational_sqrt2_capacity",
+        "sbn::v3::rational_sqrt2_iterations",
+        "sbn::v3::rational_sqrt2",
+        "sbn::v3::normalize_rational_sqrt2"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/newton_service.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/algorithms/inverse_program.cpp",
+        "src/algorithms/rsqrt.cpp",
+        "src/algorithms/divide_terminal.cpp",
+        "src/algorithms/sqrt2_rational.cpp",
+        "src/algorithms/sqrt2_finish.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_newton_query",
+        "sbn3_newton_bind",
+        "sbn3_newton_execute",
+        "sbn3_newton_get_metrics",
+        "sbn3_newton_unbind"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/product/fft_backend.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/instances/x86v4ifma/pq16.cpp",
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::fft_backend",
+        "sbn::v3::fft_spectrum_description",
+        "sbn::v3::fft_reserve_spectrum",
+        "sbn::v3::fft_compute_spectrum"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/value/api.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/core/x86_64/word.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_int_normalize",
+        "sbn3_int_compare",
+        "sbn3_int_add",
+        "sbn3_int_sub",
+        "sbn3_int_lshift",
+        "sbn3_int_rshift"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/series/schedule.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_series_query",
+        "sbn3_series_plan_init",
+        "sbn3_series_visit",
+        "sbn3_series_execute",
+        "sbn3_series_child_needs"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/formulas.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/core/x86_64/mul_1.s",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/arithmetic.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/schedule.cpp",
+        "src/series/formulas.cpp",
+        "src/product/api.cpp",
+        "src/value/api.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/log_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/formula_def.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/arithmetic.cpp",
+        "src/core/x86_64/mul_1.s",
+        "src/core/x86_64/addmul_1.s",
+        "src/common/base.cpp",
+        "src/value/api.cpp",
+        "src/series/log_product.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/terminal.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/scaled_ratio.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/bbp_formula.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/formula_def.cpp",
+        "src/series/arithmetic.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/formula_api.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/formula_def.cpp",
+        "src/series/psr.cpp",
+        "src/series/terminal.cpp",
+        "src/runtime/team.cpp",
+        "src/core/x86_64/mul_1.s"
+      ],
+      "provides_symbols": [
+        "sbn3_formula_object_bytes",
+        "sbn3_formula_query",
+        "sbn3_formula_bind",
+        "sbn3_formula_execute",
+        "sbn3_formula_execute_inplace",
+        "sbn3_formula_unbind",
+        "sbn3_formula_get_metrics"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "path": "src/series/formula_sum.cpp",
+      "depends_on": [
+        "src/series/formula_api.cpp",
+        "src/value/api.cpp",
+        "src/runtime/team.cpp",
+        "src/core/x86_64/mul_1.s"
+      ],
+      "provides_symbols": [
+        "sbn3_formula_sum_object_bytes",
+        "sbn3_formula_sum_query",
+        "sbn3_formula_sum_bind",
+        "sbn3_formula_sum_execute",
+        "sbn3_formula_sum_execute_inplace",
+        "sbn3_formula_sum_unbind",
+        "sbn3_formula_sum_get_metrics"
+      ]
+    },
+    {
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "path": "src/series/logarithm.cpp",
+      "depends_on": [
+        "src/series/formula_api.cpp",
+        "src/series/formula_sum.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_arccoth_definition",
+        "sbn3_arccoth_series_definition",
+        "sbn3_atanh_series_definition",
+        "sbn3_arccoth_query",
+        "sbn3_log_formula_query",
+        "sbn3_log_object_bytes",
+        "sbn3_log_query"
+      ]
+    },
+    {
+      "path": "src/series/euler.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/arithmetic.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/series/scaled_ratio.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_e_query",
+        "sbn3_e_bind",
+        "sbn3_e_execute",
+        "sbn3_e_get_metrics",
+        "sbn3_e_unbind",
+        "sbn3_e_execute_inplace"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/scaled_ratio.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/value/api.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/psr.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/arithmetic.cpp",
+        "src/series/scaled_ratio.cpp",
+        "src/algorithms/newton_service.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/pi.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/psr.cpp",
+        "src/series/scaled_ratio.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/algorithms/mul_rsqrt.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_pi_query",
+        "sbn3_pi_bind",
+        "sbn3_pi_execute",
+        "sbn3_pi_get_metrics",
+        "sbn3_pi_unbind",
+        "sbn3_pi_execute_inplace"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/verify/bbp.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/runtime/team.cpp",
+        "src/kernels/x86v4ifma/bbp_montgomery.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_pi_bbp_supported",
+        "sbn3_pi_bbp",
+        "sbn3_pi_bbp_check_tail"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/bbp.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "fma"
+      ],
+      "depends_on": [],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/mul_rsqrt.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/newton_service.cpp",
+        "src/product/api.cpp",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::mul_rsqrt_query",
+        "sbn::v3::mul_rsqrt_execute"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/bbp_montgomery.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512ifma",
+        "fma"
+      ],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/verify/bitwindow.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/runtime/team.cpp",
+        "src/kernels/x86v4ifma/bbp_montgomery.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_bbp_window_supported",
+        "sbn3_bbp_window",
+        "sbn3_catalan_bbp_supported",
+        "sbn3_catalan_bbp"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/radix_leaf.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512ifma",
+        "avx512vbmi"
+      ],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "division_mid_radix"
+      ]
+    },
+    {
+      "path": "src/radix/format_tree.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/programs.cpp",
+        "src/radix/rail_product.cpp",
+        "src/radix/ring_product.cpp",
+        "src/kernels/x86v4ifma/radix_leaf.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/format.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/format_tree.cpp",
+        "src/algorithms/newton_service.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/programs.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/parse_tree.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/programs.cpp",
+        "src/radix/rail_product.cpp",
+        "src/kernels/x86v4ifma/radix_leaf.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/parse.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/parse_tree.cpp",
+        "src/algorithms/newton_service.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/rail_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/instances/x86v4ifma/pq16.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/ring_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/product/api.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    }
+  ]
+}

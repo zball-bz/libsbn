@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "id": "zen5-clang21-short-20260910-preserved",
+  "kind": "performance_model",
+  "target": {
+    "isa": "x86v4ifma",
+    "cpu": "Zen5 Strix Halo",
+    "compiler": "Clang 21.1.8"
+  },
+  "domain": {
+    "mode": "prepared in-RAM",
+    "notes": "Contains the measured W1 overrides and the original multi-worker base model; extrapolation is not a correctness grant.",
+    "status": "inherited_empirical_with_frozen_source_and_end_to_end_validation"
+  },
+  "evidence": [
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/product/short_tuning.hpp",
+      "sha256": "93764a5c8149abf861fd73f323c6b871d3a9276749eed40060591b60460202f8",
+      "role": "complete validated production model imported without changing constants"
+    },
+    {
+      "path": "results/small_wide_2026-09-09/scan2/sweep.csv",
+      "role": "retained end-to-end validation of the inherited production model",
+      "sha256": "a5a86d46f654d8b0372b709c8970d9366f249697fb4549215477833af6c8c5e3"
+    }
+  ],
+  "parameters": {
+    "scalar_coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "0",
+        "0.2895891859551134",
+        "0.052564791501154819",
+        "0",
+        "0.14321369903795178",
+        "2.2405273643243753",
+        "0.1569145071223659"
+      ],
+      "unit": "coefficient units follow the named feature vector in the template"
+    },
+    "u52_coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "20.944130",
+        "0",
+        "0",
+        "0.018296843",
+        "0.0038957815186156687",
+        "0.29861229267674327",
+        "2.2510469050552797"
+      ],
+      "unit": "coefficient units follow the named feature vector in the template"
+    },
+    "pq_coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "0",
+        "0",
+        "0.14743806599779716",
+        "0",
+        "0",
+        "0",
+        "0.87078610368689668",
+        "0.87742405870391149",
+        "1.0706828102670165",
+        "1.1366508820430412",
+        "1.6382975102983268",
+        "0",
+        "13.685158472707293",
+        "0.12003305563179904",
+        "1230.9830763656739",
+        "0"
+      ],
+      "unit": "coefficient units follow the named feature vector in the template"
+    },
+    "flat_coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "3590.5668741585941",
+        "0",
+        "1.6404783079099587",
+        "1.3410349690627057",
+        "0",
+        "0.73438534855920734",
+        "29.170559636210534",
+        "1.502248167796405",
+        "0",
+        "0.60909210705454486",
+        "0",
+        "0"
+      ],
+      "unit": "coefficient units follow the named feature vector in the template"
+    },
+    "flat_w1_scale": {
+      "type": "numbers",
+      "tokens": [
+        "0.567"
+      ],
+      "unit": "dimensionless measured correction"
+    },
+    "scalar_two_scale": {
+      "type": "numbers",
+      "tokens": [
+        ".90"
+      ],
+      "unit": "dimensionless measured correction"
+    },
+    "base_calibration": {
+      "type": "sha256",
+      "value": "1fb61dcf8842d6d385761b848b0193003b0b679da965f4a2e5370f1da0e46139"
+    }
+  },
+  "provenance_gaps": [
+    {
+      "missing_reference": "results/small_wide_2026-09-09/crossover.json",
+      "resolution": "Original fit file is absent. Preserve exact validated source coefficients as inherited empirical parameters; do not claim the original fit can be reproduced. A future refit must supply a complete record."
+    }
+  ]
+}

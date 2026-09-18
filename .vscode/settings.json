@@ -1,0 +1,20 @@
+{
+  "files.watcherExclude": {
+    "build/**": true,
+    "experiments/results/**": true,
+    "experiments/build-history/**": true,
+    "experiments/.work/**": true,
+    "experiments/bench/**/build/**": true
+  },
+  "search.exclude": {
+    "build/**": true,
+    "experiments/results/**": true,
+    "experiments/build-history/**": true,
+    "experiments/.work/**": true
+  },
+  "git.repositoryScanIgnoredFolders": [
+    "node_modules",
+    "build",
+    "experiments"
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "id": "zen5-clang21-fft-cost-20260910-preserved",
+  "kind": "performance_model",
+  "target": {
+    "cpu": "Zen5 Strix Halo",
+    "compiler": "Clang 21.1.8",
+    "isa": "x86v4ifma"
+  },
+  "domain": {
+    "workers": [
+      1
+    ],
+    "mode": "prepared FFT, PFA/CT/PQ/right-angle",
+    "status": "calibrated base with separately measured/provisional corrections; see evidence and template"
+  },
+  "evidence": [
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/backend/pq16/tuning.hpp",
+      "sha256": "2042c7a406d10a43ab5219c12b05e83f7abd438282f242e5cf6b08cc72b3ead9"
+    },
+    {
+      "path": "results/variable_fft_2026-09-08/fit.json",
+      "role": "base fit",
+      "sha256": "07fde8a1cde1921e780e86e054fca2befc2aaf40bec1e5d3422caf4d6c146d06"
+    },
+    {
+      "path": "results/wide_kernels_2026-09-08",
+      "role": "RAC and shape correction measurements",
+      "kind": "evidence_directory"
+    }
+  ],
+  "parameters": {
+    "coefficients": {
+      "type": "numbers",
+      "tokens": [
+        "0.07849706155678864",
+        "1.2334300641667024",
+        "0.10552905354324736",
+        "0.21734865839454048",
+        "0.2973913067662808",
+        "0.2548322652972444",
+        "0.0455720234197718",
+        "0.1756034875282683",
+        "0.03337637744219136",
+        "0.16707123217384431",
+        "0.06747916518690149",
+        "-0.04751386880126724",
+        "0.0860496676920782",
+        "0.11698990194675603",
+        "-0.06834042933124669",
+        "0.16718222054699103",
+        "-0.12310213216145849",
+        "0.06"
+      ],
+      "unit": "ns per point times the ordered dimensionless feature vector"
+    },
+    "rac_wide_m7": {
+      "type": "numbers",
+      "tokens": [
+        "0.985"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "rac_wide": {
+      "type": "numbers",
+      "tokens": [
+        "0.97"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "rac_16": {
+      "type": "numbers",
+      "tokens": [
+        "0.955"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "balanced_decode_ns_per_point": {
+      "type": "numbers",
+      "tokens": [
+        "0.10"
+      ],
+      "unit": "ns per point"
+    },
+    "centered_pow2": {
+      "type": "numbers",
+      "tokens": [
+        "1.17"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "centered_m3": {
+      "type": "numbers",
+      "tokens": [
+        "1.20"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "centered_m5": {
+      "type": "numbers",
+      "tokens": [
+        "1.25"
+      ],
+      "unit": "dimensionless correction"
+    },
+    "centered_m7": {
+      "type": "numbers",
+      "tokens": [
+        "1.35"
+      ],
+      "unit": "dimensionless correction"
+    }
+  }
+}

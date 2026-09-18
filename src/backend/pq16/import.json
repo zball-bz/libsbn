@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source": "libsbn/include/sbn/detail/engine/pq16.h",
+  "sha256": "14b2a6fe097935823830e8f697b845633041ffc5adb1793f8466613733d58919",
+  "destination": "libsbn_v3/src/backend/pq16/engine.hpp",
+  "changes": [
+    "private namespace",
+    "explicit immutable table lease",
+    "only requested prefix built",
+    "Frame allocation only",
+    "recursive v3 team adapter",
+    "no global allocator/mutex/environment"
+  ]
+}

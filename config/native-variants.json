@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "production_profile": "packed48-native-leaf8",
+  "experiment_opt_in": "SBN3_EXPERIMENTAL_NATIVE",
+  "entries": [
+    {
+      "name": "CR_NP",
+      "default": "6",
+      "category": "instance",
+      "reason": "One prime-count instance per TU; production NP4..10."
+    },
+    {
+      "name": "SBN3_P48_LEAF",
+      "default": "8",
+      "category": "instance",
+      "reason": "Public registered instances use the native leaf; other leaves are explicit research builds."
+    },
+    {
+      "name": "CR_SLOT",
+      "default": "48",
+      "category": "format",
+      "reason": "Packed residue vector bytes."
+    },
+    {
+      "name": "CR_SLOTO",
+      "default": "CR_SLOT",
+      "category": "format",
+      "reason": "Product residue vector bytes; production format is packed48."
+    },
+    {
+      "name": "CR_TB",
+      "default": "2",
+      "category": "format",
+      "reason": "Blocked plane slot count."
+    },
+    {
+      "name": "CR_BPAD",
+      "default": "1",
+      "category": "format",
+      "reason": "Odd cache-line block padding."
+    },
+    {
+      "name": "CR_IROW_W",
+      "default": "4",
+      "category": "schedule",
+      "reason": "Interleaved inverse rows."
+    },
+    {
+      "name": "CR_ROWW",
+      "default": "1",
+      "category": "schedule",
+      "reason": "Rows per forward task."
+    },
+    {
+      "name": "CR_OCH",
+      "default": "4096",
+      "category": "schedule",
+      "reason": "CRT emit chunk trunks."
+    },
+    {
+      "name": "CR_BLK_MIN",
+      "default": "64",
+      "category": "kernel_reference",
+      "reason": "Blocked TFT base cutoff; alternative cutoffs need numerical gates."
+    },
+    {
+      "name": "CR_FAST_INV",
+      "default": "1",
+      "category": "kernel_reference",
+      "reason": "Normalized radix-2 inverse is retained as a reference."
+    },
+    {
+      "name": "CR_CONV8_SPLIT",
+      "default": "1",
+      "category": "kernel_reference",
+      "reason": "Single accumulator is a congruence/performance reference."
+    },
+    {
+      "name": "CR_M8U2",
+      "default": "1",
+      "category": "kernel_reference",
+      "reason": "Unpaired radix-8 inverse remains a reference."
+    },
+    {
+      "name": "CR_LEAF8P",
+      "default": "1",
+      "category": "kernel_reference",
+      "reason": "Unpaired leaf reference for fused two-leaf code."
+    },
+    {
+      "name": "CR_FLAT_PACKA",
+      "default": "2",
+      "category": "kernel_reference",
+      "reason": "0 is unpacked reference, 1 forces packing, 2 is measured policy."
+    },
+    {
+      "name": "CR_FLAT_TRIM_ZERO",
+      "default": "2",
+      "category": "kernel_reference",
+      "reason": "Full clearing is the reference for trimmed input footprints."
+    },
+    {
+      "name": "CR_FLAT_INVERSE",
+      "default": "0",
+      "category": "kernel_reference",
+      "reason": "Alternate zero-tail inverse for numerical/layout probes."
+    },
+    {
+      "name": "CR_FLAT_PRIME_SPREAD",
+      "default": "1",
+      "category": "schedule",
+      "reason": "Spreads per-prime work across workers."
+    },
+    {
+      "name": "CR_FLAT_TAIL_PAIR",
+      "default": "2",
+      "category": "schedule",
+      "reason": "0 off, 1 forced, 2 calibrated NP10 tail pairing."
+    },
+    {
+      "name": "CR_PRMF",
+      "default": "1",
+      "category": "kernel_reference",
+      "reason": "General line assembler reference for fixed row-major flush."
+    },
+    {
+      "name": "CR_FPACK",
+      "default": "0",
+      "category": "experiment",
+      "reason": "Not promoted; packed inverse-row experiment only."
+    },
+    {
+      "name": "CR_GARNER_DOT",
+      "default": "0",
+      "category": "experiment",
+      "reason": "Rejected performance variant; retained only for controlled comparison."
+    },
+    {
+      "name": "CR_STRIDE_OVERRIDE",
+      "default": null,
+      "category": "experiment",
+      "reason": "Joined-boundary stride experiment, never an implicit environment choice."
+    },
+    {
+      "name": "CR_FLAT_SHARE_TABLES",
+      "default": null,
+      "category": "experiment",
+      "reason": "Locality experiment with explicit restore-before-unbind."
+    },
+    {
+      "name": "CR_EMIT_PROF",
+      "default": null,
+      "category": "diagnostic",
+      "reason": "Explicit instrumented build; disabled in the production profile."
+    },
+    {
+      "name": "CR_FLAT_PROFILE",
+      "default": null,
+      "category": "diagnostic",
+      "reason": "Explicit instrumented build; disabled in the production profile."
+    },
+    {
+      "name": "CR_P48_CHECK",
+      "default": null,
+      "category": "diagnostic",
+      "reason": "Explicit instrumented build; disabled in the production profile."
+    },
+    {
+      "name": "CR_ROWS_PROF",
+      "default": null,
+      "category": "diagnostic",
+      "reason": "Explicit instrumented build; disabled in the production profile."
+    },
+    {
+      "name": "CR_TILE_PROF",
+      "default": null,
+      "category": "diagnostic",
+      "reason": "Explicit instrumented build; disabled in the production profile."
+    }
+  ],
+  "notes": [
+    "Opt-in permits compiling an experiment; it is not a correctness or performance certification.",
+    "Frozen pre-cleanup sources retain retired variants. Current tooling should use explicit override flags and record them."
+  ]
+}

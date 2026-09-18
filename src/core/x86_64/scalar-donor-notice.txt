@@ -1,0 +1,59 @@
+#pragma once
+/* sbn/scalar.h - portable scalar (u64 limb) mpn primitives for libsbn.
+ *
+ * The scalar-fallback layer: everything the SIMD/u52 stack needs on the u64
+ * side that is NOT already covered by the extracted asm kernels
+ * (sbn/kernels.h).  All functions are faithful ports of the GMP generic C
+ * code (semantics matched exactly: return values, shift-count ranges,
+ * overlap rules), with the gmp-impl.h macro plumbing flattened to plain
+ * uint64_t.  Header-only, compiles as both C and C++20 (-fno-exceptions
+ * -fno-rtti); no dependency on immintrin or gmp headers.
+ *
+ * Ported from the GNU MP Library 6.3.0 sources:
+ *   mpn/generic/lshift.c, mpn/generic/rshift.c, mpn/generic/divrem_1.c,
+ *   mpn/generic/divrem_2.c, mpn/generic/mul_basecase.c,
+ *   mpn/generic/copyi.c, mpn/generic/copyd.c, mpn/generic/com.c,
+ *   gmp-h.in (mpn_add_1 / mpn_sub_1 / mpn_neg / mpn_zero_p / mpn_cmp
+ *   inline bodies), gmp-impl.h (MPN_INCR_U, MPN_DECR_U, invert_limb,
+ *   invert_pi1, udiv_qrnnd_preinv, udiv_qr_3by2), longlong.h
+ *   (umul_ppmm, add_ssaaaa, sub_ddmmss).
+ *
+ * Copyright 1991-2016 Free Software Foundation, Inc.
+ *
+ * This file is part of the GNU MP Library.
+ *
+ * The GNU MP Library is free software; you can redistribute it and/or modify
+ * it under the terms of either:
+ *
+ *   * the GNU Lesser General Public License as published by the Free
+ *     Software Foundation; either version 3 of the License, or (at your
+ *     option) any later version.
+ *
+ * or
+ *
+ *   * the GNU General Public License as published by the Free Software
+ *     Foundation; either version 2 of the License, or (at your option) any
+ *     later version.
+ *
+ * or both in parallel, as here.
+ *
+ * The GNU MP Library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
+ *
+ * You should have received copies of the GNU General Public License and the
+ * GNU Lesser General Public License along with the GNU MP Library.  If not,
+ * see https://www.gnu.org/licenses/.
+ *
+ * ---------------------------------------------------------------------------
+ * SMALL-N DISPATCH ADVICE (comments only - the asm set is NOT wrapped here):
+ *   add_n/add_nc, sub_n/sub_nc, mul_1/mul_1c, addmul_1(_adx), submul_1,
+ *   addmul_2(_adx) are provided by sbn/kernels.h for all n >= 1 (addmul_2:
+ *   n >= 2, peel n == 1 to sbn_addmul_1).  Route sub-one-vector n (< 8,
+ *   bench up to ~16) of the masked-SIMD vadd/vsub paths to sbn_add_nc /
+ *   sbn_sub_nc: one vector op + kmov mask ripple loses to ~n scalar adc.
+ *   That dispatch belongs inside the sbn_vadd_nc/sbn_vsub_nc wrappers
+ *   (sbn/addsub.h), not at call sites.
+ * ---------------------------------------------------------------------------
+ */

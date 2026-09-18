@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "status": "stage3_verified_not_full_v1",
+  "delivery": "native_only",
+  "platform": {
+    "os": "linux",
+    "abi": "x86_64-sysv",
+    "cpu": "Zen5 AI Max 395 (Strix Halo)",
+    "memory_description": "quad-channel LPDDR5X 8000 MT/s",
+    "provenance": "user decision R7/R8"
+  },
+  "toolchain": {
+    "cc": "clang",
+    "cxx": "clang++",
+    "ar": "llvm-ar",
+    "ranlib": "llvm-ranlib",
+    "linker": "lld",
+    "version_pin": "21.1.8",
+    "version_rule": "Record exact version at M0; no automatic compiler fallback.",
+    "c_standard": "c11",
+    "cxx_standard": "c++20"
+  },
+  "cxx_policy_flags": [
+    "-fno-exceptions",
+    "-fno-rtti"
+  ],
+  "groups": {
+    "common": {
+      "target_flags": [
+        "-march=x86-64-v3",
+        "-madx"
+      ],
+      "feature_closure": [
+        "sse",
+        "sse2",
+        "sse3",
+        "ssse3",
+        "sse4.1",
+        "sse4.2",
+        "popcnt",
+        "cx16",
+        "lahf_sahf",
+        "avx",
+        "avx2",
+        "f16c",
+        "fma",
+        "bmi1",
+        "bmi2",
+        "lzcnt",
+        "movbe",
+        "xsave",
+        "adx"
+      ],
+      "lto_partition": "baseline"
+    },
+    "native": {
+      "target_flags": [
+        "-march=x86-64-v4",
+        "-madx",
+        "-mavx512ifma",
+        "-mavx512vbmi",
+        "-mavx512vbmi2",
+        "-mavx512vpopcntdq",
+        "-mpclmul",
+        "-mvpclmulqdq",
+        "-mtune=znver5"
+      ],
+      "feature_closure": [
+        "sse",
+        "sse2",
+        "sse3",
+        "ssse3",
+        "sse4.1",
+        "sse4.2",
+        "popcnt",
+        "cx16",
+        "lahf_sahf",
+        "avx",
+        "avx2",
+        "f16c",
+        "fma",
+        "bmi1",
+        "bmi2",
+        "lzcnt",
+        "movbe",
+        "xsave",
+        "adx",
+        "avx512f",
+        "avx512bw",
+        "avx512cd",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2",
+        "avx512vpopcntdq",
+        "pclmulqdq",
+        "vpclmulqdq"
+      ],
+      "lto_partition": "native"
+    },
+    "reference": {
+      "target_flags": [
+        "-march=x86-64",
+        "-fno-vectorize",
+        "-fno-slp-vectorize"
+      ],
+      "feature_closure": [
+        "sse",
+        "sse2"
+      ],
+      "delivery": "test_only",
+      "lto_partition": "reference"
+    }
+  },
+  "optimization": {
+    "initial_seed": "-O2",
+    "provenance": "labs/cr Makefile; not a new tuning result",
+    "development_lto": "off",
+    "release_candidate_lto": "thin",
+    "cross_partition_lto": false,
+    "fast_math": false,
+    "validated": false
+  },
+  "tuning_key_fields": [
+    "schema",
+    "abi",
+    "feature_mask",
+    "backend_instance_revision",
+    "microarchitecture",
+    "cache_topology_memory_profile",
+    "compiler_codegen_id",
+    "thread_placement_class"
+  ],
+  "built_artifacts": [
+    {
+      "path": "build/native/libsbn_v3.a",
+      "status": "stage3_verified"
+    },
+    {
+      "path": "build/native/np6_compare",
+      "status": "stage3_verified"
+    }
+  ]
+}

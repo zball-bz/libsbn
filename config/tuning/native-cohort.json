@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "zen5-smt-cohort-20260912",
+  "kind": "policy",
+  "target": "Zen5 Strix Halo; native Clang 21.1.8",
+  "domain": {
+    "cohort_workers": [
+      32
+    ],
+    "product_workers": 1,
+    "note": "Only the measured SMT cohort is promoted. The W16 rule did not show a consistent end-to-end win."
+  },
+  "evidence": [
+    {
+      "path": "results/smt_analysis_2026-09-12/cache-policy-final/cache-topology.json",
+      "role": "hardware cache domains",
+      "sha256": "b613c389eaddc1e512d8ad7e0c392101402a06ad3cb83dbd4d8be696aa17b8f9"
+    },
+    {
+      "path": "results/smt_analysis_2026-09-12/batch-choices/receipt.json",
+      "role": "whole-machine serial FFT/Flat comparisons",
+      "sha256": "e5c0e0b5acaf4376d9552069fc3673583b66d7a7ca1182a62cc0c52551847d6a"
+    },
+    {
+      "path": "results/smt_analysis_2026-09-12/cache-planning-1b/receipt.json",
+      "role": "three-repeat full-constant candidate comparison",
+      "sha256": "20c4624da3af64f22822db9d44a13a644ed12a0857a08a9c97ae3dfe5ad9448a"
+    }
+  ],
+  "parameters": {
+    "llc_bytes": {
+      "type": "numbers",
+      "tokens": [
+        "67108864"
+      ],
+      "unit": "bytes across the two balanced LLC domains"
+    },
+    "cohort_workers": {
+      "type": "numbers",
+      "tokens": [
+        "32"
+      ],
+      "unit": "logical workers"
+    }
+  }
+}

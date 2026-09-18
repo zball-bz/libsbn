@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "outputs": [
+    {
+      "output": "src/product/short_tuning.hpp",
+      "template": "tools/templates/short_tuning.hpp.in",
+      "profile": "config/tuning/native-short.json",
+      "bindings": {
+        "SCALAR": "scalar_coefficients",
+        "U52": "u52_coefficients",
+        "PQ": "pq_coefficients",
+        "FLAT": "flat_coefficients",
+        "FLAT_W1_SCALE": "flat_w1_scale",
+        "SCALAR_TWO_SCALE": "scalar_two_scale",
+        "BASE_HASH": "base_calibration"
+      }
+    },
+    {
+      "output": "src/product/small_tuning.hpp",
+      "template": "tools/templates/native-small.hpp.in",
+      "profile": "config/tuning/native-small.json",
+      "bindings": {
+        "COEFFICIENTS": "coefficients",
+        "CORRECTIONS": "corrections",
+        "RECORD_HASH": "record_hash"
+      }
+    },
+    {
+      "output": "src/product/tuning_native.hpp",
+      "template": "tools/templates/native-deep.hpp.in",
+      "profile": "config/tuning/native-deep.json",
+      "bindings": {
+        "NP_FACTORS": "np_factors",
+        "ROW_SLOTS_1024": "row_slots_1024",
+        "ROW_SLOTS_4096": "row_slots_4096",
+        "ROW_SLOTS_8192": "row_slots_8192",
+        "ROW_SLOTS_16384": "row_slots_16384",
+        "COLUMNS_1024": "columns_1024",
+        "COLUMNS_8192": "columns_8192",
+        "LARGE_ROWS_NP_7": "large_rows_np_7",
+        "LARGE_ROWS_NP_8": "large_rows_np_8",
+        "CODEC_84": "codec_84"
+      }
+    },
+    {
+      "output": "src/backend/pq16/cost_model.hpp",
+      "template": "tools/templates/native-fft-cost.hpp.in",
+      "profile": "config/tuning/native-fft-cost.json",
+      "bindings": {
+        "COEFFICIENTS": "coefficients",
+        "RAC_WIDE_M7": "rac_wide_m7",
+        "RAC_WIDE": "rac_wide",
+        "RAC_16": "rac_16",
+        "BALANCED_DECODE_NS_PER_POINT": "balanced_decode_ns_per_point",
+        "CENTERED_POW2": "centered_pow2",
+        "CENTERED_M3": "centered_m3",
+        "CENTERED_M5": "centered_m5",
+        "CENTERED_M7": "centered_m7"
+      }
+    },
+    {
+      "output": "src/tuning/native_policy.hpp",
+      "template": "tools/templates/native-selection.hpp.in",
+      "profile": "config/tuning/native-selection.json",
+      "bindings": {
+        "NEWTON_SINGLE_WORKER_BELOW": "newton_single_worker_below",
+        "NEWTON_MIDDLE_BAND_MAX": "newton_middle_band_max",
+        "NEWTON_MIDDLE_WORKERS": "newton_middle_workers",
+        "VALUE_PARALLEL_WORDS": "value_parallel_words",
+        "SMALL_MODEL_MAX_WORDS": "small_model_max_words",
+        "DEEP_NS_PER_WORK": "deep_ns_per_work",
+        "MEMORY_TRADE_TIME_RATIO": "memory_trade_time_ratio",
+        "MEMORY_TRADE_RESIDENT_RATIO": "memory_trade_resident_ratio",
+        "SCALAR_RING_NS_PER_WORD": "scalar_ring_ns_per_word",
+        "SCALAR_INPUT_NS_PER_WORD": "scalar_input_ns_per_word"
+      }
+    },
+    {
+      "output": "src/backend/ntt_p48/geometry_policy.hpp",
+      "template": "tools/templates/native-geometry.hpp.in",
+      "profile": "config/tuning/native-geometry.json",
+      "bindings": {
+        "LINEAR_DEEP_LOG_M": "linear_deep_log_m",
+        "LINEAR_DEEP_LOG_C": "linear_deep_log_c",
+        "LINEAR_ROW_LOG": "linear_row_log",
+        "LINEAR_MIN_LOG_C": "linear_min_log_c",
+        "LINEAR_MIDDLE_MAX_LOG_C": "linear_middle_max_log_c",
+        "LATTICE_MIN_LOG_M": "lattice_min_log_m",
+        "LATTICE_MAX_LOG_M": "lattice_max_log_m",
+        "LATTICE_FILL_PERCENT": "lattice_fill_percent",
+        "NEAR_FULL_NUMERATOR": "near_full_numerator",
+        "NEAR_FULL_DENOMINATOR": "near_full_denominator",
+        "FULL_ROW_LOG": "full_row_log",
+        "TRUNCATED_ROW_LOG": "truncated_row_log",
+        "SMT_COLUMN_TRANSFER": "smt_column_transfer",
+        "SMT_DENSE_ROW_TRANSFER": "smt_dense_row_transfer"
+      }
+    },
+    {
+      "output": "src/product/cohort_policy.hpp",
+      "template": "tools/templates/native-cohort.hpp.in",
+      "profile": "config/tuning/native-cohort.json",
+      "bindings": {
+        "LLC_BYTES": "llc_bytes",
+        "COHORT_WORKERS": "cohort_workers"
+      }
+    },
+    {
+      "output": "src/product/root_prepare_cost.hpp",
+      "template": "tools/templates/root_prepare_cost.hpp.in",
+      "profile": "config/tuning/native-root-setup.json",
+      "bindings": {
+        "COEFFICIENTS": "coefficients",
+        "DATA_SHA256": "data_sha256"
+      }
+    },
+    {
+      "output": "src/product/cohort_pair_tuning.hpp",
+      "template": "tools/templates/cohort_pair_tuning.hpp.in",
+      "profile": "config/tuning/native-paired-passes.json",
+      "bindings": {
+        "POINTS": "points",
+        "GROUPS": "groups",
+        "DATA_SHA256": "data_sha256"
+      }
+    }
+  ]
+}

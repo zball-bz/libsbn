@@ -1,0 +1,33 @@
+#pragma once
+#include "backend/pq16/kernels.hpp"
+#include <cmath>
+namespace sbn::v3::pq16 {
+// Prepared W1, Zen5 Strix Halo, Clang 21.1.8. Even indices of the
+// 2026-09-08 1/16-octave calibration only; odd indices are held out.
+// Kernel delta (even 1/16 indices): results/fft_efficiency_2026-09-08/cost-update.json.
+// Source and fit receipt: results/variable_fft_2026-09-08/fit.json.
+inline double native_cost(Shape s,size_t an,size_t bn) noexcept {
+    // Right-angle (2026-09-08): costed as CT/PQ times the measured geomean, 0.955
+    // for 16-bit odd radix (N<=20480) and 0.97 for the wide codec inside its
+    // envelope (results/rac_2026-09-08); refit pending.
+    // Wide M7: no gain at branch 512 (939: +1.6%), 1-4% faster from branch 1024 with the
+    // odd-radix branch plan (1878/3597/3756, results/wide_kernels_2026-09-08/recheck*).
+    const double rac=s.recipe==Recipe::RightAngle?(s.bits>16?(s.radix==7?(s.branch>=1024?0.985:1.):0.97):0.955):1.;if(s.recipe==Recipe::RightAngle)s.recipe=Recipe::CooleyTukeyPQ;
+    // Balanced digits (2026-09-08): signed decode adds ~0.05 ns per point and forward (provisional, refit pending).
+    const double bal=s.balanced?0.10:0.;
+    const double N=s.nfull;const unsigned M=s.radix;const bool ct=s.recipe==Recipe::CooleyTukeyPQ,wide=s.bits>16;
+    const double f[]={std::log2(s.branch),1.,double(M==3),double(M==5),double(M==7),double(wide),
+        double(!ct&&M==3),double(!ct&&M==5),double(!ct&&M==7),std::fmax(0.,std::log2(N/8192.)),
+        wide?0.:std::fmax(0.,1.-2.*double(an+bn)/N),double(ct&&M==3&&s.branch>=4096),
+        double(ct&&M==5&&s.branch>=4096),double(ct&&M==7&&s.branch>=4096),
+        double(!ct&&M==5&&s.branch>=4096),double(ct&&M==3&&s.branch>=8192),double(wide&&M==1),
+        double(wide&&M==5&&s.branch<=512)};
+    // 2026-09-08 calibration (results/wide_kernels_2026-09-08/calib-*, fit.json): the M7 tower penalty applies at
+    // branch 4096 only (17b M7 14336 CT beat 16-bit pow2 16384 by 3-5% in interleaved probes); wide M5 at branch 512
+    // (N=2560) costs ~0.06 ns/point more than the linear model (16-bit M3 3072 right-angle is 4-5% faster).
+    constexpr double c[]={0.07849706155678864,1.2334300641667024,0.10552905354324736,0.21734865839454048,0.2973913067662808,0.2548322652972444,0.0455720234197718,0.1756034875282683,0.03337637744219136,0.16707123217384431,0.06747916518690149,-0.04751386880126724,0.0860496676920782,0.11698990194675603,-0.06834042933124669,0.16718222054699103,-0.12310213216145849,0.06};
+    // Centered 16-bit band (N > 2^17, W1 forced ladders 2026-09-09): measured/model pow2 1.17, M3 1.20, M5 1.25, M7 1.35.
+    const double cen=s.centered?(M==1?1.17:M==3?1.20:M==5?1.25:1.35):1.;
+    double v=0;for(unsigned k=0;k<18;++k)v+=f[k]*c[k];return N*(v+bal)*rac*cen;
+}
+}

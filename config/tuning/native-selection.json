@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "id": "zen5-clang21-selection-20260910-preserved",
+  "kind": "selection_policy",
+  "target": {
+    "cpu": "Zen5 Strix Halo",
+    "compiler": "Clang 21.1.8",
+    "isa": "x86v4ifma"
+  },
+  "domain": {
+    "mode": "in-RAM prepared native",
+    "notes": "Thread limits use actual rung precision, not public target precision. 262160 is the preserved measured upper boundary, not a theorem that all guards total 16 words."
+  },
+  "evidence": [
+    {
+      "path": "results/yc_newton_2026-09-10/optimized/completion.json",
+      "role": "current baseline and 8 MiB value coordination threshold",
+      "sha256": "a61b9679bda3c8b94f7bf817289bbd9f52cd09c8c835c0fbd8f4b4e938eae672"
+    },
+    {
+      "path": "docs/yc-newton-large-optimization-2026-09-10.md",
+      "role": "near-tie and model-domain decisions",
+      "sha256": "960c17433a0439d112b87d55cc37ad13048aa2b0c92f2eb4eb4d7348d6b766f0"
+    },
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/algorithms/newton_service.cpp",
+      "role": "scalar cost seed; no separate calibration claimed",
+      "sha256": "d1688027577ab49abe535ccaa471bdf26e131e6a130b57be005d35882c315bae"
+    }
+  ],
+  "parameters": {
+    "newton_single_worker_below": {
+      "type": "numbers",
+      "tokens": [
+        "8192"
+      ],
+      "unit": "rung precision words"
+    },
+    "newton_middle_band_max": {
+      "type": "numbers",
+      "tokens": [
+        "262160"
+      ],
+      "unit": "rung precision words including caller guards"
+    },
+    "newton_middle_workers": {
+      "type": "numbers",
+      "tokens": [
+        "8"
+      ],
+      "unit": "workers"
+    },
+    "value_parallel_words": {
+      "type": "numbers",
+      "tokens": [
+        "1048576"
+      ],
+      "unit": "words"
+    },
+    "small_model_max_words": {
+      "type": "numbers",
+      "tokens": [
+        "4194304"
+      ],
+      "unit": "input words"
+    },
+    "deep_ns_per_work": {
+      "type": "numbers",
+      "tokens": [
+        ".65"
+      ],
+      "unit": "nanoseconds per calibrated W16 work unit"
+    },
+    "memory_trade_time_ratio": {
+      "type": "numbers",
+      "tokens": [
+        "1.01"
+      ],
+      "unit": "dimensionless ratio"
+    },
+    "memory_trade_resident_ratio": {
+      "type": "numbers",
+      "tokens": [
+        ".875"
+      ],
+      "unit": "dimensionless ratio"
+    },
+    "scalar_ring_ns_per_word": {
+      "type": "numbers",
+      "tokens": [
+        ".15"
+      ],
+      "unit": "nanoseconds per ring word"
+    },
+    "scalar_input_ns_per_word": {
+      "type": "numbers",
+      "tokens": [
+        "1."
+      ],
+      "unit": "nanoseconds per input word"
+    }
+  }
+}

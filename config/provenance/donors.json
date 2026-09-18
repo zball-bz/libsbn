@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "path_base": "repository_root",
+  "items": [
+    {
+      "id": "runtime",
+      "phase": "M1",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/scratch.h",
+        "libsbn/include/sbn/base/pal.h",
+        "libsbn/include/sbn/base/team.h",
+        "libsbn/include/sbn/team.h",
+        "libsbn/src/team.cpp",
+        "libsbn/src/plans.cpp"
+      ],
+      "first_actions": [
+        "shared VA owner and recursive slices",
+        "resident preparation outside SALLOC",
+        "stable pinned table leases"
+      ],
+      "gate_donors": [
+        "libsbn/tests/base_scratch_test.c",
+        "libsbn/tests/base_team_test.c",
+        "libsbn/tests/team_test.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "word_asm",
+      "phase": "M0/M1",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/src/x86_64/add_n.s",
+        "libsbn/src/x86_64/sub_n.s",
+        "libsbn/src/x86_64/mul_1.s",
+        "libsbn/src/x86_64/addmul_1.s",
+        "libsbn/src/x86_64/addmul_1_adx.s",
+        "libsbn/src/x86_64/addmul_2_adx.s",
+        "libsbn/src/x86_64/mul_basecase_le6.S",
+        "src/x86_64/addmul_basecase_le6.S",
+        "libsbn/include/sbn/detail/basecase_le6.h"
+      ],
+      "first_actions": [
+        "preserve algorithm/ABI/attribution",
+        "private symbols and explicit requires",
+        "frozen-tree addmul_le6 is a separate donor"
+      ],
+      "gate_donors": [],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "u52",
+      "phase": "M1/M3",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/vec.h",
+        "libsbn/include/sbn/detail/u52/mul.h",
+        "libsbn/include/sbn/detail/u52/canon.h",
+        "libsbn/include/sbn/detail/u52/cvt.h",
+        "libsbn/include/sbn/detail/u52/interp.h",
+        "libsbn/include/sbn/detail/u52/mparam.h"
+      ],
+      "first_actions": [
+        "private template definitions",
+        "TuningKey seed provenance",
+        "register transitive ISA requirements"
+      ],
+      "gate_donors": [
+        "libsbn/tests/tx_mul_test.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "p48",
+      "phase": "M2/M3",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "labs/cr/cr_geom.hpp",
+        "labs/cr/cr_codec.hpp",
+        "labs/cr/cr_tables.hpp",
+        "labs/cr/cr_engine.hpp",
+        "labs/cr/cr_tile.hpp",
+        "labs/cr/cr_fuse.hpp",
+        "labs/cr/cr_emit.hpp",
+        "labs/cr/cr_workspace.hpp"
+      ],
+      "first_actions": [
+        "preserve TFT/fused passes and packed48 views",
+        "move plane/table/workspace allocation to owner",
+        "record default vs X0 candidates"
+      ],
+      "gate_donors": [
+        "labs/cr/cr_ref.hpp",
+        "labs/cr/cr_check.hpp",
+        "labs/cr/cr_test.cpp"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "fp",
+      "phase": "M3/X7",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/detail/engine/pq16.h"
+      ],
+      "first_actions": [
+        "independent numerical backend and precision proof",
+        "private ISA codec",
+        "no fast-math assumption"
+      ],
+      "gate_donors": [
+        "libsbn/tests/pq16_test.c",
+        "libsbn/tests/pq16_par_test.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "division_mid_radix",
+      "phase": "M3/M5",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/detail/mulmid/mulmid.h",
+        "libsbn/include/sbn/detail/mulmid/mulmid_kara.h",
+        "libsbn/include/sbn/detail/mulmid/mulmid_mpn.h",
+        "libsbn/include/sbn/detail/div/div2b.h",
+        "libsbn/include/sbn/detail/div/dc_div.h",
+        "libsbn/include/sbn/detail/invx.h",
+        "libsbn/include/sbn/detail/radix/d2c.h",
+        "libsbn/src/avx512/recip_3by2.s",
+        "libsbn/src/avx512/recip_3by2_seed.s",
+        "libsbn/src/avx512/recip_u1024_mono.s",
+        "labs/prims/bench_prims.c"
+      ],
+      "first_actions": [
+        "preserve mathematical correction and bounds",
+        "replace direct engine access with product service",
+        "actual recip_u1024 ISA differs from directory name"
+      ],
+      "gate_donors": [
+        "libsbn/tests/dc_div_test.c",
+        "libsbn/tests/smoke_mulmid.c",
+        "libsbn/tests/smoke_invx.c",
+        "libsbn/tests/smoke_radix.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "io",
+      "phase": "M4",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/base/swapio.h",
+        "libsbn/src/base/swapio.c",
+        "libsbn/src/engine/pipeline/swapmul.cpp",
+        "libsbn/include/sbn/base/integrity.h",
+        "libsbn/include/sbn/base/pal_uring.h",
+        "libsbn/src/base/pal_uring.c"
+      ],
+      "first_actions": [
+        "explicit IO allocation/failure boundary",
+        "record readv CRC coverage exception",
+        "seal is not durable commit",
+        "fix hidden allocations and align lifetime with root owner"
+      ],
+      "gate_donors": [
+        "libsbn/tests/swapio_test.c",
+        "libsbn/tests/e2_swapmul_test.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "ios_protocol_fi",
+      "phase": "M4",
+      "status": "inventory_only_not_imported",
+      "sources": [
+        "libsbn/include/sbn/base/ios.h",
+        "libsbn/src/base/ios.c"
+      ],
+      "first_actions": [
+        "donor only, no second production conductor",
+        "check pal_file_sync result",
+        "distinguish rename before/after sync errors"
+      ],
+      "gate_donors": [
+        "libsbn/tests/base_ios_test.c"
+      ],
+      "license_review": "retain original notices; verify per file at import",
+      "fresh_gate_status": "not_run"
+    }
+  ]
+}

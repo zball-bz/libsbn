@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "id": "zen5-clang21-native-deep-20260910-preserved",
+  "kind": "performance_model",
+  "target": {
+    "isa": "x86v4ifma",
+    "cpu": "Zen5 Strix Halo",
+    "compiler": "Clang 21.1.8"
+  },
+  "domain": {
+    "mode": "W16 balanced LIN calibration; cyclic work-law seed",
+    "prime_count": [
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "status": "calibrated NP4-8; NP9/10 work-law extrapolation declared by caller"
+  },
+  "evidence": [
+    {
+      "path": "results/code_cleanup_2026-09-10/baseline/source/src/product/tuning_native.hpp",
+      "sha256": "31c9c97f9c9ea4823bc65f3b5e6884b9f34eb918664d7fe1dd890aab6652ba4b"
+    }
+  ],
+  "parameters": {
+    "np_factors": {
+      "type": "numbers",
+      "tokens": [
+        "0",
+        "0",
+        "0",
+        "0",
+        "1.0222737257650465",
+        "1.0090873188137273",
+        "1",
+        "0.99985598922003172",
+        "0.9893461130384632"
+      ],
+      "unit": "dimensionless"
+    },
+    "row_slots_1024": {
+      "type": "numbers",
+      "tokens": [
+        "1.023175826518707"
+      ],
+      "unit": "dimensionless"
+    },
+    "row_slots_4096": {
+      "type": "numbers",
+      "tokens": [
+        "0.99561430590565647"
+      ],
+      "unit": "dimensionless"
+    },
+    "row_slots_8192": {
+      "type": "numbers",
+      "tokens": [
+        "0.99058618518236097"
+      ],
+      "unit": "dimensionless"
+    },
+    "row_slots_16384": {
+      "type": "numbers",
+      "tokens": [
+        "1.2249600702432439"
+      ],
+      "unit": "dimensionless"
+    },
+    "columns_1024": {
+      "type": "numbers",
+      "tokens": [
+        "0.98081225175260889"
+      ],
+      "unit": "dimensionless"
+    },
+    "columns_8192": {
+      "type": "numbers",
+      "tokens": [
+        "0.98121726508358853"
+      ],
+      "unit": "dimensionless"
+    },
+    "large_rows_np_7": {
+      "type": "numbers",
+      "tokens": [
+        "1.0418083640839255"
+      ],
+      "unit": "dimensionless"
+    },
+    "large_rows_np_8": {
+      "type": "numbers",
+      "tokens": [
+        "1.0870642120914775"
+      ],
+      "unit": "dimensionless"
+    },
+    "codec_84": {
+      "type": "numbers",
+      "tokens": [
+        "1.0038992667635309"
+      ],
+      "unit": "dimensionless"
+    }
+  }
+}

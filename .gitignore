@@ -1,0 +1,10 @@
+/experiments/
+/build/
+/dist/
+/.cache/
+__pycache__/
+*.pyc
+*.o
+*.a
+*.so
+compile_commands.json

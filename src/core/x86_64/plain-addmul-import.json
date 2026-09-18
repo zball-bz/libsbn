@@ -1,0 +1,18 @@
+[
+  {
+    "source": "libsbn/src/x86_64/addmul_1.s",
+    "sha256": "8b8cef5e1b80aa8d47c82913e35d57109011095b610443cdd0dda8972b603a7f",
+    "destination": "libsbn_v3/src/core/x86_64/addmul_1.s",
+    "changes": [
+      "symbol prefix only"
+    ]
+  },
+  {
+    "source": "libsbn/src/x86_64/addmul_2.s",
+    "sha256": "b879d4b638ae9b733244cba86eff4a10844adfa92d035e4821881951110fe4de",
+    "destination": "libsbn_v3/src/core/x86_64/addmul_2.s",
+    "changes": [
+      "symbol prefix only"
+    ]
+  }
+]

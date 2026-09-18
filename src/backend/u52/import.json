@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "imports": [
+    {
+      "source": "libsbn/include/sbn/vec.h",
+      "sha256": "66851abb1d47c4cf7d1bdce50ebc9d4b4a7095808283a226abb53912ad481d76",
+      "destination": "libsbn_v3/src/backend/u52/lane.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/canon.h",
+      "sha256": "766f6d15f0cb5f6452105a3ec2d6eda864d37b43f3bea974c563f03d7292f153",
+      "destination": "libsbn_v3/src/backend/u52/canon.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/interp.h",
+      "sha256": "228c69684e64c9390133057247343b775a7ed0e2e40834ffa1ec80e73151090e",
+      "destination": "libsbn_v3/src/backend/u52/interp.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/mul.h",
+      "sha256": "1df5c37eac1c31cff9b6a19deda0809e0b73f609d3c5ce5d256412180073cc78",
+      "destination": "libsbn_v3/src/backend/u52/mul.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/cvt.h",
+      "sha256": "40c5d4906021534d82304f94ac4d25f3fb26a90c024ebd7e6311d21c5d369b01",
+      "destination": "libsbn_v3/src/backend/u52/cvt.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/mparam.h",
+      "sha256": "4a0f573c1943386dc9dbd5eab413058167164a6822fb7a30cb161e0ef3d2bdb3",
+      "destination": "libsbn_v3/src/backend/u52/mparam.hpp",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/u52/addsub_nc.inc",
+      "sha256": "328fb7b7f220e532a9859e9d754d9ec4be10396c62f3aa08e3d07f9f48bb0036",
+      "destination": "libsbn_v3/src/backend/u52/addsub_nc.inc",
+      "changes": [
+        "private namespace",
+        "includes centralized",
+        "Frame-backed scratch",
+        "native constants retained"
+      ]
+    }
+  ]
+}

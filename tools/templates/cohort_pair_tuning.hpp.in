@@ -1,0 +1,44 @@
+#pragma once
+#include "sbn3/mul.h"
+#include <array>
+namespace sbn::v3::cohort_pair {
+// Generated from native-paired-passes.json. No runtime calibration.
+// Calibration data SHA-256: SBN3_CFG_DATA_SHA256
+using Key=std::array<uint64_t,21>;
+struct Point {double x;double phase[4];double low,high;};
+struct Group {Key key;unsigned first,count;sbn3_mul_options seed;};
+namespace table_detail {
+inline constexpr double point_values[]={SBN3_CFG_POINTS};
+inline constexpr int64_t group_values[]={SBN3_CFG_GROUPS};
+consteval auto decode_points(){
+    constexpr size_t count=sizeof(point_values)/sizeof(point_values[0]);
+    static_assert(count%7==0);
+    std::array<Point,count/7> result{};
+    for(size_t j=0;j<result.size();++j){const auto *p=point_values+7*j;
+        result[j]={p[0],{p[1],p[2],p[3],p[4]},p[5],p[6]};}
+    return result;
+}
+consteval auto decode_groups(){
+    constexpr size_t count=sizeof(group_values)/sizeof(group_values[0]);
+    static_assert(count%35==0);
+    std::array<Group,count/35> result{};
+    for(size_t j=0;j<result.size();++j){const auto *p=group_values+35*j;auto &g=result[j];
+        for(unsigned k=0;k<21;++k)g.key[k]=uint64_t(p[k]);
+        g.first=unsigned(p[21]);g.count=unsigned(p[22]);p+=23;
+        g.seed={unsigned(p[0]),unsigned(p[1]),int(p[2]),unsigned(p[3]),size_t(p[4]),
+                unsigned(p[5]),unsigned(p[6]),unsigned(p[7]),unsigned(p[8]),unsigned(p[9]),unsigned(p[10]),int(p[11])};
+    }
+    return result;
+}
+}
+inline constexpr auto points=table_detail::decode_points();
+inline constexpr auto groups=table_detail::decode_groups();
+static_assert([]{for(const auto &g:groups){
+    if(g.count<2 || g.first+g.count>points.size())return false;
+    for(unsigned j=1;j<g.count;++j)if(points[g.first+j-1].x>=points[g.first+j].x)return false;
+}return true;}());
+inline Key key(const sbn3_mul_info &i){
+const size_t e=i.M2/8;
+return {i.algorithm, i.np, i.trunk_bits, i.workers, i.prime_batch, i.C, i.M2, i.full, i.fused, i.crt_mode, i.codec_mode, i.rowscale, i.row_task_grain, i.fused_row_grain, i.fused_items, i.row_major, i.format_slot_bytes, i.fused_start_skew_us, (i.lbv+e-1)/e, ((i.nat+8*i.C-1)/(8*i.C)+e-1)/e, ((i.nyt+8*i.C-1)/(8*i.C)+e-1)/e};
+}
+}

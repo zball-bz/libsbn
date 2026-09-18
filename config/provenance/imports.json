@@ -1,0 +1,163 @@
+{
+  "schema": 1,
+  "imports": [
+    {
+      "source": "libsbn/src/x86_64/add_n.s",
+      "destination": "src/core/x86_64/add_n.s",
+      "sha256": "b08f26d376a193f27b97671862b4c9a913f9780f6c6289dd99d5fc16ece1f9bf",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "libsbn/src/x86_64/sub_n.s",
+      "destination": "src/core/x86_64/sub_n.s",
+      "sha256": "0f8d74ac2f101b7bf9eb41f574a74fd3d3e5cf50ca55869fcd4ee75ad8321118",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "libsbn/src/x86_64/mul_1.s",
+      "destination": "src/core/x86_64/mul_1.s",
+      "sha256": "d64b0be3f02d2db4bb32945d8d4b735e803acc572504dadd0b2c7de0c02140f4",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "libsbn/src/x86_64/addmul_1_adx.s",
+      "destination": "src/core/x86_64/addmul_1_adx.s",
+      "sha256": "02928c035903500c06fcf96e339e365630322f3d49fdcac4a80e004419604468",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "libsbn/src/x86_64/addmul_2_adx.s",
+      "destination": "src/core/x86_64/addmul_2_adx.s",
+      "sha256": "c1ea816c6f00f13d864be387ee6704a076fde15a171de5f9010887d4d7ff52d9",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "libsbn/src/x86_64/mul_basecase_le6.S",
+      "destination": "src/core/x86_64/mul_basecase_le6.S",
+      "sha256": "305075269cca071272d5baab64ac69c9b28c23d25eac29e842063641392217cc",
+      "changes": [
+        "sbn_ -> sbn3i_ symbol prefix only"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_arith.hpp",
+      "destination": "src/backend/ntt_p48/arith.hpp",
+      "sha256": "c21a38c14e3a8526d7753719ccbc8551d45a6dbba0ee9ebe62e2fbb33149ebc9",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_tables.hpp",
+      "destination": "src/backend/ntt_p48/tables.hpp",
+      "sha256": "e6b5adc5d466a5f900c76fb2eced152aeb14d2a4920c267d5d3df91e9c00bb7d",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_geom.hpp",
+      "destination": "src/backend/ntt_p48/geom.hpp",
+      "sha256": "6ae121cef8d8ee11b6ce26e881934dfd560018184b12ce3e867596fb3a7c1ffa",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_codec.hpp",
+      "destination": "src/backend/ntt_p48/codec.hpp",
+      "sha256": "c3f60d56808665f40525480ef13d81326c8916f436731f264383872aaeb45886",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_rows.hpp",
+      "destination": "src/backend/ntt_p48/rows.hpp",
+      "sha256": "f2036c25aec68502b1aa70808613fa4d4a89989df5f1116142cb7d9f7505a8fc",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_col.hpp",
+      "destination": "src/backend/ntt_p48/col.hpp",
+      "sha256": "275c0e0b59f7fb202f9f97ab790c3a284d955cd48b9f97e50447ec65f637e893",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_emit.hpp",
+      "destination": "src/backend/ntt_p48/emit.hpp",
+      "sha256": "21326dc5249a45dc59271165f88bb4b4aab030d030e52eae56e81a0f62577072",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_fuse.hpp",
+      "destination": "src/backend/ntt_p48/fuse.hpp",
+      "sha256": "e458217fd9030d25b7388ed6b9c12a91e722e712f73b6c5f772755fa250d45bc",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_tile.hpp",
+      "destination": "src/backend/ntt_p48/tile.hpp",
+      "sha256": "c702977147f8bbcd464082dcf650572a76655b7b0167926f40bbe2b0e1278733",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    },
+    {
+      "source": "labs/cr/cr_engine.hpp",
+      "destination": "src/backend/ntt_p48/engine.hpp",
+      "sha256": "0fe4a615e43921ec71a8043f88c4f8221b6ef6be2ff6998cc05d69e42475d2e2",
+      "changes": [
+        "private namespace/includes",
+        "fixed current default profile",
+        "explicit table/E1 scratch and per-run gates",
+        "old allocating drivers removed"
+      ]
+    }
+  ]
+}
