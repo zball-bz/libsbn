@@ -323,8 +323,9 @@ static void head_recipe_gates() {
         size_t dn;
         unsigned workers, reuse;
     };
-    // Three limbs under the ring 12288 (room decides); a short and a middle divisor with ample room (cost decides).
-    for (const Shape &shape : {Shape{12285, 16, 8}, Shape{1000, 1, 0}, Shape{20000, 16, 8}}) {
+    // 12285 sits three limbs under the ring 12288, so ring room ends its head; 3001 at one worker and 20000 at sixteen
+    // have ample room above the divisor, so the cost limit does. The counters below hold the shapes to that.
+    for (const Shape &shape : {Shape{12285, 16, 8}, Shape{3001, 1, 0}, Shape{20000, 16, 8}}) {
         size_t limit = 0;
         while (limit + 1 < shape.dn &&
                planned(shape.dn, request(shape.dn, 1, limit + 1), shape.workers, shape.reuse, shape.dn).head_limbs == limit + 1)
