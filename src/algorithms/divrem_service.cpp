@@ -395,10 +395,11 @@ bool assemble(Plan &p, bool replay, Queried &uq, Queried &tq) {
         add((qn + bmin - 1) / bmin);
         add((qn + bmin) / (bmin + 1));
         // Complete dn-limb blocks under a short word-division head (2d/d has
-        // qn = dn+1: one full-inverse block plus the first quotient limb).
-        // The cost order decides; a long head makes this a padded extra block.
+        // qn = dn+1: one full-inverse block plus the first quotient limb),
+        // where the larger preparation is amortized; the cost order decides.
+        const double applications = double(std::max(1u, p.options.reuse_hint)) * double(qn / dn);
         if (qn % dn <= divrem_tuning::head_candidate_limbs && dn >= divrem_tuning::head_candidate_min_divisor &&
-            p.options.workers > 1)
+            p.options.workers > 1 && applications >= divrem_tuning::head_candidate_min_applications)
             add(dn);
     }
     Candidate best{};

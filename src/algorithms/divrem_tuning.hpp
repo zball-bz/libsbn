@@ -48,15 +48,21 @@ inline constexpr size_t head_cache_limbs = size_t(1) << 21; // divisor + residua
 inline constexpr double head_cost_margin = 0.6;
 // Candidate rule: complete dn-limb blocks (a full inverse for 2d/d) are
 // considered when the head they leave is at most head_candidate_limbs, the
-// divisor has at least head_candidate_min_divisor limbs and the team is
-// wider than one worker; the cost order still decides among candidates.
-// Measured (results/divrem_stageA_2026-09-18/{profile,shapes,shapes2,shapes3}):
-// at W16 every chosen point from dn=11585 up is faster than the previous
-// default or level with it (one-shot 0.86-0.97, reuse 8: 0.48-1.01 of it);
-// below dn=2896 the short-product cost order picks it wrongly (1.03-1.82),
-// and at one worker it is mixed (0.90-1.12), so neither domain enables it.
+// divisor has at least head_candidate_min_divisor limbs, the team is wider
+// than one worker and the prepared divisor serves at least
+// head_candidate_min_applications block applications (reuse hint times
+// complete blocks); the cost order still decides among candidates.
+// Measured (experiments results/divrem_stageA_2026-09-18): a full inverse
+// never pays for a single application (one-shot 2d/d: 10-31% behind the best
+// of two or three blocks at W16, 77% at 4096 W1) and lost 5-21% at two
+// (one-shot 3d/d, dn=16384, W4); it pays back within 1-4 reuses, and every
+// chosen point with seven or more applications at W4, W8 and W16 from
+// dn=11585 up is faster than the previous default or level with it
+// (0.47-1.03). Below dn=2896 the short-product cost order picks it wrongly
+// (1.03-1.82) and at one worker it is mixed (0.90-1.12): neither is enabled.
 inline constexpr size_t head_candidate_limbs = 8;
 inline constexpr size_t head_candidate_min_divisor = 8192;
+inline constexpr double head_candidate_min_applications = 4.0;
 // The 3/2 estimate exceeds the quotient limb by at most one.
 inline constexpr unsigned head_correction_limit = 2;
 } // namespace sbn::v3::divrem_tuning
