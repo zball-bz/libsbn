@@ -407,11 +407,11 @@ static void algorithm_policy_gates() {
     printf("divrem algorithm policy: %u shapes, the block algorithm is kept under every larger reuse hint; %u move from the "
            "schoolbook to blocks with the hint PASS\n", shapes, moved);
 }
-// memory_budget passes over block sizes that do not fit instead of rejecting the request. The least requirement among
-// the policy's block sizes is public (a query that nothing fits reports it), so the property needs no block size by
-// name: that requirement is supported exactly and nothing below it is; a budget one byte below the unconstrained plan
-// still gets a plan that fits whenever a smaller block size exists; the plan taken under a budget divides correctly.
-// Returns whether the request had a smaller block size to pass to.
+// memory_budget passes over plans that do not fit instead of rejecting the request. The least requirement among
+// the policy's block plans (its block sizes, each with either residual family) is public (a query that nothing fits
+// reports it), so the property needs no block size by name: that requirement is supported exactly and nothing below
+// it is; a budget one byte below the unconstrained plan still gets a plan that fits whenever a smaller one exists;
+// the plan taken under a budget divides correctly. Returns whether the request had a smaller plan to pass to.
 static bool budget_gates(size_t dn, size_t nn, unsigned workers, unsigned reuse) {
     const auto free = planned(dn, nn, workers, reuse);
     const auto need = planned(dn, nn, workers, reuse, 0, 4096, SBN3_QUERY_CAPACITY);
@@ -441,8 +441,51 @@ static bool budget_gates(size_t dn, size_t nn, unsigned workers, unsigned reuse)
     printf("divrem budget dn=%zu nn=%zu W%u reuse=%u: unconstrained %zux%u+%zu %zu KiB; least requirement %zux%u+%zu %zu KiB "
            "(%s), %u executes under it PASS\n", dn, nn, workers, reuse, free.block_limbs, free.blocks, free.head_limbs,
            free.storage_bytes >> 10, least.block_limbs, least.blocks, least.head_limbs, need.storage_bytes >> 10,
-           passes ? "a smaller block size than the unconstrained plan" : "the unconstrained plan", executes);
+           passes ? "a plan that holds less than the unconstrained one: another block size or residual family" : "the unconstrained plan",
+           executes);
     return passes;
+}
+// A budget only the schoolbook meets. Where its complete cost is bounded (a quotient of a few limbs, a short divisor)
+// the request is served by it, with the plan the schoolbook gets without a budget; a long balanced division is not
+// handed to a quadratic algorithm: the query reports the least block requirement.
+static void budget_algorithm_gates() {
+    struct Shape {
+        size_t dn, nn;
+    };
+    unsigned served = 0;
+    for (const Shape shape : {Shape{3001, 3100}, Shape{5000, 5008}, Shape{40, 1240}, Shape{20011, 20017}}) {
+        const auto blocks = planned(shape.dn, shape.nn, 1, 0);
+        assert(blocks.algorithm == SBN3_DIVREM_BARRETT);
+        sbn3_divrem_request request{shape.nn, shape.dn};
+        sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 0};
+        sbn3_divrem_plan plan{};
+        sbn3_divrem_info named{};
+        assert(sbn3_divrem_query(&request, &book, &plan, &named) == SBN3_SUPPORTED && named.storage_bytes < blocks.storage_bytes);
+        const auto under = planned(shape.dn, shape.nn, 1, 0, 0, named.storage_bytes);
+        assert(under.algorithm == SBN3_DIVREM_SCHOOLBOOK && under.storage_bytes == named.storage_bytes);
+        // ... and not when blocks were asked for.
+        assert(planned(shape.dn, shape.nn, 1, 0, std::min(shape.dn, shape.nn - shape.dn + 1), named.storage_bytes, SBN3_QUERY_CAPACITY).storage_bytes >
+               named.storage_bytes);
+        Fixture f(1);
+        Service s(f, shape.nn, shape.dn, 0, 0, 0, 0, 0, named.storage_bytes);
+        assert(s.info.algorithm == SBN3_DIVREM_SCHOOLBOOK);
+        auto d = divisors(shape.dn)[0];
+        s.prepare(d);
+        for (auto &n : numerators(d, shape.nn)) {
+            std::vector<uint64_t> q(shape.nn - shape.dn + 1, 0xdead), r(shape.dn, 0xdead);
+            const auto out = s.execute(n, q, r);
+            certify(n.data(), shape.nn, d.data(), shape.dn, q.data(), out.quotient_limbs, r.data(), out.remainder_limbs, false);
+        }
+        ++served;
+    }
+    sbn3_divrem_request request{6002, 3001};
+    sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 0};
+    sbn3_divrem_plan plan{};
+    sbn3_divrem_info named{};
+    assert(sbn3_divrem_query(&request, &book, &plan, &named) == SBN3_SUPPORTED);
+    assert(planned(3001, 6002, 1, 0, 0, named.storage_bytes, SBN3_QUERY_CAPACITY).storage_bytes > named.storage_bytes);
+    printf("divrem budget algorithm: %u requests planned in blocks are served by the schoolbook under a budget only it meets; "
+           "a balanced 3001-limb division is reported, not served PASS\n", served);
 }
 int main() {
     basecase_gates();
@@ -525,6 +568,7 @@ int main() {
     passed_over += budget_gates(3001, 6002, 1, 0);
     passed_over += budget_gates(20011, 60034, 16, 0);
     assert(passed_over);
+    budget_algorithm_gates();
     shift_gates(70, 141, 70, 1);
     shift_gates(70, 141, 0, 1);
     shift_gates(300, 601, 300, 1);

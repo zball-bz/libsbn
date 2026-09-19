@@ -39,7 +39,7 @@ typedef struct sbn3_divrem_request {
 typedef struct sbn3_divrem_options {
     unsigned workers;       /* 1..32 */
     unsigned prime_count;   /* 0 selects; explicit 4..10 pins the NTT family of every product */
-    size_t memory_budget;   /* 0: no filter; otherwise the policy passes over block sizes whose storage_bytes exceed it */
+    size_t memory_budget;   /* 0: no filter; otherwise the policy passes over plans whose storage_bytes exceed it (docs/division.md) */
     unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot. Enters the recipe costs (few
                                executions take short products without tables or spectra, many take transforms and
                                kept spectra) and the algorithm choice: a request whose schoolbook work over all

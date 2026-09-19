@@ -69,6 +69,16 @@ or algorithm switch. Extra workspace grows with the divisor, block and ring
 lengths, not with the total quotient length: numerator blocks are read
 through an in-flight shift.
 
+Under a `memory_budget` the policy passes over every plan that does not fit:
+its block sizes in cost order, each with its taken residual family and then
+the other one (a ring holds less than a linear product's workspace), then the
+least size halved, twice at most. When no block plan fits, the schoolbook
+(the least storage of all) serves the request where its complete cost is
+bounded (divisors up to 64 limbs, quotients up to 8, or at most 360000 limb
+steps beyond those 8: `divrem_tuning.hpp`); otherwise the query returns
+`SBN3_QUERY_CAPACITY` and `info` reports the least requirement it found. A
+requested algorithm or block size is never replaced.
+
 `prepare` may be repeated with another divisor of the same length; the plan
 is reusable and a range may be rebound after `unbind`. `reuse_hint` enters
 the recipe cost as prepare + k·apply and the algorithm choice as above;

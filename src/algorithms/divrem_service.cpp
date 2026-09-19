@@ -510,6 +510,16 @@ bool order(const Plan &p, size_t in, Candidate &c, double &transform) {
     c.total = c.inverse + c.ucost.prepare + t->cost.prepare + applications(p, in) * c.pair;
     return std::isfinite(c.total);
 }
+// The residual recipe of a block size and the head it leaves room for.
+void adopt(const Plan &p, Candidate &c, const Residual &t) {
+    const size_t dn = p.request.denominator_limbs, in = c.in;
+    c.t = t.choice;
+    c.tq = t.queried;
+    c.ring = t.ring;
+    // The residual buffer bounds the head: X = R*B^head + block needs dn+head limbs.
+    const size_t xlen = c.ring ? c.ring : dn + in;
+    c.head = std::min(head_limit(p, dn, in, c.ucost.apply + t.cost.apply), xlen - dn);
+}
 // Final recipes of a block size: the order's searches are not repeated, the
 // cyclic lattice joins them and the family rule decides. The order priced
 // whole blocks, so the final recipe owes it no head: the plan serves by word
@@ -534,12 +544,25 @@ bool finish(const Plan &p, Candidate &c) {
     const Residual *t = residual_family(p, dn, in, c.linear, cyclic);
     if (!t)
         return false;
-    c.t = t->choice;
-    c.tq = t->queried;
-    c.ring = t->ring;
-    // The residual buffer bounds the head: X = R*B^head + block needs dn+head limbs.
-    const size_t xlen = c.ring ? c.ring : dn + in;
-    c.head = std::min(head_limit(p, dn, in, c.ucost.apply + t->cost.apply), xlen - dn);
+    adopt(p, c, *t);
+    return true;
+}
+// Under a memory budget the recipe taken for a block size may not fit where the other residual family of the same
+// size does (a ring holds less than the linear product's workspace, and the lattice is not always searched).
+bool other_family(const Plan &p, Candidate &c) {
+    if (p.options.residual)
+        return false;
+    if (c.ring) {
+        if (!c.linear.found)
+            return false;
+        adopt(p, c, c.linear);
+        return true;
+    }
+    Residual cyclic{};
+    cyclic_residual(p, p.request.denominator_limbs, c.in, applications(p, c.in), cyclic);
+    if (!cyclic.found)
+        return false;
+    adopt(p, c, cyclic);
     return true;
 }
 // Block-size candidates in cost order; take() hands them out one at a time so
@@ -1020,32 +1043,76 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
     const auto no = newton_options(p);
     sbn3_query_result failure = SBN3_UNSUPPORTED;
     bool failed = false;
-    for (const Candidate *taken; (taken = take(p, ranking));) {
-        const Candidate &c = *taken;
+    size_t inverse_in = 0;
+    sbn3_query_result inverse = SBN3_UNSUPPORTED;
+    auto fits = [&](const Candidate &c) {
         Plan sized = p;
         sized.in = c.in;
         sized.ring = c.ring;
         sized.head = c.head;
         sized.u = c.u;
         sized.t = c.t;
-        const auto inverse = inverse_query(c.in, no, s.nplan, s.ninfo);
+        if (inverse_in != c.in) {
+            inverse = inverse_query(c.in, no, s.nplan, s.ninfo);
+            inverse_in = c.in;
+        }
         if (inverse != SBN3_SUPPORTED || !layout(sized, c.uq, c.tq, &s.ninfo)) {
             if (!failed)
                 failure = inverse != SBN3_SUPPORTED ? inverse : SBN3_QUERY_CAPACITY;
             failed = true;
-            continue;
+            return false;
         }
         if (budget && sized.info.storage_bytes > budget) {
             if (!info->storage_bytes || sized.info.storage_bytes < info->storage_bytes)
                 *info = sized.info;
-            continue;
+            return false;
         }
         p = sized;
         s.uq = c.uq;
         s.tq = c.tq;
-        return SBN3_SUPPORTED;
+        return true;
+    };
+    for (Candidate *taken; (taken = take(p, ranking));)
+        if (fits(*taken) || (budget && other_family(p, *taken) && fits(*taken)))
+            return SBN3_SUPPORTED;
+    // A budget none of the ordered sizes meets: smaller blocks hold less. The least size is halved, a bounded number
+    // of times (divrem_tuning); below that the requirement is reported.
+    if (budget && !p.options.block_limbs && ranking.count) {
+        size_t in = ranking.sizes[0].in;
+        for (unsigned j = 1; j < ranking.count; ++j)
+            in = std::min(in, ranking.sizes[j].in);
+        Candidate &smaller = ranking.sizes[0]; // every ordered size has been tried
+        for (unsigned k = 0; k < divrem_tuning::budget_halvings && in > 1; ++k) {
+            const size_t qn = p.info.quotient_limbs, blocks = (qn + (in + 1) / 2 - 1) / ((in + 1) / 2);
+            in = (qn + blocks - 1) / blocks;
+            if (!search(p, in, smaller, ranking.transform) || !finish(p, smaller))
+                break;
+            if (fits(smaller) || (other_family(p, smaller) && fits(smaller)))
+                return SBN3_SUPPORTED;
+        }
     }
     return info->storage_bytes ? SBN3_QUERY_CAPACITY : failure;
+}
+// A memory budget that no block size meets: the schoolbook holds the least of all, and serves the request where
+// its complete cost is bounded (divrem_tuning). Out of line, as plan_blocks: the plan value is reset here.
+[[gnu::noinline]] bool schoolbook_under_budget(Plan &p, Stored &s, sbn3_divrem_info *info) {
+    const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs, level = divrem_tuning::schoolbook_budget_quotient;
+    const double work = double(std::max(1u, p.options.reuse_hint)) * double(qn > level ? qn - level : 0) * double(dn);
+    if (p.options.algorithm || p.options.block_limbs ||
+        (dn > divrem_tuning::schoolbook_budget_divisor && work > divrem_tuning::schoolbook_budget_work))
+        return false;
+    Plan q = p;
+    q.info.algorithm = SBN3_DIVREM_SCHOOLBOOK;
+    s = Stored{};
+    if (!layout(q, s.uq, s.tq, &s.ninfo))
+        return false;
+    if (q.info.storage_bytes > p.options.memory_budget) { // the least requirement of the request is then the schoolbook's
+        if (q.info.storage_bytes < info->storage_bytes)
+            *info = q.info;
+        return false;
+    }
+    p = q;
+    return true;
 }
 } // namespace
 } // namespace sbn::v3
@@ -1082,7 +1149,7 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     const size_t budget = p.options.memory_budget;
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
         const auto planned = plan_blocks(p, s, info);
-        if (planned != SBN3_SUPPORTED)
+        if (planned != SBN3_SUPPORTED && !(planned == SBN3_QUERY_CAPACITY && budget && schoolbook_under_budget(p, s, info)))
             return planned;
         *info = p.info;
     } else {

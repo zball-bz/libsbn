@@ -71,19 +71,22 @@ struct Service {
         if (rc != SBN3_SUPPORTED)
             fprintf(stderr, "divrem query nn=%zu dn=%zu: %u\n", nn, dn, rc);
         assert(rc == SBN3_SUPPORTED);
-        // One byte below the requirement: the policy passes to another block size that fits, or rejects
-        // with the least requirement and leaves the plan output untouched.
+        // One byte below the requirement: the policy passes to another plan that fits (another block size, the other
+        // residual family of the same size, or the schoolbook where its cost is bounded: never when the block
+        // algorithm or a block size was requested), or rejects with the least requirement, which is then no more
+        // than this plan's, and leaves the plan output untouched.
         const auto saved = plan;
         options.memory_budget = info.storage_bytes - 1;
         sbn3_divrem_info need{};
         const auto limited = sbn3_divrem_query(&request, &options, &plan, &need);
         if (limited == SBN3_SUPPORTED) {
-            assert(!block && need.algorithm == SBN3_DIVREM_BARRETT && need.block_limbs != info.block_limbs &&
-                   need.storage_bytes <= options.memory_budget);
+            assert(need.storage_bytes <= options.memory_budget && need.plan_id != info.plan_id);
+            assert(need.algorithm == SBN3_DIVREM_BARRETT ? !block || need.block_limbs == info.block_limbs
+                                                         : need.algorithm == SBN3_DIVREM_SCHOOLBOOK && !block && !algorithm);
             plan = saved;
         } else
-            assert(limited == SBN3_QUERY_CAPACITY && need.storage_bytes == info.storage_bytes &&
-                   !memcmp(&saved, &plan, sizeof plan));
+            assert(limited == SBN3_QUERY_CAPACITY && need.storage_bytes > options.memory_budget &&
+                   need.storage_bytes <= info.storage_bytes && !memcmp(&saved, &plan, sizeof plan));
         offset = up(f.base + f.cursor, info.storage_alignment) - f.base;
         f.cursor = up(offset + info.storage_bytes, 4096) + 4096;
         sbn3_error e{};

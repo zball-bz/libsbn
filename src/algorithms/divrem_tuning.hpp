@@ -22,6 +22,19 @@ namespace sbn::v3::divrem_tuning {
 // size is a request for blocks and is not subject to this rule.
 inline constexpr size_t schoolbook_level_quotient = 4;
 inline constexpr double schoolbook_use_work = 16000.0;
+// Under a memory budget that no block size meets, the schoolbook (it holds the least storage of all) serves the
+// request where its complete cost is bounded: within a factor of two of the blocks (divisors up to 64 limbs at any
+// quotient length, quotients up to 8 limbs at any divisor length: same measurement) or at most this many limb steps
+// beyond those 8 limbs (about 0.12 ms per use). That is the domain it served by default before this rule was
+// re-measured, so no request that was planned under a budget is refused now; outside it the query reports the least
+// block requirement as before.
+// Before that, a budget none of the ordered block sizes meets is tried on smaller blocks (each holds less): the least
+// ordered size halved this many times, so a plan taken under a budget has at most four times the blocks of the
+// smallest size the order considered.
+inline constexpr unsigned budget_halvings = 2;
+inline constexpr size_t schoolbook_budget_divisor = 64;
+inline constexpr size_t schoolbook_budget_quotient = 8;
+inline constexpr double schoolbook_budget_work = 360000.0;
 // A block holds at most dn quotient limbs, and its fixed work (two product calls, the passes over residual and
 // divisor) is shared by that many: on divisors this short the blocks stay behind the schoolbook at any quotient
 // length (same measurement, quotients up to 21000 limbs: schoolbook / blocks 0.22 at three limbs, 0.63 at eight,
