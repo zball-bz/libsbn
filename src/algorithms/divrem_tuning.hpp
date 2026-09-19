@@ -12,6 +12,43 @@ namespace sbn::v3::divrem_tuning {
 // noise. The thresholds below keep the schoolbook where it is at least as fast.
 inline constexpr size_t schoolbook_max_divisor = 64;   // dn <= this: 3/2 schoolbook
 inline constexpr size_t schoolbook_max_quotient = 8;   // quotient limbs <= this: schoolbook (O(dn) per limb)
+// One use of a plan, complete (query, bind, divisor preparation, executions, unbind): the two thresholds above
+// compare executions only, and a block-Barrett division first pays its planning (recipe searches of the query, the
+// block inverse, divisor-side spectra and their tables): 90-130 us up to dn~1000, 190-270 us at 2^11..2^14, 360 us
+// to 1 ms at 2^15..2^18 on one Zen 5 core, whatever the quotient length. The schoolbook pays none of it, so it
+// serves a request whose schoolbook work beyond the execution-level threshold,
+//   reuse_hint * (quotient limbs - schoolbook_max_quotient) * divisor limbs,
+// is at most schoolbook_use_work limb steps. Measured equal-cost points of complete calls (experiments
+// results/divrem_fresh_2026-09-19/crossover, forced algorithms in interleaved windows, one and sixteen workers
+// alike): 335k (64d/d, dn~73), 405-412k (2d/d at dn~640, 8d/d at dn~243), 590-850k (quotients of 21-420 limbs on
+// divisors of 2^11..2^17 limbs), 470k (2^18). The constant sits under the least of them: at the switch the
+// schoolbook is level with or ahead of the blocks (0.83-0.98 of their complete call), never behind. A requested
+// block size is a request for blocks and is not subject to this rule.
+inline constexpr double schoolbook_use_work = 360000.0;
+// Block inverse: up to this many limbs one schoolbook division U = floor((B^(2in) - 1) / Dtop) replaces the Newton
+// ladder (its query, binding and execution). Equal complete cost near 880 limbs (the radix reciprocal's
+// measurement, src/radix/programs.hpp); on complete divisions the step across the switch is +1.5-2 %
+// (results/divrem_fresh_2026-09-19/crossover, list3). A binding that is re-prepared many times pays the
+// schoolbook inverse each time (about twice the Newton execution at 340 limbs); the hint has no field for that.
+inline constexpr size_t inverse_basecase_limbs = 864;
+// Ordering price of that schoolbook inverse (a 2in/in division): 1.6 us at 64 limbs, 87 us at 512, 194 us at 768,
+// 264 us at 896 (src/radix/programs.hpp, same routine) = 0.33-0.39 ns per limb squared.
+inline constexpr double inverse_basecase_ns_per_limb2 = 0.33;
+// Ordering price of the Newton route's planning (its query and binding), which a schoolbook inverse does not pay:
+// the ladder's query alone measured 288 us at 1366 limbs, 418 us at 5462, 629 us at 21846 (experiments
+// results/divrem_fresh_2026-09-19/profile-base). One constant for every Newton size, so the order among sizes that
+// all take the ladder is what it was; it only weighs a ladder against a schoolbook inverse.
+inline constexpr double inverse_newton_planning_ns = 300000.0;
+// With those two prices the order also weighs one size the quotient-driven sizes (one to three blocks, or the
+// fewest blocks and one more) do not contain: under a schoolbook inverse the modelled cost a*in^2 + executions *
+// ceil(qn/in) * pair is least near in* = cbrt(executions * qn * pair / (2a)), pair being the best ordered size's
+// product pair; the whole-block size at in* joins the order when it lies below the others and its estimate beats
+// the best one's. Complete one-shot 2d/d calls by requested block count (experiments
+// results/divrem_fresh_2026-09-19/crossover, list5/list6, one worker): dn=1024 189 us at three blocks, 145 at five
+// to eight; 2048: 421 -> 292; 2896: 558 -> 387; 4096: 725 -> 472; the pairs of five to twelve blocks cost about
+// what three cost, the inverse falls with in^2. Above dn~5000 the estimate declines it (the policy's plans there
+// are the former ones, query differential plan-diff-*); a Newton-route size with more blocks, which measured up to
+// 11 % better at dn 5793-9742, is not a candidate.
 // Planning seed for the block inverse: a Newton ladder to precision n costs
 // about this many linear n x n products (rungs sum to ~2 products of the
 // final size plus the smaller rungs). Only orders block-size candidates.

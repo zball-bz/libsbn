@@ -137,15 +137,27 @@ bool consumer_builds(const Queried &q, uint64_t generation) {
            own.storage_bytes == f.storage_bytes && own.table_bytes == f.table_bytes &&
            own.plane_bytes == f.plane_bytes && !memcmp(own.scale, f.scale, sizeof own.scale);
 }
-bool query_cached(sbn3_product_request r, const sbn3_mul_options &o, uint64_t generation, Queried &q) {
-    if (sbn3_product_query(&r, &o, &q.producer, &q.producer_info) != SBN3_SUPPORTED ||
-        sbn3_spectrum_query(&q.producer, SBN3_SPECTRUM_COLUMNS, generation, &q.future) != SBN3_SUPPORTED)
+// The consumer of a queried producer's future spectrum.
+bool query_consumer(sbn3_product_request r, const sbn3_mul_options &o, uint64_t generation, Queried &q) {
+    if (sbn3_spectrum_query(&q.producer, SBN3_SPECTRUM_COLUMNS, generation, &q.future) != SBN3_SUPPORTED)
         return false;
     r.cached_a[0] = &q.future;
     return sbn3_product_query(&r, &o, &q.consumer, &q.consumer_info) == SBN3_SUPPORTED;
 }
+bool query_cached(sbn3_product_request r, const sbn3_mul_options &o, uint64_t generation, Queried &q) {
+    return sbn3_product_query(&r, &o, &q.producer, &q.producer_info) == SBN3_SUPPORTED &&
+           query_consumer(r, o, generation, q);
+}
+// The plain product of a recipe. The cached recipe's policy producer is that
+// same query (the options do not depend on caching), so the two recipes of one
+// product share its search.
+struct Plain {
+    bool queried = false, supported = false;
+    sbn3_mul_plan plan{};
+    sbn3_product_info info{};
+};
 // Term 0 (a) is the divisor-side operand that may be cached; term 1 (b) is fresh.
-bool query_product(size_t a, size_t b, const ProductChoice &c, uint64_t generation, Queried &q) {
+bool query_product(size_t a, size_t b, const ProductChoice &c, uint64_t generation, Queried &q, Plain *plain = nullptr) {
     q = {};
     auto o = product_options(c);
     sbn3_product_request r{};
@@ -153,14 +165,28 @@ bool query_product(size_t a, size_t b, const ProductChoice &c, uint64_t generati
     r.a_limbs = a;
     r.b_limbs = b;
     r.cyclic_limbs = c.ring;
+    bool supported = false;
+    if (plain && plain->queried) {
+        supported = plain->supported;
+        q.producer = plain->plan;
+        q.producer_info = plain->info;
+    } else {
+        supported = sbn3_product_query(&r, &o, &q.producer, &q.producer_info) == SBN3_SUPPORTED;
+        if (plain) {
+            plain->queried = true;
+            plain->supported = supported;
+            plain->plan = q.producer;
+            plain->info = q.producer_info;
+        }
+    }
+    if (!supported)
+        return false;
     if (!c.cached) {
-        if (sbn3_product_query(&r, &o, &q.producer, &q.producer_info) != SBN3_SUPPORTED)
-            return false;
         q.consumer = q.producer;
         q.consumer_info = q.producer_info;
         return true;
     }
-    if (!query_cached(r, o, generation, q))
+    if (!query_consumer(r, o, generation, q))
         return false;
     if (!consumer_builds(q, generation)) {
         // The policy producer of a linear product may take the full transform
@@ -209,10 +235,11 @@ bool choose_u(const Plan &p, size_t in, ProductChoice &out, Queried &q, Cost &co
     c.np = p.options.prime_count;
     c.workers = product_workers(p, in + 1);
     bool found = false;
+    Plain plain{};
     for (unsigned cached : {1u, 0u}) {
         c.cached = cached;
         Queried candidate{};
-        if (!query_product(in + 1, in, c, 1, candidate))
+        if (!query_product(in + 1, in, c, 1, candidate, &plain))
             continue;
         const Cost k = product_cost(candidate, in + 1, in);
         if (!found || k.apply < cost.apply) {
@@ -224,60 +251,52 @@ bool choose_u(const Plan &p, size_t in, ProductChoice &out, Queried &q, Cost &co
     }
     return found;
 }
-// Best recipe for T = D' x qhat: linear (dn+in output) or cyclic at a
-// supported ring >= dn + guard, term 0 cached where possible. Ordered by
-// prepare + applications * apply.
-bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductChoice &out, Queried &q, Cost &cost,
-              size_t &ring) {
-    // Linear and cyclic families are ranked separately by the cost model; the
-    // family is then chosen by the structural ring rule (divrem_tuning).
-    struct Best {
-        bool found = false;
-        double total = INFINITY;
-        ProductChoice choice{};
-        Queried queried{};
-        Cost cost{};
-        size_t ring = 0;
-    } lin, cyc;
-    auto consider = [&](Best &b, const ProductChoice &c, size_t r) {
-        Queried candidate{};
-        if (!query_product(dn, in, c, 2, candidate))
-            return;
-        const Cost k = product_cost(candidate, dn, in);
-        const double total = k.prepare + applications * k.apply;
-        if (!std::isfinite(total) || total >= b.total)
-            return;
-        b.total = total;
-        b.found = true;
-        b.choice = c;
-        b.queried = candidate;
-        b.cost = k;
-        b.ring = r;
-    };
-    auto take = [&](const Best &b) {
-        out = b.choice;
-        q = b.queried;
-        cost = b.cost;
-        ring = b.ring;
-        return true;
-    };
+// Residual recipes for T = D' x qhat, term 0 cached where possible, ordered by
+// prepare + applications * apply within their family.
+struct Residual {
+    bool found = false;
+    double total = INFINITY;
+    ProductChoice choice{};
+    Queried queried{};
+    Cost cost{};
+    size_t ring = 0;
+};
+void consider(Residual &b, size_t dn, size_t in, double applications, const ProductChoice &c, size_t r,
+              Plain *plain = nullptr) {
+    Queried candidate{};
+    if (!query_product(dn, in, c, 2, candidate, plain))
+        return;
+    const Cost k = product_cost(candidate, dn, in);
+    const double total = k.prepare + applications * k.apply;
+    if (!std::isfinite(total) || total >= b.total)
+        return;
+    b.total = total;
+    b.found = true;
+    b.choice = c;
+    b.queried = candidate;
+    b.cost = k;
+    b.ring = r;
+}
+// Linear family: dn+in output limbs.
+void linear_residual(const Plan &p, size_t dn, size_t in, double applications, Residual &lin) {
     ProductChoice linear{};
     linear.np = p.options.prime_count;
     linear.workers = product_workers(p, dn);
-    if (p.options.residual != 2)
-        for (unsigned cached : {1u, 0u}) {
-            linear.cached = cached;
-            consider(lin, linear, 0);
-        }
-    if (p.options.residual == 1)
-        return lin.found && take(lin);
+    Plain plain{};
+    for (unsigned cached : {1u, 0u}) {
+        linear.cached = cached;
+        consider(lin, dn, in, applications, linear, 0, &plain);
+    }
+}
+// Cyclic family: the supported rings >= dn + guard (the expensive part of the query).
+void cyclic_residual(const Plan &p, size_t dn, size_t in, double applications, Residual &cyc) {
     const size_t minimum = dn + divrem_tuning::ring_guard_words;
     const unsigned width = product_workers(p, dn);
     const unsigned first = p.options.prime_count ? p.options.prime_count : newton_limits::first_ntt_prime_count,
                    last = p.options.prime_count ? p.options.prime_count : newton_limits::last_ntt_prime_count;
     if (!p.options.prime_count && minimum <= 512) {
         ProductChoice c{0, SBN3_MUL_SCALAR, 1, 0, minimum, 0};
-        consider(cyc, c, minimum);
+        consider(cyc, dn, in, applications, c, minimum);
     }
     for (unsigned np = first; np <= last; ++np)
         for (int T = np == 4 ? 88 : 24 * int(np) - 8; T >= (np == 4 ? 80 : 24 * int(np) - 32); T -= np == 4 ? 4 : 8) {
@@ -290,7 +309,7 @@ bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductC
                 if (algorithm == SBN3_MUL_BAILEY && r < 2048)
                     continue;
                 ProductChoice c{np, algorithm, width, T, r, 1};
-                consider(cyc, c, r);
+                consider(cyc, dn, in, applications, c, r);
             }
         }
     if (!p.options.prime_count && minimum <= 32768)
@@ -301,22 +320,36 @@ bool choose_t(const Plan &p, size_t dn, size_t in, double applications, ProductC
             const size_t r = radix * branch / 2;
             if (r > 32768)
                 continue;
-            for (unsigned w : {1u, width}) {
-                ProductChoice c{0, SBN3_MUL_PQ16, w, 16, r, 1};
-                consider(cyc, c, r);
+            // At one worker the two widths are one candidate (its twin ties and is not taken).
+            const unsigned widths[2] = {1u, width};
+            for (unsigned k = 0; k < (width > 1 ? 2u : 1u); ++k) {
+                ProductChoice c{0, SBN3_MUL_PQ16, widths[k], 16, r, 1};
+                consider(cyc, dn, in, applications, c, r);
             }
         }
-    if (!cyc.found)
-        return lin.found && take(lin);
+}
+// Linear and cyclic families are ranked separately by the cost model; the
+// family is then chosen by the structural ring rule (divrem_tuning).
+const Residual *residual_family(const Plan &p, size_t dn, size_t in, const Residual &lin, const Residual &cyc) {
+    if (p.options.residual == 1 || !cyc.found)
+        return lin.found ? &lin : nullptr;
     if (!lin.found || p.options.residual == 2)
-        return take(cyc);
+        return &cyc;
     // Cached against cached: the ring rule; otherwise (no cyclic spectrum, e.g.
     // the scalar ring) the cost model decides.
     if (cyc.queried.cached && lin.queried.cached)
-        return take(double(cyc.ring) <= divrem_tuning::cyclic_ring_fraction * double(dn + in) ? cyc : lin);
-    return take(cyc.total < lin.total ? cyc : lin);
+        return double(cyc.ring) <= divrem_tuning::cyclic_ring_fraction * double(dn + in) ? &cyc : &lin;
+    return cyc.total < lin.total ? &cyc : &lin;
 }
-double inverse_estimate(const Plan &p, size_t in) {
+// Block inverse: one schoolbook division up to inverse_basecase_limbs (no
+// Newton plan, its storage is the division's scratch), the Newton ladder above.
+bool inverse_basecase(size_t in) {
+    return in <= divrem_tuning::inverse_basecase_limbs;
+}
+size_t inverse_basecase_words(size_t in) {
+    return 6 * in + 1; // [B^(2in)-1: 2in][remainder: in][division scratch: 3in+1]
+}
+double newton_estimate(const Plan &p, size_t in) {
     ProductChoice c{};
     c.np = p.options.prime_count;
     c.workers = product_workers(p, in);
@@ -324,6 +357,13 @@ double inverse_estimate(const Plan &p, size_t in) {
     if (!query_product(in, in, c, 0, q))
         return INFINITY;
     return divrem_tuning::inverse_cost_ratio * cost_model::linear_product(q.consumer_info.mul, in, in).nanoseconds;
+}
+// Ordering price of the block inverse, by the route the plan would take: the
+// schoolbook division, or the Newton ladder with the planning it brings.
+double inverse_estimate(const Plan &p, size_t in) {
+    if (inverse_basecase(in))
+        return divrem_tuning::inverse_basecase_ns_per_limb2 * double(in) * double(in);
+    return divrem_tuning::inverse_newton_planning_ns + newton_estimate(p, in);
 }
 // One head limb by word division: an O(dn) multiply-subtract pass.
 double head_step_cost(const Plan &p, size_t dn) {
@@ -339,52 +379,85 @@ size_t head_limit(const Plan &p, size_t dn, size_t in, double pair_ns) {
     const double limit = std::floor(divrem_tuning::head_cost_margin * pair_ns / head_step_cost(p, dn));
     return limit >= double(in - 1) ? in - 1 : limit > 0 ? size_t(limit) : 0;
 }
+// One block size: the searches of the order (U recipe, linear residual family)
+// and, once taken, the final recipes.
 struct Candidate {
     size_t in = 0, ring = 0, head = 0;
     ProductChoice u{}, t{};
     Queried uq{}, tq{};
-    double total = INFINITY;
+    double total = INFINITY, inverse = 0, pair = 0; // ordering prices: whole plan, block inverse, one block's product pair
+    bool searched = false; // ucost and linear hold this size's searches
+    Cost ucost{};
+    Residual linear{};
 };
+double applications(const Plan &p, size_t in) {
+    const size_t qn = p.info.quotient_limbs;
+    return double(std::max(1u, p.options.reuse_hint)) * double((qn + in - 1) / in);
+}
+// The searches both the order and the final recipe need. A request for the
+// cyclic residual only (experiments) has no linear family.
+bool search(const Plan &p, size_t in, Candidate &c) {
+    c = {};
+    c.in = in;
+    if (!choose_u(p, in, c.u, c.uq, c.ucost))
+        return false;
+    if (p.options.residual != 2)
+        linear_residual(p, p.request.denominator_limbs, in, applications(p, in), c.linear);
+    c.searched = true;
+    return true;
+}
 // Block-size ordering uses the linear residual recipe only; the cyclic
 // lattice (the expensive part of the query) runs for the size that is taken.
 // The total prices whole blocks, the quotient limbs a size leaves over as one
 // more product pair: the word-division head serves what the taken size leaves
 // over, it is no reason to take a size (divrem_tuning).
-bool evaluate(Plan p, size_t in, Candidate &c, bool lattice) {
-    const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
-    const size_t blocks = (qn + in - 1) / in;
-    const double reuse = std::max(1u, p.options.reuse_hint);
-    Cost uc{}, tc{};
-    if (!choose_u(p, in, c.u, c.uq, uc))
+bool order(const Plan &p, size_t in, Candidate &c) {
+    if (!search(p, in, c))
         return false;
-    if (!lattice && !p.options.residual)
-        p.options.residual = 1;
-    if (!choose_t(p, dn, in, reuse * double(blocks), c.t, c.tq, tc, c.ring))
+    Residual lattice{};
+    const Residual *t = &c.linear;
+    if (p.options.residual == 2) { // no linear family to order by
+        cyclic_residual(p, p.request.denominator_limbs, in, applications(p, in), lattice);
+        t = &lattice;
+    }
+    if (!t->found)
         return false;
-    c.in = in;
+    c.inverse = inverse_estimate(p, in);
+    c.pair = c.ucost.apply + t->cost.apply;
+    c.total = c.inverse + c.ucost.prepare + t->cost.prepare + applications(p, in) * c.pair;
+    return std::isfinite(c.total);
+}
+// Final recipes of a block size: the order's searches are not repeated, the
+// cyclic lattice joins them and the family rule decides. The order priced
+// whole blocks, so the final recipe owes it no head: the plan serves by word
+// division what that recipe allows (nothing when the ring leaves no room above
+// the divisor or the product pair is cheaper than the word steps) and pads a
+// block otherwise.
+bool finish(const Plan &p, Candidate &c) {
+    const size_t dn = p.request.denominator_limbs, in = c.in;
+    if (!c.searched && !search(p, in, c))
+        return false;
+    Residual cyclic{};
+    if (p.options.residual != 1)
+        cyclic_residual(p, dn, in, applications(p, in), cyclic);
+    const Residual *t = residual_family(p, dn, in, c.linear, cyclic);
+    if (!t)
+        return false;
+    c.t = t->choice;
+    c.tq = t->queried;
+    c.ring = t->ring;
     // The residual buffer bounds the head: X = R*B^head + block needs dn+head limbs.
     const size_t xlen = c.ring ? c.ring : dn + in;
-    c.head = std::min(head_limit(p, dn, in, uc.apply + tc.apply), xlen - dn);
-    c.total = inverse_estimate(p, in) + uc.prepare + tc.prepare + reuse * double(blocks) * (uc.apply + tc.apply);
-    return std::isfinite(c.total);
+    c.head = std::min(head_limit(p, dn, in, c.ucost.apply + t->cost.apply), xlen - dn);
+    return true;
 }
 // Block-size candidates in cost order; take() hands them out one at a time so
 // that the query can pass over a size whose storage exceeds the budget.
-struct Ranked {
-    size_t in = 0;
-    double total = INFINITY;
-};
 struct Ranking {
-    Ranked ordered[4]{};
+    Candidate sizes[4]{};
+    unsigned ordered[4]{};
     unsigned count = 0, next = 0;
-    bool single = false; // a requested block size: nothing to order, evaluated once by take()
 };
-void insert(Ranking &r, const Candidate &c) {
-    unsigned at = r.count++;
-    for (; at && c.total < r.ordered[at - 1].total; --at)
-        r.ordered[at] = r.ordered[at - 1];
-    r.ordered[at] = {c.in, c.total};
-}
 void rank(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
     size_t candidates[4]{};
@@ -411,31 +484,75 @@ void rank(const Plan &p, Ranking &r) {
         // request (block_limbs) and are not a policy candidate: see
         // divrem_tuning.
     }
-    if (count == 1) {
-        r.single = true;
-        r.ordered[r.count++].in = candidates[0];
+    if (count == 1) { // nothing to order: searched once, by take()
+        r.sizes[0].in = candidates[0];
+        r.ordered[r.count++] = 0;
         return;
     }
-    for (unsigned j = 0; j < count; ++j) {
-        Candidate c{};
-        if (evaluate(p, candidates[j], c, false))
-            insert(r, c);
-    }
+    auto insert = [&](size_t in) {
+        Candidate &c = r.sizes[r.count];
+        if (!order(p, in, c))
+            return;
+        unsigned at = r.count++;
+        for (; at && c.total < r.sizes[r.ordered[at - 1]].total; --at)
+            r.ordered[at] = r.ordered[at - 1];
+        r.ordered[at] = r.count - 1;
+    };
+    for (unsigned j = 0; j < count; ++j)
+        insert(candidates[j]);
+    // The sizes above follow the quotient alone. A schoolbook block inverse costs
+    // a*in^2, and the block pairs of a shorter size cost about what the best size
+    // above pays per pair, so the modelled optimum under that inverse is
+    // in* = cbrt(executions * qn * pair / (2a)). When it lies below every size
+    // above and its estimate beats the best one's inverse and pairs, the
+    // whole-block size at in* joins the order (divrem_tuning).
+    if (p.options.block_limbs || !r.count || r.count == 4)
+        return;
+    const Candidate &best = r.sizes[r.ordered[0]];
+    size_t smallest = candidates[0];
+    for (unsigned j = 1; j < count; ++j)
+        smallest = std::min(smallest, candidates[j]);
+    const double a = divrem_tuning::inverse_basecase_ns_per_limb2, executions = std::max(1u, p.options.reuse_hint);
+    const double star = std::cbrt(executions * double(qn) * best.pair / (2 * a));
+    if (!(star >= 1) || star >= double(smallest))
+        return;
+    size_t in = size_t(std::min(star, double(divrem_tuning::inverse_basecase_limbs)));
+    const size_t blocks = (qn + in - 1) / in;
+    in = (qn + blocks - 1) / blocks;
+    const double estimate = a * double(in) * double(in) + executions * double(blocks) * best.pair,
+                 reference = best.inverse + executions * double((qn + best.in - 1) / best.in) * best.pair;
+    if (in < smallest && estimate < reference)
+        insert(in);
 }
-// Next block size with its final recipes. The order priced whole blocks, so
-// the final recipe owes it no head: the plan serves by word division what
-// that recipe allows (nothing when the ring leaves no room above the divisor
-// or the product pair is cheaper than the word steps) and pads a block otherwise.
-bool take(const Plan &p, Ranking &r, Candidate &out) {
+// Next block size with its final recipes.
+Candidate *take(const Plan &p, Ranking &r) {
     while (r.next < r.count) {
-        const size_t in = r.ordered[r.next++].in;
-        out = {};
-        if (evaluate(p, in, out, true))
-            return true;
-        if (!r.single && evaluate(p, in, out, false)) // as ordered
-            return true;
+        Candidate &c = r.sizes[r.ordered[r.next++]];
+        if (finish(p, c))
+            return &c;
     }
-    return false;
+    return nullptr;
+}
+// One-use cost (divrem_tuning): the schoolbook work of all expected executions
+// against the fixed cost of planning and preparing a block-Barrett division.
+bool schoolbook_use(const Plan &p) {
+    const size_t qn = p.info.quotient_limbs, floor = divrem_tuning::schoolbook_max_quotient;
+    const double work = double(std::max(1u, p.options.reuse_hint)) * double(qn > floor ? qn - floor : 0) *
+                        double(p.request.denominator_limbs);
+    return work <= divrem_tuning::schoolbook_use_work;
+}
+sbn3_query_result inverse_query(size_t in, const sbn3_newton_options &o, sbn3_newton_plan &plan, sbn3_newton_info &info) {
+    if (!inverse_basecase(in))
+        return sbn3_newton_query(SBN3_NEWTON_INVERSE, in, &o, &plan, &info);
+    plan = {};
+    info = {};
+    info.kind = SBN3_NEWTON_INVERSE;
+    info.precision_limbs = in;
+    info.workers = 1;
+    info.storage_bytes = bytes_for(inverse_basecase_words(in), 8);
+    info.storage_alignment = page;
+    info.plan_id = feed(feed(1469598103934665603ULL, magic), in);
+    return SBN3_SUPPORTED;
 }
 sbn3_newton_options newton_options(const Plan &p) {
     sbn3_newton_options o{};
@@ -612,14 +729,24 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
         divrem_words::shift_left(b.Dn, D, dn, b.shift);
     else
         memcpy(b.Dn, D, dn * 8);
-    // Block inverse of the top in limbs: the Newton binding lives in the
-    // shared union, which is unleased at this point.
-    sbn3_newton_binding *inverse = nullptr;
-    sbn3_newton_bind(&b.nplan, b.arena, b.offset + p.shared_offset, b.team, &inverse);
-    sbn3_newton_inputs inputs{};
-    inputs.denominator = {b.Dn + dn - in, in};
-    sbn3_newton_execute(inverse, &inputs, {b.U, in + 1});
-    sbn3_newton_unbind(inverse);
+    // Block inverse of the top in limbs, in the shared union (unleased at this
+    // point): U = floor((B^(2in) - 1) / Dtop) by one schoolbook division, or the
+    // Newton binding. Both satisfy |U - B^(2in)/Dtop| < 3 with B^in <= U < 2B^in.
+    if (inverse_basecase(in)) {
+        auto scratch = b.arena->acquire(b.offset + p.shared_offset, p.newton_bytes);
+        auto *numerator = reinterpret_cast<uint64_t *>(scratch.data), *remainder = numerator + 2 * in, *work = remainder + in;
+        memset(numerator, 0xff, 2 * in * 8);
+        const size_t qn = sbn3_divrem_basecase(b.U, remainder, numerator, 2 * in, b.Dn + dn - in, in, work);
+        b.arena->release(scratch);
+        require(qn == in + 1, SBN3_FATAL_MATH, "division block inverse range");
+    } else {
+        sbn3_newton_binding *inverse = nullptr;
+        sbn3_newton_bind(&b.nplan, b.arena, b.offset + p.shared_offset, b.team, &inverse);
+        sbn3_newton_inputs inputs{};
+        inputs.denominator = {b.Dn + dn - in, in};
+        sbn3_newton_execute(inverse, &inputs, {b.U, in + 1});
+        sbn3_newton_unbind(inverse);
+    }
     require(b.U[in] == 1, SBN3_FATAL_MATH, "division block inverse framing");
     b.dinv = divrem_words::invert_pi1(b.Dn[dn - 1], b.Dn[dn - 2]);
     // Persistent products and divisor-side spectra.
@@ -789,6 +916,45 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
     out.corrections = corrections;
     b.metrics.products_executed = products;
 }
+// The block plan of a request. Block sizes in cost order; under a memory budget
+// the first whose storage fits, so a faster but larger size never displaces a
+// plan the caller can hold. When none fits, info reports the least requirement.
+// Kept out of line: the candidates' recipes are about 100 KB of frame, which
+// the word and schoolbook queries (a microsecond) do not carry.
+[[gnu::noinline]] sbn3_query_result plan_blocks(Plan &p, Stored &s, sbn3_divrem_info *info) {
+    const size_t budget = p.options.memory_budget;
+    Ranking ranking{};
+    rank(p, ranking);
+    const auto no = newton_options(p);
+    sbn3_query_result failure = SBN3_UNSUPPORTED;
+    bool failed = false;
+    for (const Candidate *taken; (taken = take(p, ranking));) {
+        const Candidate &c = *taken;
+        Plan sized = p;
+        sized.in = c.in;
+        sized.ring = c.ring;
+        sized.head = c.head;
+        sized.u = c.u;
+        sized.t = c.t;
+        const auto inverse = inverse_query(c.in, no, s.nplan, s.ninfo);
+        if (inverse != SBN3_SUPPORTED || !layout(sized, c.uq, c.tq, &s.ninfo)) {
+            if (!failed)
+                failure = inverse != SBN3_SUPPORTED ? inverse : SBN3_QUERY_CAPACITY;
+            failed = true;
+            continue;
+        }
+        if (budget && sized.info.storage_bytes > budget) {
+            if (!info->storage_bytes || sized.info.storage_bytes < info->storage_bytes)
+                *info = sized.info;
+            continue;
+        }
+        p = sized;
+        s.uq = c.uq;
+        s.tq = c.tq;
+        return SBN3_SUPPORTED;
+    }
+    return info->storage_bytes ? SBN3_QUERY_CAPACITY : failure;
+}
 } // namespace
 } // namespace sbn::v3
 using namespace sbn::v3;
@@ -816,47 +982,17 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
         i.algorithm = SBN3_DIVREM_WORD;
     else if (p.options.algorithm)
         i.algorithm = p.options.algorithm == SBN3_DIVREM_BARRETT && i.quotient_limbs ? SBN3_DIVREM_BARRETT : SBN3_DIVREM_SCHOOLBOOK;
-    else if (dn <= divrem_tuning::schoolbook_max_divisor || i.quotient_limbs <= divrem_tuning::schoolbook_max_quotient)
+    else if (dn <= divrem_tuning::schoolbook_max_divisor || i.quotient_limbs <= divrem_tuning::schoolbook_max_quotient ||
+             (!p.options.block_limbs && schoolbook_use(p)))
         i.algorithm = SBN3_DIVREM_SCHOOLBOOK;
     else
         i.algorithm = SBN3_DIVREM_BARRETT;
     Stored s{};
     const size_t budget = p.options.memory_budget;
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
-        // Block sizes in cost order; under a memory budget the first whose
-        // storage fits, so a faster but larger size never displaces a plan
-        // the caller can hold. When none fits, info reports the least requirement.
-        Ranking ranking{};
-        rank(p, ranking);
-        const auto no = newton_options(p);
-        sbn3_query_result failure = SBN3_UNSUPPORTED;
-        bool failed = false, planned = false;
-        for (Candidate c{}; !planned && take(p, ranking, c);) {
-            Plan sized = p;
-            sized.in = c.in;
-            sized.ring = c.ring;
-            sized.head = c.head;
-            sized.u = c.u;
-            sized.t = c.t;
-            const auto inverse = sbn3_newton_query(SBN3_NEWTON_INVERSE, c.in, &no, &s.nplan, &s.ninfo);
-            if (inverse != SBN3_SUPPORTED || !layout(sized, c.uq, c.tq, &s.ninfo)) {
-                if (!failed)
-                    failure = inverse != SBN3_SUPPORTED ? inverse : SBN3_QUERY_CAPACITY;
-                failed = true;
-                continue;
-            }
-            if (budget && sized.info.storage_bytes > budget) {
-                if (!info->storage_bytes || sized.info.storage_bytes < info->storage_bytes)
-                    *info = sized.info;
-                continue;
-            }
-            p = sized;
-            s.uq = c.uq;
-            s.tq = c.tq;
-            planned = true;
-        }
-        if (!planned)
-            return info->storage_bytes ? SBN3_QUERY_CAPACITY : failure;
+        const auto planned = plan_blocks(p, s, info);
+        if (planned != SBN3_SUPPORTED)
+            return planned;
         *info = p.info;
     } else {
         if (!layout(p, s.uq, s.tq, &s.ninfo))

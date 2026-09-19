@@ -40,7 +40,9 @@ typedef struct sbn3_divrem_options {
     unsigned workers;       /* 1..32 */
     unsigned prime_count;   /* 0 selects; explicit 4..10 pins the NTT family of every product */
     size_t memory_budget;   /* 0: no filter; otherwise the policy passes over block sizes whose storage_bytes exceed it */
-    unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot */
+    unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot. Enters the recipe costs and the
+                               algorithm choice: a request whose schoolbook work over all expected executions is
+                               below the cost of planning the block algorithm is served by the schoolbook */
     size_t block_limbs;     /* 0: policy (near-equal blocks); otherwise the requested Barrett block size:
                                denominator_limbs asks for complete blocks under a full inverse */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */
@@ -52,7 +54,8 @@ typedef enum sbn3_divrem_algorithm {
     SBN3_DIVREM_SCHOOLBOOK=1, /* 3/2 quotient estimates, submul updates */
     SBN3_DIVREM_BARRETT=2     /* block quotients from a Newton inverse, cyclic residual */
 } sbn3_divrem_algorithm;
-/* Carries the resolved block inverse and product recipes so bind performs no plan search. */
+/* Carries the resolved block inverse (a Newton plan above the schoolbook-inverse block sizes) and product recipes
+ * so bind performs no plan search. */
 typedef struct sbn3_divrem_plan {uint64_t opaque[2560];} sbn3_divrem_plan;
 typedef struct sbn3_divrem_info {
     size_t numerator_limbs,denominator_limbs,quotient_limbs,remainder_limbs;

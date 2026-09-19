@@ -215,8 +215,11 @@ bool choose_cycle(Plan &p, Cycle kind, size_t m, size_t n, unsigned index, bool 
             const size_t ring = radix * branch / 2;
             if (ring > 32768)
                 continue;
-            for (unsigned width : {1u, width_limit}) {
-                const Choice c{0, SBN3_MUL_PQ16, width, 16, ring};
+            // At one worker the two widths are one candidate: its twin would tie
+            // with it everywhere (same cost and resident bytes, the earlier kept).
+            const unsigned widths[2] = {1u, width_limit};
+            for (unsigned k = 0; k < (width_limit > 1 ? 2u : 1u); ++k) {
+                const Choice c{0, SBN3_MUL_PQ16, widths[k], 16, ring};
                 if (!cycle_candidate(kind, m, n, ring, c, candidate))
                     continue;
                 consider(c, candidate, true);

@@ -280,7 +280,9 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
 // and, with the policy block size, on plain blocks.
 static void shift_gates(size_t dn, size_t nn, size_t block, unsigned workers) {
     Fixture f(workers);
-    Service s(f, nn, dn, block);
+    // The block algorithm is the subject: requested by its block size, or by name with the policy's block size (a
+    // one-shot request of this size is the policy's schoolbook case, which has no normalization of its own to gate).
+    Service s(f, nn, dn, block, 0, 0, block ? 0 : SBN3_DIVREM_BARRETT);
     assert(s.info.algorithm == SBN3_DIVREM_BARRETT);
     unsigned executes = 0;
     for (unsigned shift = 0; shift < 64; ++shift) {
@@ -375,6 +377,36 @@ static void head_recipe_gates() {
            "cost limit (%u executed on both sides of the limit); %u policy plans pad fewer limbs than blocks PASS\n",
            kept, no_room, over_limit, executed, policy);
 }
+// The policy's algorithm is a cost decision between exact algorithms. What it owes, without naming a threshold: more
+// expected executions per divisor never move a request from the block algorithm back to the schoolbook (the planning
+// the block algorithm pays once is what the schoolbook avoids); a request served by the schoolbook for one use is
+// served in blocks once enough executions are expected, unless the shape is one the schoolbook always serves
+// (it is then the schoolbook at every hint); a requested block size is not overruled by the one-use rule.
+static void algorithm_policy_gates() {
+    unsigned shapes = 0, moved = 0;
+    for (size_t dn : {3u, 40u, 65u, 97u, 200u, 511u, 1000u, 4099u, 70001u})
+        for (size_t qn : {1u, 8u, 9u, 33u, 200u, 1001u, 5000u}) {
+            const size_t nn = dn + qn - 1;
+            unsigned last = SBN3_DIVREM_WORD;
+            bool blocks = false;
+            for (unsigned reuse : {0u, 1u, 2u, 8u, 64u, 4096u, 1u << 20, 1u << 30}) {
+                const auto info = planned(dn, nn, 1, reuse);
+                assert(!blocks || info.algorithm == SBN3_DIVREM_BARRETT);
+                blocks = info.algorithm == SBN3_DIVREM_BARRETT;
+                last = info.algorithm;
+            }
+            const auto once = planned(dn, nn, 1, 0);
+            moved += once.algorithm == SBN3_DIVREM_SCHOOLBOOK && last == SBN3_DIVREM_BARRETT;
+            if (once.algorithm == SBN3_DIVREM_SCHOOLBOOK && last != SBN3_DIVREM_BARRETT) // always the schoolbook's shape
+                assert(planned(dn, nn, 1, 1u << 30).algorithm == once.algorithm);
+            if (dn > 2 && qn > 1 && once.algorithm == SBN3_DIVREM_SCHOOLBOOK && last == SBN3_DIVREM_BARRETT)
+                assert(planned(dn, nn, 1, 0, std::min(dn, qn)).algorithm == SBN3_DIVREM_BARRETT);
+            ++shapes;
+        }
+    assert(moved); // the one-use rule is exercised: some request changes algorithm with the expected executions
+    printf("divrem algorithm policy: %u shapes, the block algorithm is kept under every larger reuse hint; %u move from the "
+           "schoolbook to blocks with the hint PASS\n", shapes, moved);
+}
 // memory_budget passes over block sizes that do not fit instead of rejecting the request. The least requirement among
 // the policy's block sizes is public (a query that nothing fits reports it), so the property needs no block size by
 // name: that requirement is supported exactly and nothing below it is; a budget one byte below the unconstrained plan
@@ -425,10 +457,24 @@ int main() {
     service_gates(1000, 2000, 1);
     for (size_t block : {1000u, 500u, 334u, 17u})
         service_gates(1000, 2000, 1, block);
+    // Requested block sizes through both block-inverse routes (one schoolbook division for short blocks, the Newton
+    // ladder above) and next to each other at the switch; every divisor pattern, including the all-ones and the
+    // power-of-two divisors that frame the inverse at its two ends.
+    for (size_t block : {1u, 2u, 15u, 16u, 863u, 864u, 865u, 866u, 1500u, 3001u})
+        service_gates(3001, 6002, 1, block);
     service_gates(300, 4096, 1);
     service_gates(1000, 2000, 1, 0, 0, 1);
     service_gates(32, 64, 1, 0, 0, 0, 2);
     service_gates(4096, 4100, 1, 0, 0, 0, 2);
+    // The block algorithm by name on the small shapes above, whatever the policy takes for one use of them, and the
+    // schoolbook by name on a shape the policy divides in blocks.
+    service_gates(65, 130, 1, 0, 0, 0, 2);
+    service_gates(100, 200, 1, 0, 0, 0, 2);
+    service_gates(200, 230, 1, 0, 0, 0, 2);
+    service_gates(1000, 1017, 1, 0, 0, 0, 2);
+    service_gates(300, 4096, 1, 0, 0, 0, 2);
+    service_gates(1000, 2000, 1, 0, 0, 0, 1);
+    algorithm_policy_gates();
     service_gates(1000, 2000, 1, 0, 0, 0, 1);
     service_gates(1000, 2000, 1, 0, 0, 2);
     service_gates(65536, 131072, 16, 0, 0, 2);
