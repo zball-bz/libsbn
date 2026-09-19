@@ -12,12 +12,13 @@ struct PlanTranscript;
 inline constexpr unsigned ring_max_groups = 8;
 struct RingPlan {
     bool enabled = false;
+    bool cached = true;
     unsigned np = 0, algorithm = 0, workers = 1;
     int trunk_bits = 0;
     size_t ring = 0, common_limbs = 0, fresh_limbs = 0;
     size_t table_bytes = 0, work_bytes = 0, work_alignment = 64, output_limbs = 0;
     size_t spectrum_bytes = 0, spectrum_alignment = 64;
-    double predicted_ns = 0;
+    double predicted_ns = 0, prepare_ns = 0;
     // Pool bytes of `groups` consumers and the spectrum, every part aligned to its own requirement.
     size_t pool_bytes(unsigned groups) const noexcept;
 };
@@ -25,7 +26,7 @@ struct RingPlan {
 // product cost model. False when nothing is supported. With a transcript (programs.hpp) the query records the
 // winner and the assembly at bind evaluates that one candidate instead of the search.
 bool ring_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, unsigned workers, RingPlan &,
-               PlanTranscript * = nullptr) noexcept;
+               PlanTranscript * = nullptr, uint64_t applications = 0) noexcept;
 // The plans of a ring stage, reproduced from the pinned parameters (bind time; fatal when they moved).
 struct RingStage {
     sbn3_mul_plan producer{}, consumer{};

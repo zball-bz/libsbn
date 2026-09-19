@@ -75,6 +75,12 @@ struct ProductShape {
     }
     // The same plus a program prepared next to it (one-time products).
     size_t temporary_bytes() const noexcept { return ((prepared_bytes + 127) & ~size_t(127)) + 512 + episode_bytes(); }
+    // A one-time product whose output has already been allocated by the
+    // caller (power-chain ping-pong or exact-boundary resolution).
+    size_t temporary_work_bytes() const noexcept {
+        return ((prepared_bytes + 127) & ~size_t(127)) + 512 +
+               (work_alignment > 64 ? work_alignment - 64 : 0) + work_bytes;
+    }
 };
 sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductShape &, ProductProgramPlan *keep = nullptr,
                                 PlanTranscript * = nullptr, uint64_t applications = 0);
@@ -143,6 +149,9 @@ struct Chain {
         ProductChoice choice; // set by chain_bytes
     } step[max_rail]{};
     size_t limbs = 0, widest = 0; // capacity of the result; largest intermediate product
+    size_t resident_bytes() const noexcept {
+        return steps ? 2 * (((widest + 8) * 8 + 63) & ~size_t(63)) : 0;
+    }
 };
 Chain chain_of(const BaseInfo &, uint64_t fragments) noexcept;
 // Scratch bytes of chain_evaluate; records the products' search winners in the chain's steps.

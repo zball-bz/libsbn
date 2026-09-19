@@ -3,6 +3,7 @@
 #include "common/identity.hpp"
 #include "product/cost_model.hpp"
 #include "product/root_prepare_cost.hpp"
+#include "product/fft_choice.hpp"
 #include "sbn3/product.h"
 #include "sbn3/divrem.h"
 #include <algorithm>
@@ -43,6 +44,22 @@ sbn3_query_result finite_product(size_t an, size_t bn, const sbn3_mul_options &o
         out = direct;
         choice = direct_choice;
         return SBN3_SUPPORTED;
+    }
+    // In the local FFT band compare complete-use shapes, rather than taking
+    // the prepared-execution winner and only then charging for its tables.
+    // The selected shape is carried exactly by the transcript to bind.
+    if(options.workers==1 && an+bn<=32768 && direct_rc==SBN3_SUPPORTED){
+        const auto shape=pq16::select(an,bn,1,0,0,false,.27/double(applications));
+        sbn3_product_request request{};request.a_limbs=an;request.b_limbs=bn;
+        sbn3_product_info info{};
+        if(shape.nfull && short_fft_query(request,options,shape,out.plan,info)==SBN3_SUPPORTED){
+            out.info=info.mul;
+            if(product_program_describe(an,bn,out)==SBN3_SUPPORTED &&
+               preparation_cost(out)+application_cost(out,an,bn)*double(applications)<direct_cost){
+                choice=fft_shape_choice(shape);return SBN3_SUPPORTED;
+            }
+        }
+        out=direct;choice=direct_choice;return SBN3_SUPPORTED;
     }
     const auto rc = product_program_choose(an, bn, options, out, choice);
     if (direct_rc == SBN3_SUPPORTED &&
@@ -426,13 +443,14 @@ sbn3_query_result chain_bytes(const BaseInfo &b, Chain &c, unsigned workers, siz
         if (rc != SBN3_SUPPORTED)
             return rc;
         s.choice = shape.choice;
-        episode = std::max(episode, shape.temporary_bytes());
+        episode = std::max(episode, shape.temporary_work_bytes());
     }
-    bytes = 2 * align_to((c.widest + 8) * 8, 64) + episode + 256;
+    bytes = c.steps ? c.resident_bytes() + episode + 256 : 0;
     return SBN3_SUPPORTED;
 }
 const uint64_t *chain_evaluate(const Chain &c, const RailPlan &rail, const uint64_t *const *entries, sbn3_team *team,
                                unsigned workers, Frame &scratch) noexcept {
+    if(!c.steps)return entries[c.first];
     auto *x = scratch.alloc<uint64_t>(c.widest + 8), *y = scratch.alloc<uint64_t>(c.widest + 8);
     memset(x, 0, (c.widest + 8) * 8);
     memset(y, 0, (c.widest + 8) * 8);

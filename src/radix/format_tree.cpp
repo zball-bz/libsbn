@@ -41,6 +41,9 @@ sbn3_query_result format_tree_begin(unsigned base, unsigned workers, uint64_t la
     const size_t share = node_limbs(p.base, std::max<uint64_t>(largest_fragments, 1)) /
                          std::max<size_t>(1, policy.frontier_tasks_per_worker * workers);
     p.frontier_limbs = std::min(policy.team_node_limbs, std::max(policy.frontier_floor_limbs, share));
+    // A single worker still needs owner-side stages for product-service
+    // bindings. Keep only in-cache subtrees on its recursive frontier.
+    if(workers==1)p.frontier_limbs=std::max(p.frontier_limbs,policy.ring_node_limbs);
     for (uint64_t n = 1; n <= group_fragments; ++n)
         p.group_limbs[n] = node_limbs(p.base, n);
     const uint64_t leaf_bits = power_bits(p.base.base_bound, fragment_digits + word_digits) + guard_bits;
@@ -62,10 +65,11 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
     const size_t rail_size = rail_limbs(base, c.level);
     // Everything above the window wraps at least one limb below it when the ring holds the rest of the product.
     const size_t wrapped_ring = c.split_limbs + rail_size - c.window_limbs + 1;
+    const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
     ProductShape linear{};
     bool have_linear = false;
-    if (w == 1 && !repeated) {
-        const auto rc = product_shape(c.split_limbs, rail_size, 1, linear, nullptr, transcript, count);
+    if (w == 1 || (!c.frontier && count==1)) {
+        const auto rc = product_shape(c.split_limbs, rail_size, product_workers, linear, nullptr, transcript, repeated?0:count);
         if (rc != SBN3_SUPPORTED)
             return rc;
         have_linear = true;
@@ -74,11 +78,15 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
                   rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic);
     if (cyclic && have_linear) {
         const double ordinary = pq16::native_cost(out.cyclic.shape, rail_size, c.split_limbs);
-        const double cached = .27 * double(out.cyclic.table_bytes) + cost_model::prepare_share(ordinary) +
+        const double cached = (repeated?0:.27 * double(out.cyclic.table_bytes) + cost_model::prepare_share(ordinary)) +
                               cost_model::cached_share(ordinary) * double(count);
-        cyclic = cached < linear.prepare_ns + linear.apply_ns * double(count);
+        cyclic = cached < (repeated?0:linear.prepare_ns) + linear.apply_ns * double(count);
     }
     if (cyclic) {
+        if(out.cyclic.ring>=c.split_limbs+rail_size){
+            out.product.an=c.split_limbs;out.product.bn=rail_size;
+            return SBN3_SUPPORTED;
+        }
         // The exact tie-break: limb h of the full product from the low h + 1 limbs of the operands.
         out.gap_limbs = out.cyclic.ring - wrapped_ring + 1;
         out.low_limbs = c.split_limbs + rail_size - out.cyclic.ring + 1;
@@ -96,13 +104,16 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         return SBN3_SUPPORTED;
     }
     out = {};
-    if (have_linear) {
-        out.product = linear;
-        return SBN3_SUPPORTED;
-    }
-    const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
-    if (!c.frontier && policy.ring_products && c.limbs >= policy.ring_node_limbs && count >= policy.ring_min_count &&
-        ring_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), product_workers, out.ring, transcript)) {
+    if (!c.frontier && policy.ring_products && c.limbs >= policy.ring_node_limbs &&
+        (w==1 || count==1 || count>=policy.ring_min_count) &&
+        ring_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), product_workers, out.ring, transcript,
+                  count) &&
+        (!have_linear || out.ring.prepare_ns + count*out.ring.predicted_ns <
+                            (repeated?0:linear.prepare_ns) + count*linear.apply_ns)) {
+        if(out.ring.ring>=c.split_limbs+rail_size){
+            out.product.an=c.split_limbs;out.product.bn=rail_size;out.product.workers=product_workers;
+            return SBN3_SUPPORTED;
+        }
         bool ok = true;
         out.gap_limbs = out.ring.ring - wrapped_ring + 1;
         out.low_limbs = c.split_limbs + rail_size - out.ring.ring + 1;
@@ -122,6 +133,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         }
         out = {};
     }
+    if(have_linear){out={};out.product=linear;return SBN3_SUPPORTED;}
     return product_shape(c.split_limbs, rail_size, product_workers, out.product, nullptr, transcript);
 }
 int FormatTreePlan::classify(uint64_t n) noexcept {
@@ -133,7 +145,7 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
     NodeClass c{};
     c.fragments = n;
     c.limbs = node_limbs(base, n);
-    c.frontier = top_workers == 1 || n <= group_fragments || c.limbs < frontier_limbs;
+    c.frontier = n <= group_fragments || c.limbs < frontier_limbs;
     if (n <= group_fragments) {
         c.group = true;
     } else {
@@ -158,8 +170,10 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
             // Recipe and scratch follow after all roots are known: a class's
             // occurrence count is what amortizes its prepared spectrum.
         } else {
-            // A frontier child's fraction is this node's right child or a view: nothing of its own persists.
-            c.persist_bytes = own + l.persist_bytes + r.persist_bytes;
+            // Descendants reuse this one slot-partitioned slab. Each parent
+            // product finishes reading before its right child overwrites the
+            // low slot; its left child's high view is disjoint and survives.
+            c.persist_bytes = align_to(fraction_storage_words(n)*8,64);
             c.tasks = l.tasks + r.tasks;
             c.top_nodes = 1 + l.top_nodes + r.top_nodes;
         }
@@ -297,9 +311,16 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
 }
 size_t FormatTreePlan::work_bytes(int t) const noexcept {
     const auto &tree = trees[t];
-    const auto &c = classes[tree.root];
     return align_to(size_t(tree.top_nodes) * sizeof(FormatInstance), 64) + align_to(size_t(tree.tasks) * sizeof(FormatTask), 64) +
-           (c.frontier ? 0 : c.persist_bytes) + tree.episode_bytes + size_t(workers) * align_to(frontier_region_bytes, 64);
+           align_to(root_storage_words(t)*8,64) + tree.episode_bytes + size_t(workers) * align_to(frontier_region_bytes, 64);
+}
+uint64_t *format_tree_root_buffer(FormatTree &t,int index) noexcept {
+    const auto &p=*t.plan;const auto &tree=p.trees[index];const auto &c=p.classes[tree.root];
+    require(t.work.bytes>=p.work_bytes(index),SBN3_FATAL_WORKSPACE,"radix root slab");
+    const size_t metadata=align_to(size_t(tree.top_nodes)*sizeof(FormatInstance),64)+
+                          align_to(size_t(tree.tasks)*sizeof(FormatTask),64);
+    auto *slab=reinterpret_cast<uint64_t *>(static_cast<uint8_t *>(t.work.data)+metadata);
+    return slab+p.root_storage_words(index)-c.limbs;
 }
 void format_tree_bind(FormatTree &t, const FormatTreePlan &plan, const uint8_t *alphabet, sbn3_arena &arena,
                       sbn3_team &team, const sbn3_lease &prepared, sbn3_lease &work,
@@ -434,6 +455,7 @@ void split(Run &run, int index, const SplitPlan &plan, const ProductProgram &pro
                 rail_product_execute(t.cyclic[index], frame, scope, y, z);
             } else {
                 sbn3_product_inputs in{};
+                if(!plan.ring.cached)in.a={t.rail[c.level],plan.ring.common_limbs};
                 in.b = {y, c.split_limbs};
                 sbn3_product_execute_on_scope(consumer, scope, &in, {z, plan.ring.output_limbs});
             }
@@ -443,6 +465,8 @@ void split(Run &run, int index, const SplitPlan &plan, const ProductProgram &pro
 #endif
         SBN3_RADIX_SPAN(window_span, trace_rows[index].window_ns);
         memcpy(right, z + window, c.right_limbs * 8);
+        // If the complete product fits in the ring, no high part wraps.
+        if(!plan.low_limbs)return;
         uint64_t clean = 0;
         for (size_t j = window - plan.gap_limbs; j < window; ++j)
             clean |= z[j];
@@ -518,18 +542,18 @@ struct Collector {
     FormatTask *tasks;
     uint32_t next[max_classes];
     uint32_t task = 0;
-    void visit(int index, const uint64_t *y, uint8_t *persist, uint64_t fragment) noexcept {
+    void visit(int index, const uint64_t *y, uint64_t *storage, uint64_t fragment) noexcept {
         const auto &c = plan->classes[index];
         if (c.frontier) {
             tasks[task++] = {index, y, fragment};
             return;
         }
-        auto *right = reinterpret_cast<uint64_t *>(persist);
+        const size_t right_capacity=plan->fraction_storage_words(plan->classes[c.right].fragments);
+        auto *right=storage+right_capacity-c.right_limbs;
         instances[next[index]++] = {y, right};
         const auto &l = plan->classes[c.left];
-        uint8_t *below = persist + align_to(c.right_limbs * 8, 64);
-        visit(c.left, y + (c.limbs - l.limbs), below, fragment);
-        visit(c.right, right, below + l.persist_bytes, fragment + (uint64_t(1) << c.level));
+        visit(c.left,y+(c.limbs-l.limbs),storage+right_capacity,fragment);
+        visit(c.right,right,storage,fragment+(uint64_t(1)<<c.level));
     }
 };
 struct RootTask {
@@ -622,15 +646,20 @@ uint64_t format_tree_run(FormatTree &t, int tree_index, const uint64_t *y, uint8
         base += align_to(size_t(tree.top_nodes) * sizeof(FormatInstance), 64);
         task.tasks = reinterpret_cast<FormatTask *>(base);
         base += align_to(size_t(tree.tasks) * sizeof(FormatTask), 64);
-        uint8_t *persist = base;
-        base += c.frontier ? 0 : c.persist_bytes;
+        auto *slab=reinterpret_cast<uint64_t *>(base);
+        base += align_to(p.root_storage_words(tree_index)*8,64);
+        if(!c.frontier){
+            auto *root=slab+p.root_storage_words(tree_index)-c.limbs;
+            if(y!=root)parallel_limbs::copy(t.team,root,y,c.limbs);
+            y=root;
+        }
         task.episodes = base;
         task.regions = base + tree.episode_bytes;
         task.region_bytes = align_to(p.frontier_region_bytes, 64);
         Collector collect{&p, task.instances, task.tasks, {}, 0};
         for (unsigned s = 0; s < tree.stage_count; ++s)
             collect.next[tree.stages[s].node_class] = tree.stages[s].first;
-        collect.visit(tree.root, y, persist, 0);
+        collect.visit(tree.root,y,slab,0);
         require(collect.task == tree.tasks, SBN3_FATAL_MATH, "radix frontier tasks");
         // Episodes: runs of stages that need no binding share one team run; a ring stage is bound by this
         // (owner) thread around its own run. The frontier loop joins the last episode.

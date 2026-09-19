@@ -2,6 +2,7 @@
 #include "product/native_capabilities.hpp"
 #include "product/cost_model.hpp"
 #include "product/short_query_bounds.hpp"
+#include "product/fft_choice.hpp"
 #include "common/checked.hpp"
 #include "common/small_checks.h"
 using namespace sbn::v3;
@@ -219,7 +220,9 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
     if (opt.algorithm >= SBN3_MUL_SCALAR) {
         if (choice)
             *choice = encode_choice(short_entry, opt);
-        return query(short_backend(), opt, plan, info);
+        const auto rc=query(short_backend(), opt, plan, info);
+        if(choice && rc==SBN3_SUPPORTED && opt.algorithm==SBN3_MUL_PQ16)*choice=short_fft_choice(plan);
+        return rc;
     }
     const size_t lo = std::min(s.a_limbs, s.b_limbs), hi = std::max(s.a_limbs, s.b_limbs);
     if (opt.algorithm || !short_options(opt))
@@ -273,7 +276,8 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
                    : alg == SBN3_MUL_U52  ? u52_product_cost(s.a_limbs, s.b_limbs, opt.workers)
                                           : pq16_product_cost(i, s.a_limbs, s.b_limbs);
         }
-        consider(status, p, ci, cost, encode_choice(short_entry, o));
+        consider(status, p, ci, cost, choice && status==SBN3_SUPPORTED && alg==SBN3_MUL_PQ16
+                                      ? short_fft_choice(p):encode_choice(short_entry, o));
     }
     if (hi >= 1024) {
         auto o = opt;
@@ -318,6 +322,11 @@ sbn3_query_result sbn::v3::mul_query_chosen(const sbn3_product_spec &s, const sb
     i = {};
     if (!native_available())
         return SBN3_UNSUPPORTED;
+    if(is_fft_shape_choice(choice)){
+        pq16::Shape shape{};if(!fft_shape_of_choice(choice,shape))return SBN3_UNSUPPORTED;
+        sbn3_product_request r{};r.a_limbs=s.a_limbs;r.b_limbs=s.b_limbs;
+        sbn3_product_info full{};const auto rc=short_fft_query(r,opt,shape,p,full);i=full.mul;return rc;
+    }
     return query_chosen(opt, choice, p, i,
                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
                             sbn3_mul_info &ci, bool geometry = false) { return search_query(b, s, co, cp, ci, geometry); });
@@ -340,6 +349,10 @@ sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_opti
     if (!native_available())
         return SBN3_UNSUPPORTED;
     const auto r = square_request(limbs);
+    if(is_fft_shape_choice(choice)){
+        pq16::Shape shape{};if(!fft_shape_of_choice(choice,shape))return SBN3_UNSUPPORTED;
+        return short_fft_query(r,opt,shape,p,i);
+    }
     return query_chosen(opt, choice, p, i,
                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
                             sbn3_product_info &ci, bool geometry = false) { return search_query(b, r, co, cp, ci, geometry); });

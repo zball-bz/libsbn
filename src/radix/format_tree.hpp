@@ -116,11 +116,21 @@ struct FormatTreePlan {
     size_t prepared_alignment() const noexcept { return programs.alignment; }
     size_t root_limbs(int tree) const noexcept { return classes[trees[tree].root].limbs; }
     uint64_t root_fragments(int tree) const noexcept { return classes[trees[tree].root].fragments; }
+    // An eight-fragment slot carries its own guard. Every split above the
+    // leaf group has a power-of-two left child divisible by eight, so the
+    // two child slot capacities partition their parent's capacity exactly.
+    size_t fraction_storage_words(uint64_t fragments) const noexcept {
+        return size_t((fragments+group_fragments-1)/group_fragments)*group_limbs[group_fragments];
+    }
+    size_t root_storage_words(int tree) const noexcept {
+        const auto &c=classes[trees[tree].root];
+        return c.frontier?c.limbs:fraction_storage_words(c.fragments);
+    }
     // Program slots the binder needs: one per class, then max_stages per tree.
     unsigned program_slots() const noexcept { return class_count + tree_count * max_stages; }
     unsigned ring_stages = 0; // replayed ring plans the binder needs
     size_t pool_bytes() const noexcept { return std::max(trees[0].pool_bytes, trees[1].pool_bytes); }
-    // Work lease of one run: [instances][tasks][persistent fractions][stage episodes][one frontier region per worker].
+    // Work lease: [instances][tasks][one fraction slab][stage episodes][frontier regions].
     size_t work_bytes(int tree) const noexcept;
 private:
     int classify(uint64_t fragments) noexcept;
@@ -144,6 +154,9 @@ struct FormatTree {
     ProductProgram extra[2]{};
     Frame *roots[32]{};
 };
+// The caller may form an initial root here, avoiding a separate padded copy.
+// It is overwritten by a subsequent run or use of the tree's work lease.
+uint64_t *format_tree_root_buffer(FormatTree &,int tree) noexcept;
 // Builds the rail in `rail_storage` (plan.rail.total_limbs limbs) and prepares every program in `prepared`
 // (plan.prepared_bytes()); `work` is scratch for the squarings (at least plan.rail.setup_bytes) and later
 // the run storage. `programs` has plan.program_slots() entries, `cyclic` class_count entries, `rings`

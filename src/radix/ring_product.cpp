@@ -1,6 +1,7 @@
 #include "radix/ring_product.hpp"
 #include "radix/programs.hpp"
 #include "product/cost_model.hpp"
+#include "product/root_prepare_cost.hpp"
 #include "runtime/arena.hpp"
 #include "common/checked.hpp"
 #include <algorithm>
@@ -14,7 +15,7 @@ struct Queried {
     sbn3_spectrum_desc future{};
 };
 bool query(size_t fresh, size_t common, size_t ring, unsigned np, int T, unsigned algorithm, unsigned workers,
-           uint64_t generation, Queried &out) noexcept {
+           uint64_t generation, Queried &out, bool cached = true) noexcept {
     sbn3_mul_options o{};
     o.workers = workers;
     o.prime_count = np;
@@ -28,6 +29,7 @@ bool query(size_t fresh, size_t common, size_t ring, unsigned np, int T, unsigne
     r.cyclic_limbs = ring;
     if (sbn3_product_query(&r, &o, &out.producer, &out.producer_info) != SBN3_SUPPORTED)
         return false;
+    if(!cached){out.consumer=out.producer;out.consumer_info=out.producer_info;out.future={};return true;}
     if (sbn3_spectrum_query(&out.producer, SBN3_SPECTRUM_COLUMNS, generation, &out.future) != SBN3_SUPPORTED)
         return false;
     r.cached_a[0] = &out.future;
@@ -52,7 +54,7 @@ size_t RingPlan::pool_bytes(unsigned groups) const noexcept {
     return align_to(at, 4096);
 }
 bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned workers, RingPlan &out,
-               PlanTranscript *transcript) noexcept {
+               PlanTranscript *transcript, uint64_t applications) noexcept {
     out = {};
     const bool deep = fresh > native_policy::small_model_max_words;
     Queried q{};
@@ -63,14 +65,19 @@ bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned worker
             ring *= 2;
         if ((algorithm == SBN3_MUL_FLAT && ring > (size_t(1) << 19)) || (algorithm == SBN3_MUL_BAILEY && ring < 2048))
             return;
-        if (!query(fresh, common, ring, np, T, algorithm, workers, 1, q))
+        const bool cached=applications!=1;
+        if (!query(fresh, common, ring, np, T, algorithm, workers, 1, q, cached))
             return;
-        const double cost = cost_model::cached_share(cost_model::cyclic_product(q.consumer_info.mul, deep).nanoseconds);
+        const double ordinary = cost_model::cyclic_product(q.consumer_info.mul, deep).nanoseconds;
+        const double apply = cached?cost_model::cached_share(ordinary):ordinary;
+        const double prepare = root_prepare_cost(q.producer_info.mul) + (cached?cost_model::prepare_share(ordinary):0.);
+        const double cost = apply + (applications ? prepare / double(applications) : 0.);
         if (!(cost < best))
             return;
         best = cost;
         out = {};
         out.enabled = true;
+        out.cached = cached;
         out.np = np;
         out.algorithm = algorithm;
         out.workers = workers;
@@ -78,14 +85,15 @@ bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned worker
         out.ring = ring;
         out.common_limbs = common;
         out.fresh_limbs = fresh;
-        out.predicted_ns = cost;
+        out.predicted_ns = apply;
+        out.prepare_ns = prepare;
         fill(out, q);
     };
     // Transcript entry of the winner: [1][np:7][algorithm:4][0:12][T:12], checked against the request and the
     // resources of the plan it stands for.
     auto check = [&] {
         return PlanTranscript::check(fresh * 3 + common, minimum_ring, workers,
-                                     out.enabled ? out.ring + 31 * (out.table_bytes + 31 * (out.work_bytes + 31 * out.spectrum_bytes)) : 0);
+                                     out.enabled ? out.ring + 31 * (out.table_bytes + 31 * (out.work_bytes + 31 * out.spectrum_bytes)) + uint64_t(out.cached) : 0);
     };
     if (transcript && transcript->replay) {
         const uint64_t e = transcript->next();
@@ -113,7 +121,7 @@ bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned worker
 void ring_replay(const RingPlan &p, uint64_t generation, RingStage &stage) noexcept {
     Queried q{};
     RingPlan check = p;
-    require(p.enabled && query(p.fresh_limbs, p.common_limbs, p.ring, p.np, p.trunk_bits, p.algorithm, p.workers, generation, q),
+    require(p.enabled && query(p.fresh_limbs, p.common_limbs, p.ring, p.np, p.trunk_bits, p.algorithm, p.workers, generation, q,p.cached),
             SBN3_FATAL_MATH, "radix ring replay");
     fill(check, q);
     require(check.table_bytes == p.table_bytes && check.work_bytes == p.work_bytes && check.output_limbs == p.output_limbs &&
@@ -131,9 +139,11 @@ void ring_bind(RingBound &b, const RingPlan &p, const RingStage &stage, unsigned
     b.groups = groups;
     const uintptr_t base = reinterpret_cast<uintptr_t>(arena->base) + pool_offset;
     size_t at = 0;
-    b.spectrum_lease = arena->acquire(pool_offset, align_to(p.spectrum_bytes, 4096));
-    sbn3_spectrum_reserve_plan(&stage.producer, SBN3_SPECTRUM_COLUMNS, stage.future.generation, arena, &b.spectrum_lease,
-                               &b.spectrum);
+    if(p.cached){
+        b.spectrum_lease = arena->acquire(pool_offset, align_to(p.spectrum_bytes, 4096));
+        sbn3_spectrum_reserve_plan(&stage.producer, SBN3_SPECTRUM_COLUMNS, stage.future.generation, arena, &b.spectrum_lease,
+                                   &b.spectrum);
+    }
     at = align_to(p.spectrum_bytes, 4096);
     for (unsigned g = 0; g < groups; ++g) {
         at = align_to(at, 4096);
@@ -144,7 +154,7 @@ void ring_bind(RingBound &b, const RingPlan &p, const RingStage &stage, unsigned
         at += align_to(p.work_bytes, 4096);
         sbn3_product_bind(&stage.consumer, arena, &b.tables[g], &b.work[g], team, b.spectrum, nullptr, &b.consumers[g]);
     }
-    sbn3_spectrum_compute(b.consumers[0], b.spectrum, {common, p.common_limbs});
+    if(p.cached)sbn3_spectrum_compute(b.consumers[0], b.spectrum, {common, p.common_limbs});
 }
 void ring_unbind(RingBound &b, sbn3_arena *arena) noexcept {
     for (unsigned g = 0; g < b.groups; ++g) {

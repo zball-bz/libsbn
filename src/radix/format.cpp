@@ -38,7 +38,7 @@ struct Plan {
     size_t pool_offset = 0, pool_bytes = 0;
     size_t prepared_offset = 0, prepared_bytes = 0, values_offset = 0, values_bytes = 0, divide_offset = 0,
            divide_bytes = 0, work_offset = 0, work_bytes = 0;
-    size_t rail_at = 0, side_at = 0, numerator_at = 0, inverse_at = 0, root_at = 0, small_at = 0; // limbs in values
+    size_t rail_at = 0, side_at = 0, numerator_at = 0, inverse_at = 0, small_at = 0; // limbs in values
     int root_product = -1; // tree.extra index of numerator * reciprocal
     size_t divide_alignment = 0;   // of the Newton INVERSE storage (integer tree)
     unsigned divide_lease_peak = 0;
@@ -59,7 +59,7 @@ uint64_t seal(const Plan &p, const sbn3_newton_plan &divide, const PlanTranscrip
                                p.integer_fragments, p.fraction_fragments, p.tree_digits, p.divide_limbs, p.prepared_offset,
                                p.prepared_bytes, p.values_offset, p.values_bytes, p.divide_offset, p.divide_bytes,
                                p.work_offset, p.work_bytes, p.pool_offset, p.pool_bytes, p.rail_at, p.side_at, p.numerator_at, p.inverse_at, uint64_t(p.root_product),
-                               p.root_at, p.small_at, p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
+                               p.small_at, p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
                                p.info.fraction_digits, p.info.integer_digits, p.info.control_bytes,
                                p.divide_alignment, p.divide_lease_peak, t.count,
                                p.info.storage_alignment, p.info.lease_peak, p.info.workers, p.info.fraction_offset};
@@ -269,7 +269,6 @@ sbn3_query_result Assembly::assemble() noexcept {
         p.small_at = take(p.integer_limbs + 8 * p.integer_fragments);
     }
     if (p.fraction_fragments) {
-        p.root_at = take(tree.root_limbs(fraction_root));
         work = std::max(work, tree.work_bytes(fraction_root));
         {
             // Exact tie resolution: odd^(64 F), a copy of the low fraction limbs, and their product.
@@ -288,10 +287,14 @@ sbn3_query_result Assembly::assemble() noexcept {
                     rc = product_shape(an, bn, p.options.workers, shape, nullptr, &transcript);
                     if (rc != SBN3_SUPPORTED)
                         return rc;
-                    episode = shape.temporary_bytes();
+                    episode = shape.temporary_work_bytes();
                     out = shape.output_limbs;
                 }
-                bytes += align_to(an * 8, 64) + align_to(out * 8, 64) + episode + 256;
+                // The power chain has finished: its temporary program/work
+                // is dead. Only its two value buffers remain beside the
+                // final product. That product's output is counted once.
+                bytes = std::max(bytes, chain.resident_bytes() + align_to(an * 8, 64) +
+                                        align_to(out * 8, 64) + episode + 256);
             }
             work = std::max(work, bytes);
         }
@@ -489,7 +492,7 @@ void fraction_tree_run(Binding &b, const uint64_t *m, unsigned char *out, sbn3_f
     if (position >= 0 && !(p.point & 63) && uint64_t(p.point) <= uint64_t(64) * count) {
         y = m + size_t(position >> 6); // the fraction's top limbs are the root as they stand
     } else {
-        uint64_t *copy = b.limbs(p.root_at);
+        uint64_t *copy = format_tree_root_buffer(b.tree,b.fraction_root);
         window(b.team, copy, n, m, count, position, 0, std::min<uint64_t>(p.fraction_bits, uint64_t(64) * count));
         y = copy;
     }

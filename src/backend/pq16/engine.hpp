@@ -1,6 +1,7 @@
 /* Imported from libsbn/include/sbn/detail/engine/pq16.h; retain v2 numerical guards. Tables/Frame/team are explicit. */
 #pragma once
 #include "backend/pq16/roots.hpp"
+#include "backend/pq16/root_bank.hpp"
 namespace sbn::v3::pq16 {
 #ifndef PQ16_CENTER_DIRECT
 #define PQ16_CENTER_DIRECT 3
@@ -348,9 +349,9 @@ static inline pq16_shape pq16_shape_of(uint32_t n){
 typedef struct {
     Frame *builder;
     uint32_t pq_n;               // pow2 branch size the PQ table covers
-    double  *tw22[PQ16_MAX_LG];
-    double  *tw8[PQ16_MAX_LG];
-    double  *pq;                 // compact PQ g-table: per 8-tile group,
+    const double *tw22[PQ16_MAX_LG];
+    const double *tw8[PQ16_MAX_LG];
+    const double *pq;            // compact PQ g-table: per 8-tile group,
                                  // 32 doubles [re x16 | im x16]
     // leaf constants (transform-size independent)
     alignas(64) double l32w[2 * 16];   // w1, w2 at len 32
@@ -395,15 +396,19 @@ static inline void pq16_root(double *wr, double *wi, uint64_t k, uint64_t n){
     // octant. No transcendental calls and no growing recurrence chain.
     static_assert(__LDBL_MANT_DIG__>=64,"pow2 seed composition needs extended precision");
     static_assert(PQ16_PLAN_CAP_BRANCH<=(1u<<PQ16_ROOT_GRID_LOG2),"extend the root seed grid with the numerical domain");
-    k %= n;
-    const uint64_t quarter=n/4,quadrant=k/quarter;
-    k %= quarter;
+    const unsigned lg=(unsigned)__builtin_ctzll(n);
+    k &= n-1;
+    const uint64_t quarter=n/4,quadrant=k>>(lg-2);
+    k &= quarter-1;
     const bool reflect=k>n/8;
     if(reflect)k=quarter-k;
-    const uint64_t index=k<<(PQ16_ROOT_GRID_LOG2-(unsigned)__builtin_ctzll(n));
+    const uint64_t index=k<<(PQ16_ROOT_GRID_LOG2-lg);
     const auto *a=PQ16_ROOT_COARSE[index>>8],*b=PQ16_ROOT_FINE[index&255];
-    double c=(double)(a[0]*b[0]-a[1]*b[1]);
-    double s=(double)(a[0]*b[1]+a[1]*b[0]);
+    // Fine seed zero is exactly (1,0). All branch <= 2048 roots use it;
+    // preserve the same final rounding without four extended multiplies.
+    double c,s;
+    if(!(index&255)){c=(double)a[0];s=(double)a[1];}
+    else{c=(double)(a[0]*b[0]-a[1]*b[1]);s=(double)(a[0]*b[1]+a[1]*b[0]);}
     if(reflect){const double t=c;c=s;s=t;}
     switch(quadrant){
     case 0:*wr=c;*wi=s;break;
@@ -486,6 +491,7 @@ static inline void pq16_leaf_init(pq16_plan *pl){
 // {w1a, w1b} (squares derived)
 static inline void pq16_build_tw22(pq16_plan *pl, unsigned lg){
     if(pl->tw22[lg]) return;
+    if(lg<PQ16_TWC_MIN_LG && (pl->tw22[lg]=root_bank::twiddle<false>(lg)))return;
     uint32_t len = 1u << lg;
     if(lg >= PQ16_TWC_MIN_LG){
         double *tab = (double *)pq16_alloc(pl,(size_t)len * 4);
@@ -511,6 +517,7 @@ static inline void pq16_build_tw22(pq16_plan *pl, unsigned lg){
 // {W1, W2} (W1o = rot8(W1), W4 = W2^2 derived)
 static inline void pq16_build_tw8(pq16_plan *pl, unsigned lg){
     if(pl->tw8[lg]) return;
+    if(lg<PQ16_TWC_MIN_LG && (pl->tw8[lg]=root_bank::twiddle<true>(lg)))return;
     uint32_t len = 1u << lg;
     if(lg >= PQ16_TWC_MIN_LG){
         double *tab = (double *)pq16_alloc(pl,(size_t)len * 4);
@@ -583,9 +590,14 @@ static inline pq16_odd_plan pq16_odd_plan_of(uint32_t n);
 static inline void pq16_plan_ensure(pq16_plan *pl,uint32_t branch,int odd_plan){ // odd_plan: also the odd-radix branch plan tables
     require(pl->builder && !pl->ready_mask,SBN3_FATAL_LIFETIME,"pq16 immutable table build");
     const unsigned lgc=(unsigned)__builtin_ctz(branch);pq16_leaf_init(pl);
-    pl->pq=(double *)pq16_alloc(pl,(size_t)branch*4);
-    for(uint32_t g=0;g<branch/64;++g)for(uint32_t k=0;k<16;++k)
-        pq16_root(pl->pq+32*g+k,pl->pq+32*g+16+k,pq16_bitrev(g*16+k,lgc-2),branch);
+    if(branch<=root_bank::branch)pl->pq=root_bank::pq.data();
+    else{
+        auto *pq=(double *)pq16_alloc(pl,(size_t)branch*4);
+        memcpy(pq,root_bank::pq.data(),sizeof(root_bank::pq));
+        for(uint32_t g=root_bank::branch/64;g<branch/64;++g)for(uint32_t k=0;k<16;++k)
+            pq16_root(pq+32*g+k,pq+32*g+16+k,pq16_bitrev(g*16+k,lgc-2),branch);
+        pl->pq=pq;
+    }
     for(uint32_t p=0;p<8;++p)pq16_root(pl->gh0+p,pl->gh0+8+p,pq16_bitrev(p>>2,lgc-2),branch);
     pl->pq_n=branch;pq16_build_tw22(pl,lgc);pq16_shape shape=pq16_shape_of(branch);
     for(uint32_t i=0;i<shape.cnt;++i)pq16_build_tw8(pl,(unsigned)__builtin_ctz(shape.len[i]));

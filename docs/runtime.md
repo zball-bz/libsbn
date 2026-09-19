@@ -25,3 +25,10 @@ may be shared only through their explicit lifetime contract.
 
 Consult include/sbn3/arena.h, team.h, product.h and the specific service header.
 Some bindings are single-use; radix bindings explicitly support repeated execute.
+
+The native FFT also uses a published 146,432-byte immutable root prefix in the
+library's read-only image. It has no runtime initializer and is shared by all
+bindings; operation storage queries exclude it, just as they exclude code and
+fixed scalar constants. Memory comparisons must report this shared prefix once
+per process beside the queried storage. Larger FFT stages still build their
+additional tables in the planned arena. No operation-sized cache survives unbind.

@@ -732,6 +732,7 @@
       "depends_on": [
         "src/algorithms/inverse_seed.cpp",
         "src/instances/x86v4ifma/u52.cpp",
+        "src/instances/x86v4ifma/pq16.cpp",
         "src/core/x86_64/word.cpp",
         "src/value/divrem_basecase.cpp"
       ],

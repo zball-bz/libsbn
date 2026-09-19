@@ -13,6 +13,7 @@
 #include "product/backend.hpp"
 #include "product/native_capabilities.hpp"
 #include "product/root_prepare_cost.hpp"
+#include "product/fft_choice.hpp"
 #include "runtime/team.hpp"
 #include "runtime/scratch.hpp"
 #include "value/divrem_words.hpp"
@@ -31,7 +32,7 @@ struct ProductChoice {
     unsigned np = 0, algorithm = 0, workers = 1;
     int T = 0;
     size_t ring = 0;
-    unsigned cached = 0;
+    unsigned cached = 0, pfa = 0; // explicit classic FFT recipe; no mixed-shape search on replay
 };
 struct Plan {
     uint64_t marker = magic, seal = 0;
@@ -93,8 +94,8 @@ uint64_t seal(const Plan &p) {
                               p.options.prime_count, p.options.memory_budget, p.options.reuse_hint,
                               p.options.block_limbs, p.options.residual, p.options.algorithm, p.options.timing, p.info.algorithm, p.info.storage_bytes,
                               p.info.plan_id, p.in, p.ring, p.xlen, p.head, p.u.np, p.u.algorithm, p.u.workers,
-                              uint64_t(p.u.T), p.u.ring, p.u.cached, p.t.np, p.t.algorithm, p.t.workers,
-                              uint64_t(p.t.T), p.t.ring, p.t.cached, p.persistent_offset, p.shared_offset,
+                              uint64_t(p.u.T), p.u.ring, p.u.cached, p.u.pfa, p.t.np, p.t.algorithm, p.t.workers,
+                              uint64_t(p.t.T), p.t.ring, p.t.cached, p.t.pfa, p.persistent_offset, p.shared_offset,
                               p.newton_bytes, p.newton_alignment, p.tcap, p.pcap, p.scratch_words, uint64_t(p.shared_products)};
     for (uint64_t w : words)
         h = feed(h, w);
@@ -177,7 +178,11 @@ bool query_product(size_t a, size_t b, const ProductChoice &c, uint64_t generati
         q.producer = plain->plan;
         q.producer_info = plain->info;
     } else {
-        supported = sbn3_product_query(&r, &o, &q.producer, &q.producer_info) == SBN3_SUPPORTED;
+        if(c.pfa){
+            if(c.pfa!=1 || c.np || c.ring || c.workers!=1)return false;
+            auto shape=pq16::query(a,b);shape.recipe=pq16::Recipe::PfaPQ;
+            supported=shape.nfull && short_fft_query(r,o,shape,q.producer,q.producer_info)==SBN3_SUPPORTED;
+        }else supported = sbn3_product_query(&r, &o, &q.producer, &q.producer_info) == SBN3_SUPPORTED;
         if (plain) {
             plain->queried = true;
             plain->supported = supported;
@@ -258,6 +263,17 @@ bool search_pays(const Plan &p, size_t a, size_t b, double applications, double 
     return std::min(a, b) >= divrem_tuning::transform_min_limbs &&
            in_hand - transform_floor(p, a + b, applications) > search_price(a, b);
 }
+// This candidate computes one classic FFT geometry; it does not enumerate
+// mixed codecs or the NTT lattice. Charge that query, not the full search.
+bool pfa_domain(const Plan &p,size_t a,size_t b){
+    return p.options.workers==1 && !p.options.prime_count && std::min(a,b)>=128 && a+b<=32768;
+}
+bool pfa_query_pays(const Plan &p,size_t a,size_t b,double applications,double in_hand){
+    return pfa_domain(p,a,b) && in_hand-transform_floor(p,a+b,applications)>500.;
+}
+ProductChoice pfa_product(){
+    ProductChoice c{};c.algorithm=SBN3_MUL_PQ16;c.workers=1;c.T=16;c.pfa=1;return c;
+}
 // The short product (no tables, no spectrum), a recipe of its own next to the policy's. It runs on one worker
 // whatever the team (10120 x 461: 117 us on one worker, 114 on eight), and its one-worker model is the measured one.
 ProductChoice short_product() {
@@ -283,6 +299,18 @@ bool choose_u(const Plan &p, size_t in, double applications, ProductChoice &out,
             out = direct;
             q = candidate;
             cost = product_cost(candidate, in + 1, in);
+            if(pfa_query_pays(p,in+1,in,applications,total(cost))){
+                auto c=pfa_product();Plain plain{};
+                for(unsigned cached:{1u,0u}){
+                    c.cached=cached;Queried alternative{};
+                    if(!query_product(in+1,in,c,1,alternative,&plain))continue;
+                    const auto k=product_cost(alternative,in+1,in);
+                    if(total(k)<total(cost)){out=c;q=alternative;cost=k;}
+                }
+            }
+            // One-use local products compare these two inexpensive plans.
+            // Repeated execution and the larger band retain the broad search.
+            if(pfa_domain(p,in+1,in) && p.options.reuse_hint<=1)return true;
             if (!search_pays(p, in + 1, in, applications, total(cost)))
                 return true;
         }
@@ -367,7 +395,12 @@ void consider(Residual &b, size_t dn, size_t in, double applications, const Prod
 void linear_residual(const Plan &p, size_t dn, size_t in, double applications, double &transform, Residual &lin) {
     if (!p.options.prime_count) {
         consider(lin, dn, in, applications, short_product(), 0);
-        if (lin.found && ((std::isfinite(transform) && lin.total <= transform) || !search_pays(p, dn, in, applications, lin.total)))
+        if(lin.found && pfa_query_pays(p,dn,in,applications,lin.total)){
+            auto c=pfa_product();Plain plain{};
+            for(unsigned cached:{1u,0u}){c.cached=cached;consider(lin,dn,in,applications,c,0,&plain);}
+        }
+        if(lin.found && pfa_domain(p,dn,in) && p.options.reuse_hint<=1)return;
+        if (lin.found && ((!lin.choice.pfa && std::isfinite(transform) && lin.total <= transform) || !search_pays(p, dn, in, applications, lin.total)))
             return;
     }
     ProductChoice linear{};
@@ -500,8 +533,11 @@ bool lattice_wanted(const Plan &p, size_t dn, size_t in, double applications, co
 }
 // Block inverse: local u52 recurrence/exact correction without a product
 // planner below the shared crossover, spectral Newton above it.
-bool inverse_basecase(size_t in) {
-    return in <= divrem_tuning::inverse_basecase_limbs;
+size_t inverse_local_limit(unsigned workers) {
+    return workers==1?divrem_tuning::inverse_basecase_limbs:inverse_tuning::basecase_limbs;
+}
+bool inverse_basecase(size_t in,unsigned workers) {
+    return in <= inverse_local_limit(workers);
 }
 double newton_estimate(const Plan &p, size_t in) {
     ProductChoice c{};
@@ -515,8 +551,8 @@ double newton_estimate(const Plan &p, size_t in) {
 // Ordering price of the block inverse, by the route the plan would take: the
 // local arithmetic, or the spectral Newton ladder with its planning.
 double inverse_estimate(const Plan &p, size_t in) {
-    if (inverse_basecase(in))
-        return inverse_tuning::local_cost(in);
+    if (inverse_basecase(in,p.options.workers))
+        return local_inverse_approximate_cost(in);
     return divrem_tuning::inverse_newton_planning_ns + newton_estimate(p, in);
 }
 // One head limb by word division: an O(dn) multiply-subtract pass.
@@ -709,7 +745,7 @@ void order_sizes(const Plan &p, Ranking &r) {
     const double star = std::pow(executions * double(qn) * best.pair / (1.5 * 1.7), 1./2.5);
     if (!(star >= 1) || star >= double(smallest))
         return;
-    size_t in = size_t(std::min(star, double(divrem_tuning::inverse_basecase_limbs)));
+    size_t in = size_t(std::min(star, double(inverse_local_limit(p.options.workers))));
     const size_t blocks = (qn + in - 1) / in;
     in = (qn + blocks - 1) / blocks;
     // Price this candidate's own shorter products. Multiplying the larger
@@ -772,7 +808,7 @@ bool schoolbook_use(const Plan &p) {
     return work <= divrem_tuning::schoolbook_use_work;
 }
 sbn3_query_result inverse_query(size_t in, const sbn3_newton_options &o, sbn3_newton_plan &plan, sbn3_newton_info &info) {
-    if (!inverse_basecase(in))
+    if (!inverse_basecase(in,o.workers))
         return sbn3_newton_query(SBN3_NEWTON_INVERSE, in, &o, &plan, &info);
     plan = {};
     info = {};
@@ -1001,7 +1037,7 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
     // Block inverse of the top in limbs, in the shared union (unleased at this
     // point): bounded U by the local recurrence, or the spectral Newton binding.
     // Both satisfy |U - B^(2in)/Dtop| < 3 with B^in <= U < 2B^in.
-    if (inverse_basecase(in)) {
+    if (inverse_basecase(in,p.options.workers)) {
         auto scratch = b.arena->acquire(b.offset + p.shared_offset, p.newton_bytes);
         {
             Frame frame(*b.arena,scratch);

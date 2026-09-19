@@ -3,18 +3,45 @@
 #include "algorithms/newton_contract.hpp"
 #include "sbn3/divrem.h"
 #include "backend/u52/kernels.hpp"
+#include "backend/pq16/kernels.hpp"
+#include "product/short_tuning.hpp"
 #include "runtime/scratch.hpp"
 #include "value/limbs.hpp"
 #include <algorithm>
 #include <string.h>
 namespace sbn::v3 {
 namespace {
+// The local recurrence needs exact integer products, not an operation-level
+// plan for each rung. Small products retain u52; larger ones use one classic
+// FFT geometry, with its complete temporary storage included in the query.
+pq16::Shape local_product_shape(size_t a,size_t b) noexcept {
+    if(std::min(a,b)<512)return {};
+    auto s=pq16::query(a,b);s.recipe=pq16::Recipe::PfaPQ;
+    return s.nfull && pq16::supported(s,a,b,1)?s:pq16::Shape{};
+}
+size_t local_product_bytes(size_t a,size_t b) noexcept {
+    const auto s=local_product_shape(a,b);
+    return s.nfull?pq16::table_bytes(s)+pq16::scratch_bytes(s,a,b)+512:u52::scratch_bytes(a,b);
+}
+double local_product_cost(size_t a,size_t b) noexcept {
+    const auto s=local_product_shape(a,b);
+    return s.nfull?.27*double(pq16::table_bytes(s))+pq16::native_cost(s,a,b):u52_product_cost(a,b,1);
+}
+void local_product(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &space) noexcept {
+    const auto s=local_product_shape(an,bn);
+    if(!s.nfull){u52::multiply(out,a,an,b,bn,space);return;}
+    FrameMark mark(space);
+    auto table=space.subframe(pq16::table_bytes(s)+128,128);
+    auto *prepared=pq16::prepare(table,s);
+    auto work=space.subframe(pq16::scratch_bytes(s,an,bn)+128,128);
+    pq16::multiply(out,a,an,b,bn,*prepared,work,nullptr);
+}
 size_t words(size_t n) noexcept { return (8*n+63)&~size_t(63); }
 size_t approximate_bytes(size_t n) noexcept {
     if(n<=15)return 0;
     const size_t m=newton_contract::next_precision(n);
-    const size_t multiply=std::max(u52::scratch_bytes(n,m+1),
-                                   u52::scratch_bytes(m+1,newton_contract::residual_words(m,n)));
+    const size_t multiply=std::max(local_product_bytes(n,m+1),
+                                   local_product_bytes(m+1,newton_contract::residual_words(m,n)));
     return 64+words(m+1)+std::max(approximate_bytes(m),words(n+m+1)+words(n+4)+multiply+64);
 }
 // Same recurrence/guard limbs as inverse_rung, using full local products.
@@ -28,8 +55,8 @@ void approximate(uint64_t *v,const uint64_t *d,size_t n,Frame &scratch) noexcept
     approximate(u,d+n-m,m,scratch);
     auto *residual=scratch.alloc<uint64_t>(length),*correction=scratch.alloc<uint64_t>(n+4);
     const size_t shift=newton_contract::residual_shift(m),rn=newton_contract::residual_words(m,n);
-    auto work=scratch.subframe(std::max(u52::scratch_bytes(n,m+1),u52::scratch_bytes(m+1,rn)),64);
-    u52::multiply(residual,d,n,u,m+1,work);
+    auto work=scratch.subframe(std::max(local_product_bytes(n,m+1),local_product_bytes(m+1,rn)),64);
+    local_product(residual,d,n,u,m+1,work);
     const bool negative=residual[n+m]==0;
     --residual[n+m]; // subtract B^(n+m), wrapping iff the residual is negative
     if(negative){
@@ -39,7 +66,7 @@ void approximate(uint64_t *v,const uint64_t *d,size_t n,Frame &scratch) noexcept
     }
     require(residual[n]<newton_contract::inverse_residual_limit &&
             limbs::zero(residual+n+1,length-n-1),SBN3_FATAL_MATH,"local inverse residual bound");
-    u52::multiply(correction,u,m+1,residual+shift,rn,work);
+    local_product(correction,u,m+1,residual+shift,rn,work);
     require(correction[n+2]<newton_contract::inverse_correction_limit && !correction[n+3],
             SBN3_FATAL_MATH,"local inverse correction bound");
     memset(v,0,(n-m)*8);
@@ -58,10 +85,18 @@ bool at_least_divisor(const uint64_t *r,const uint64_t *d,size_t n) noexcept {
     return true;
 }
 }
+double local_inverse_approximate_cost(size_t n) noexcept {
+    if(n<=32)return 100.+.33*double(n)*double(n);
+    const size_t m=newton_contract::next_precision(n),rn=newton_contract::residual_words(m,n);
+    // Exact selected product recipes, plus the linear residual/correction
+    // scans. Do not keep the old n^1.5 envelope after entering the FFT band.
+    return local_inverse_approximate_cost(m)+local_product_cost(n,m+1)+
+           local_product_cost(m+1,rn)+2.*double(n);
+}
 size_t local_inverse_bytes(size_t n) noexcept {
     require(n && n<=8192,SBN3_FATAL_SIZE,"local inverse size");
     if(n<=32)return words(2*n)+words(n)+words(3*n+1)+64;
-    return std::max(approximate_bytes(n),words(2*n+1)+u52::scratch_bytes(n+1,n)+128);
+    return std::max(approximate_bytes(n),words(2*n+1)+local_product_bytes(n+1,n)+128);
 }
 size_t local_inverse_approximate_bytes(size_t n) noexcept {
     require(n && n<=8192,SBN3_FATAL_SIZE,"local approximate inverse size");
@@ -91,8 +126,8 @@ void local_inverse(uint64_t *out,const uint64_t *d,size_t n,Frame &scratch) noex
     approximate(out,d,n,scratch);
     FrameMark mark(scratch);
     auto *product=scratch.alloc<uint64_t>(2*n+1);
-    auto work=scratch.subframe(u52::scratch_bytes(n+1,n),64);
-    u52::multiply(product,out,n+1,d,n,work);
+    auto work=scratch.subframe(local_product_bytes(n+1,n),64);
+    local_product(product,out,n+1,d,n,work);
     const uint64_t one=1;
     unsigned corrections=0;
     // floor((B^(2n)-1)/D): first remove any overshoot, then form the

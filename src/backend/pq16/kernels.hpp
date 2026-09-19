@@ -21,7 +21,8 @@ constexpr Shape execution_shape(Shape s,unsigned workers) noexcept {
 }
 struct Tables;
 Shape query(size_t an,size_t bn,unsigned minimum_pow2=128) noexcept;
-Shape select(size_t an,size_t bn,unsigned workers=1,unsigned bits=0,size_t scratch_budget=0,bool square=false) noexcept;
+Shape select(size_t an,size_t bn,unsigned workers=1,unsigned bits=0,size_t scratch_budget=0,bool square=false,
+             double preparation_ns_per_byte_per_use=0) noexcept;
 size_t table_bytes(Shape) noexcept;
 size_t scratch_bytes(Shape,size_t an,size_t bn,unsigned workers=1,bool square=false) noexcept;
 Tables *prepare(Frame &,Shape) noexcept;

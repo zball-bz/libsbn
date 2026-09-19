@@ -42,9 +42,13 @@ inline constexpr double schoolbook_budget_work = 360000.0;
 // 1.125, 1.047 at thirteen to fifteen). Stage C-1 and before: 64, from an execution-only sweep of a planner that
 // priced no short product.
 inline constexpr size_t schoolbook_max_divisor = 14;
-// One-use reciprocal route, shared with radix. The cutoff tracks the complete
-// Newton path, including planning (inverse_tuning.hpp).
-inline constexpr size_t inverse_basecase_limbs = inverse_tuning::basecase_limbs;
+// Division needs the bounded (<3 ulp) reciprocal, without the exact
+// multiply-back used by the radix scaling helper. Its local FFT recurrence
+// is supported through 8192 limbs and avoids the operation-level Newton
+// planner in this band for W1. Wider requests retain the old crossover so
+// a serial recurrence does not displace their parallel inverse unchecked.
+// Radix retains its own exact-reciprocal crossover.
+inline constexpr size_t inverse_basecase_limbs = 8192;
 // Planning/binding seed after geometry-only search; ~80 us of a 110-140 us
 // complete 513..1219-limb reciprocal. Same price for all Newton candidates.
 inline constexpr double inverse_newton_planning_ns = 80000.0;

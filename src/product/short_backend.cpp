@@ -1,5 +1,6 @@
 #include "product/backend.hpp"
 #include "product/fft_backend.hpp"
+#include "product/fft_choice.hpp"
 #include "runtime/team.hpp"
 #include "runtime/linux/sync.hpp"
 #include "backend/u52/kernels.hpp"
@@ -92,8 +93,8 @@ uint64_t now() {
     }
     return 0;
 }
-sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_options &o, sbn3_mul_plan &out,
-                                sbn3_product_info &result) {
+sbn3_query_result query_product_impl(const sbn3_product_request &r, const sbn3_mul_options &o, sbn3_mul_plan &out,
+                                sbn3_product_info &result, const pq16::Shape *pinned) {
     result = {};
     const bool mid = r.kind == SBN3_PRODUCT_TMP,
                window = r.kind == SBN3_PRODUCT_LOW || r.kind == SBN3_PRODUCT_HIGH;
@@ -163,12 +164,24 @@ sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_op
         size_t control = 0;
         align_size(sizeof(Binding), 128, control);
         const bool square = q.kind == SBN3_PRODUCT_SQR;
+        if(pinned){
+            q.shape=*pinned;
+            if(!pq16::supported(q.shape,q.an,q.bn,o.workers))return SBN3_UNSUPPORTED;
+        }else{
         q.shape = pq16::select(q.an, q.bn, o.workers, unsigned(o.trunk_bits),
                                o.workspace_budget > control ? o.workspace_budget - control : 0, square);
         if (!q.shape.nfull && o.workspace_budget)
             q.shape = pq16::select(q.an, q.bn, o.workers, unsigned(o.trunk_bits), 0, square);
+        }
         if (!q.shape.nfull)
             return SBN3_UNSUPPORTED;
+        // Shape crosses two different query call paths. Canonicalize its
+        // padding before serializing the opaque plan, as well as its fields.
+        const auto shape=q.shape;
+        memset(&q.shape,0,sizeof(q.shape));
+        q.shape.nfull=shape.nfull;q.shape.branch=shape.branch;q.shape.radix=shape.radix;
+        q.shape.centered=shape.centered;q.shape.recipe=shape.recipe;q.shape.bits=shape.bits;
+        q.shape.balanced=shape.balanced;
         i.trunk_bits = q.shape.bits;
         i.nat = (q.an * 64 + i.trunk_bits - 1) / i.trunk_bits;
         i.nyt = (q.bn * 64 + i.trunk_bits - 1) / i.trunk_bits;
@@ -215,6 +228,8 @@ sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_op
     memcpy(out.opaque, &q, sizeof q);
     return SBN3_SUPPORTED;
 }
+sbn3_query_result query_product(const sbn3_product_request &r,const sbn3_mul_options &o,sbn3_mul_plan &p,
+                                  sbn3_product_info &i){return query_product_impl(r,o,p,i,nullptr);}
 sbn3_query_result query(const sbn3_product_spec &s, const sbn3_mul_options &o, sbn3_mul_plan &p,
                         sbn3_mul_info &i) {
     sbn3_product_request r{};
@@ -708,6 +723,15 @@ void prepare_spectrum(sbn3_mul_binding *p, sbn3_const_limbs input, unsigned f, u
     compute_spectrum(p, *out, input);
 }
 } // namespace
+sbn3_query_result short_fft_query(const sbn3_product_request &r,const sbn3_mul_options &o,pq16::Shape shape,
+                                  sbn3_mul_plan &p,sbn3_product_info &i) noexcept {
+    if(r.kind!=SBN3_PRODUCT_MUL && r.kind!=SBN3_PRODUCT_SQR)return SBN3_UNSUPPORTED;
+    auto options=o;options.algorithm=SBN3_MUL_PQ16;options.trunk_bits=int(shape.bits);
+    return query_product_impl(r,options,p,i,&shape);
+}
+ProductChoice short_fft_choice(const sbn3_mul_plan &p) noexcept {
+    const auto q=load(p);return q.info.algorithm==SBN3_MUL_PQ16?fft_shape_choice(q.shape):0;
+}
 const Backend &short_backend() noexcept {
     static const Backend b{
         .id = id,

@@ -12,7 +12,9 @@ struct Tables {pq16_plan plan{};Shape shape{};const CtTables *ct=nullptr;const R
 Shape query(size_t an,size_t bn,unsigned minimum_pow2) noexcept {
     if(an>(1u<<20)||bn>(1u<<20)||(minimum_pow2!=128&&minimum_pow2!=256&&minimum_pow2!=512))return {};int c=0;const auto s=pq16_lin_choose(an,bn,&c,minimum_pow2);return {s.nfull,s.branch,s.M,bool(c)};
 }
-Shape select(size_t an,size_t bn,unsigned workers,unsigned bits,size_t budget,bool square) noexcept {
+Shape select(size_t an,size_t bn,unsigned workers,unsigned bits,size_t budget,bool square,double preparation) noexcept {
+    auto price=[&](Shape s){const double run=native_cost(s,an,bn);
+        return preparation ? run+preparation*double(table_bytes(s)) : run;};
     Shape old=execution_shape(query(an,bn),workers);
     if(!old.nfull|| (bits&&(bits<16||bits>20)))return {};
     if(workers!=1||an+bn<256||an+bn>262144){if(bits&&bits!=16)return {};return old;}
@@ -20,20 +22,20 @@ Shape select(size_t an,size_t bn,unsigned workers,unsigned bits,size_t budget,bo
         // which only pay off where the classic codec would be centered (N > 2^17: -12..-29 % measured at M5 163840, M3 196608,
         // M7 229376); below that the balanced kernels are 5-11 % slower than PFA/PQ at equal shapes.
         if(bits&&bits!=16)return {};
-        Shape best=old;double lowest=native_cost(old,an,bn);
+        Shape best=old;double lowest=price(old);
         const size_t need=((64*an+15)/16+(64*bn+15)/16)/2;
         for(unsigned m:{3u,5u,7u}){unsigned n=256;while(size_t(m)*n<need)n*=2;
             if(size_t(m)*n<=131072||size_t(m)*n>524288)continue;
             for(Recipe r:{Recipe::CooleyTukeyPQ,Recipe::RightAngle}){if(m==1&&r==Recipe::RightAngle)continue;
                 Shape s{m*n,n,m,false,r,16,true};unsigned nb=n;while(!variable_supported(s,an,bn)&&size_t(m)*nb<2*need){nb*=2;s=Shape{m*nb,nb,m,false,r,16,true};}
                 if(!variable_supported(s,an,bn)||(budget&&scratch_bytes(s,an,bn,workers,square)>budget))continue;
-                const double c=native_cost(s,an,bn);if(c<lowest){lowest=c;best=s;}}}
+                const double c=price(s);if(c<lowest){lowest=c;best=s;}}}
         return best;
     }
     Shape candidates[64]{};double costs[64]{};unsigned count=0;double lowest=INFINITY; // up to 4 bits x (1 + 3x4) recipes
     auto consider=[&](Shape s){
         if(s.nfull>32768||(s.bits>16&&!variable_supported(s,an,bn))||(budget&&scratch_bytes(s,an,bn,workers,square)>budget))return;
-        const double c=native_cost(s,an,bn);candidates[count]=s;costs[count++]=c;if(c<lowest)lowest=c;
+        const double c=price(s);candidates[count]=s;costs[count++]=c;if(c<lowest)lowest=c;
     };
     if(!bits||bits==16)consider(old);
     for(unsigned b=bits?bits:16;b<=(bits?bits:20);++b){
@@ -67,11 +69,14 @@ Shape select(size_t an,size_t bn,unsigned workers,unsigned bits,size_t budget,bo
 size_t table_bytes(Shape s) noexcept {
     if(!s.nfull)return 0;const auto shape=pq16_shape_of(s.branch);size_t bytes=((sizeof(Tables)+127)&~size_t(127))+127;
     // tw22[lg n] + the classic r8 stages + whatever the odd-radix branch plan adds (each (kind, length) once)
-    uint64_t seen22=1ull<<__builtin_ctz(s.branch),seen8=0;bytes+=4*s.branch;bytes+=s.branch*(pq16_twc(s.branch)?4:8);
-    for(unsigned i=0;i<shape.cnt;++i){seen8|=1ull<<__builtin_ctz(shape.len[i]);bytes+=shape.len[i]*(pq16_twc(shape.len[i])?4:8);}
+    auto stage_bytes=[](uint32_t n){return n<=root_bank::branch && !pq16_twc(n)?size_t(0):size_t(n)*(pq16_twc(n)?4:8);};
+    uint64_t seen22=1ull<<__builtin_ctz(s.branch),seen8=0;
+    if(s.branch>root_bank::branch)bytes+=4*s.branch;
+    bytes+=stage_bytes(s.branch);
+    for(unsigned i=0;i<shape.cnt;++i){seen8|=1ull<<__builtin_ctz(shape.len[i]);bytes+=stage_bytes(shape.len[i]);}
     const auto odd=pq16_odd_plan_of(s.branch);
     if(s.radix!=1)for(unsigned i=0;i<odd.cnt;++i){const unsigned lg=__builtin_ctz(odd.len[i]);uint64_t &seen=odd.radix[i]==8?seen8:seen22;
-        if(!(seen>>lg&1)){seen|=1ull<<lg;bytes+=odd.len[i]*(pq16_twc(odd.len[i])?4:8);}}
+        if(!(seen>>lg&1)){seen|=1ull<<lg;bytes+=stage_bytes(odd.len[i]);}}
     return bytes+(s.recipe==Recipe::CooleyTukeyPQ?ct_table_bytes(s):s.recipe==Recipe::RightAngle?rac_table_bytes(s):0);
 }
 size_t scratch_bytes(Shape s,size_t an,size_t bn,unsigned workers,bool square) noexcept {
