@@ -552,15 +552,20 @@
         "bmi2"
       ],
       "depends_on": [
-        "src/runtime/linux/arena.cpp"
+        "src/runtime/linux/arena.cpp",
+        "src/core/x86_64/recip_u1024.s"
       ],
       "provides_symbols": [
         "sbn::v3::u52::scratch_bytes",
         "sbn::v3::u52::multiply",
         "sbn::v3::u52::middle_scratch_bytes",
-        "sbn::v3::u52::middle"
+        "sbn::v3::u52::middle",
+        "sbn::v3::u52::divide_scratch_bytes",
+        "sbn::v3::u52::divide"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn3i_recip_u1024"
+      ],
       "donor_ids": [
         "u52"
       ],

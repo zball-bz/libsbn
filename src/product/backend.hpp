@@ -7,6 +7,11 @@ enum ProgramContract : unsigned {
     program_bounded_inputs = 1, // runtime spans may be shorter than planned, zero-extended
     program_consume_inputs = 2  // every input read completes before any output write
 };
+struct ProgramLayout {
+    size_t prepared_bytes = 0, local_bytes = 0, pair_workspace_bytes = 0;
+    unsigned contract = 0;
+    SharedPreparation tables{};
+};
 struct Backend {
     uint64_t id;
     const char *name;
@@ -67,6 +72,9 @@ struct Backend {
     // only. A surviving candidate must still pass the ordinary full query.
     sbn3_query_result (*geometry_query)(const sbn3_product_request &, const sbn3_mul_options &,
                                        sbn3_mul_info &) = nullptr;
+    // Validate/decode a private plain-product plan once and return its immutable
+    // metadata together. Older backends can retain the individual callbacks.
+    ProgramLayout (*program_layout)(const sbn3_mul_plan &) = nullptr;
 };
 const Backend *backend_lookup(uint64_t) noexcept;
 // The winning candidate of a plain product search (sbn3_mul_query, or sbn3_product_query of a plain square), in

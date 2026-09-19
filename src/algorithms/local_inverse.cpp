@@ -63,6 +63,20 @@ size_t local_inverse_bytes(size_t n) noexcept {
     if(n<=32)return words(2*n)+words(n)+words(3*n+1)+64;
     return std::max(approximate_bytes(n),words(2*n+1)+u52::scratch_bytes(n+1,n)+128);
 }
+size_t local_inverse_approximate_bytes(size_t n) noexcept {
+    require(n && n<=8192,SBN3_FATAL_SIZE,"local approximate inverse size");
+    return n<=32?local_inverse_bytes(n):approximate_bytes(n);
+}
+void local_inverse_approximate(uint64_t *out,const uint64_t *d,size_t n,Frame &scratch) noexcept {
+    require(n && n<=8192 && (d[n-1]>>63),SBN3_FATAL_ARGUMENT,"local approximate inverse normalized input");
+    if(n<=32){local_inverse(out,d,n,scratch);return;}
+    // Prefix truncation takes the predecessor's <3-ulp error to <8 ulps.
+    // The exact Newton update has error <64/B, since n<=2m-1. Dropping
+    // residual words and rounding the correction add <1+2/B^2. Saturating
+    // to [B^n,2B^n-1] leaves error <3, including D=B^n/2.
+    approximate(out,d,n,scratch);
+    require(out[n]==1,SBN3_FATAL_MATH,"local approximate inverse framing");
+}
 void local_inverse(uint64_t *out,const uint64_t *d,size_t n,Frame &scratch) noexcept {
     require(n && n<=8192 && (d[n-1]>>63),SBN3_FATAL_ARGUMENT,"local inverse normalized input");
     if(n<=32){

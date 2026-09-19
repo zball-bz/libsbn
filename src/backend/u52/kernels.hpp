@@ -26,6 +26,11 @@ void multiply_prepared(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_
 // Bounds include conversion buffers, vector padding and recursive temporary
 // storage; proved linear recursive envelope, independent of input values.
 size_t scratch_bytes(size_t an,size_t bn,Algorithm root=Algorithm::automatic) noexcept;
+// Exact D&C division over 416-bit blocks. 17<=dn<=2^20, nn<=2^40;
+// d[dn-1]!=0. Q has max(nn-dn+1,0) words, R has dn words. All spans
+// are disjoint; every output word is written, including leading zeros.
+size_t divide_scratch_bytes(size_t nn,size_t dn) noexcept;
+void divide(uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,const uint64_t *d,size_t dn,Frame &) noexcept;
 // Experiment/query helper: counts are actual u52 digits, not u64 limbs.
 bool root_supported(Algorithm,size_t a_digits,size_t b_digits) noexcept;
 Algorithm multiply(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,

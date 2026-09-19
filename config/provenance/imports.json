@@ -166,6 +166,27 @@
         "explicit table/E1 scratch and per-run gates",
         "old allocating drivers removed"
       ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/div/div2b.h",
+      "destination": "src/backend/u52/division_core.hpp",
+      "sha256": "eac5f814d9e847aad296cb944bdb71f8d801611837f854d1ec9628704434ede6",
+      "changes": [
+        "private IFMA namespace and centralized includes",
+        "explicit caller-owned Frame in place of TLS scratch",
+        "u64 wrapper implemented separately with padded conversion storage and normalized output lengths",
+        "upper-band 18x18 quotient estimates: additional under-estimate below 2^-150 ulp; exact remainder correction retained"
+      ]
+    },
+    {
+      "source": "libsbn/include/sbn/detail/div/dc_div.h",
+      "destination": "src/backend/u52/dc_division.hpp",
+      "sha256": "031071e63780f7c917e91be19380a074e3f2b25a1b676ecbfcc41d95ede26404",
+      "changes": [
+        "private IFMA namespace and centralized includes",
+        "explicit caller-owned Frame in place of TLS scratch",
+        "u64 wrapper implemented separately with padded conversion storage and normalized output lengths"
+      ]
     }
   ]
 }

@@ -91,6 +91,7 @@ struct FormatTreePlan {
     BaseInfo base{};
     unsigned workers = 1, top_workers = 1; // top_workers: the largest power of two <= workers
     unsigned class_count = 0, tree_count = 0;
+    bool repeated = false; // repeated bindings price execution; one-shot plans price the whole tree
     NodeClass classes[max_classes]{};
     TreeShape trees[max_trees]{};
     RailPlan rail{};

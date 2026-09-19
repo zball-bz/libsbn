@@ -146,7 +146,7 @@ sbn3_query_result Assembly::assemble() noexcept {
     info.workers = p.options.workers;
     info.exponent2 = -int64_t(s.fraction_bits);
     const uint64_t integer_bits = s.integer_digits ? (p.shift ? s.integer_digits * p.shift
-                                                              : power_bits(base.log2_base, s.integer_digits))
+                                                              : power_bits(base.base_bound, s.integer_digits))
                                                    : 0;
     info.limbs = std::max<size_t>(1, limbs_for_bits(integer_bits + s.fraction_bits));
     info.lease_peak = 1;
@@ -178,7 +178,7 @@ sbn3_query_result Assembly::assemble() noexcept {
             // Quotient precision: N 2^(a + |d|) / d with a = 64 (n - number_limbs); M takes all but g bits.
             const uint64_t power_low = uint64_t(floorl(base.log2_odd * (long double)s.fraction_digits * (1 - 1e-15L)));
             const uint64_t twos = uint64_t(base.twos) * s.fraction_digits;
-            power_limbs = limbs_for_bits(power_bits(base.log2_odd, s.fraction_digits));
+            power_limbs = limbs_for_bits(power_bits(base.odd_bound, s.fraction_digits));
             n = std::max<size_t>({4, p.number_limbs, power_limbs});
             const uint64_t have = uint64_t(64) * (n - p.number_limbs) + power_low + twos;
             const uint64_t need = s.fraction_bits + guard_quotient_bits + 2;
@@ -449,7 +449,7 @@ extern "C" void sbn3_parse_bind(const sbn3_parse_plan *opaque, sbn3_arena *arena
         const auto &base = b->tree_plan().base;
         const size_t n = p.divide_limbs;
         Frame scratch = Frame::borrow(*arena, b->work, b->work.data, b->work.bytes);
-        const size_t capacity = limbs_for_bits(power_bits(base.log2_odd, p.spec.fraction_digits)) + 8;
+        const size_t capacity = limbs_for_bits(power_bits(base.odd_bound, p.spec.fraction_digits)) + 8;
         uint64_t small[8]{}, t[16]{};
         small[0] = 1;
         size_t small_limbs = 1;

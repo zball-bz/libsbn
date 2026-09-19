@@ -18,6 +18,18 @@ reports the normalized lengths.
 |---|---|---|
 | `sbn3_divrem_basecase`, `sbn3_int_divrem_basecase` | one-shot, no plan/arena/team; caller scratch of nn+dn+1 limbs | O(nn·dn) words: GMP-derived divrem_1/divrem_2/3-by-2 schoolbook |
 | `sbn3_divrem_query/bind/prepare/execute/unbind` | prepared divisor, repeated numerators, large shapes | word/schoolbook below the shape thresholds; block Barrett otherwise |
+| service with `algorithm=SBN3_DIVREM_DC` | explicit native D&C candidate, 17..2^20 divisor limbs | u52 division over 416-bit blocks; exact Q/R |
+
+The D&C recipe uses caller-planned `Frame` storage and a single top-divisor
+reciprocal for its leaves. Its quotient estimate computes only a guarded
+upper product band; the additional under-estimate is below 2^-150 quotient
+ulps and the remainder correction remains exact. It stores the highest
+quotient block explicitly, avoiding an artificial zero dividend block.
+Unlike block Barrett, this recipe converts the whole numerator into its
+temporary u52 representation, so its scratch also depends on numerator
+length. Query reports that complete requirement and never substitutes a
+different recipe for an explicitly requested D&C plan. Automatic selection
+is pending validation of the full divisor/quotient crossover surface.
 
 The service chooses at query time by the complete cost of using a plan.
 Schoolbook serves divisors of up to 14 limbs and requests whose
@@ -60,9 +72,12 @@ recipe where rings pay, the next sizes within the measured model bias are
 asked for their ring, and the first that takes one goes first.
 
 Block Barrett computes the block inverse U of the top `block_limbs` limbs of
-the normalized divisor, |U - B^(2in)/Dtop| < 3: up to 3072 limbs by a local u52 Newton recurrence with exact correction
+the normalized divisor, |U - B^(2in)/Dtop| < 3: up to 3072 limbs by a local u52 Newton recurrence
 (no product search or root tables), above by the
-Newton ladder (`SBN3_NEWTON_INVERSE`). Block sizes are ordered by modelled
+Newton ladder (`SBN3_NEWTON_INVERSE`). The local route stops at the bounded
+inverse; making that inverse the exact all-ones-numerator quotient would
+require an additional full multiplication that Barrett does not need. The
+final quotient/remainder corrections remain exact. Block sizes are ordered by modelled
 cost: one to three blocks (or the fewest blocks of at most dn limbs and one
 more), and, where the modelled optimum under a local inverse lies below
 those, the whole-block size next to it. The query performs each recipe

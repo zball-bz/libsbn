@@ -1,6 +1,7 @@
 #include "product/backend.hpp"
 #include "product/native_capabilities.hpp"
 #include "product/cost_model.hpp"
+#include "product/short_query_bounds.hpp"
 #include "common/checked.hpp"
 #include "common/small_checks.h"
 using namespace sbn::v3;
@@ -253,6 +254,9 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
         }
     };
     for (unsigned alg : {unsigned(SBN3_MUL_SCALAR), unsigned(SBN3_MUL_U52), unsigned(SBN3_MUL_PQ16)}) {
+        if(alg==SBN3_MUL_PQ16 && found && mul_info(info).output_limbs==s.a_limbs+s.b_limbs &&
+           best<=query_bounds::fft_score(s.a_limbs,s.b_limbs,opt.workers))
+            continue;
         // Scalar remains a real low-memory candidate; do not enter a target
         // kernel or change algorithms at execution time on budget rejection.
         if (alg == SBN3_MUL_SCALAR && lo > 8 && hi > 256 && !opt.workspace_budget)

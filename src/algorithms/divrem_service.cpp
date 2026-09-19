@@ -6,10 +6,12 @@
 #include "algorithms/newton_tuning.hpp"
 #include "algorithms/newton_limits.hpp"
 #include "algorithms/local_inverse.hpp"
+#include "backend/u52/kernels.hpp"
 #include "common/checked.hpp"
 #include "common/identity.hpp"
 #include "product/cost_model.hpp"
 #include "product/backend.hpp"
+#include "product/native_capabilities.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "runtime/team.hpp"
 #include "runtime/scratch.hpp"
@@ -777,7 +779,7 @@ sbn3_query_result inverse_query(size_t in, const sbn3_newton_options &o, sbn3_ne
     info.kind = SBN3_NEWTON_INVERSE;
     info.precision_limbs = in;
     info.workers = 1;
-    info.storage_bytes = local_inverse_bytes(in);
+    info.storage_bytes = local_inverse_approximate_bytes(in);
     info.storage_alignment = page;
     info.plan_id = feed(feed(1469598103934665603ULL, magic), in);
     return SBN3_SUPPORTED;
@@ -881,7 +883,11 @@ bool layout(Plan &p, const Queried &uq, const Queried &tq, const sbn3_newton_inf
         i.persistent_bytes = cursor - p.persistent_offset;
         p.shared_offset = aligned(cursor, page);
         cursor = p.shared_offset;
-        if (!add_size(nn, dn + 1, words) || !place(bytes_for(words, 8), page, p.xbuf_offset))
+        if (i.algorithm==SBN3_DIVREM_DC) {
+            const size_t bytes=u52::divide_scratch_bytes(nn,dn);
+            if(!place(bytes,page,p.xbuf_offset))return false;
+            words=(bytes+7)/8;
+        } else if (!add_size(nn, dn + 1, words) || !place(bytes_for(words, 8), page, p.xbuf_offset))
             return false;
         p.scratch_words = words;
         i.scratch_bytes = i.shared_bytes = cursor - p.shared_offset;
@@ -993,13 +999,13 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
     else
         parallel_limbs::copy(b.team, b.Dn, D, dn);
     // Block inverse of the top in limbs, in the shared union (unleased at this
-    // point): exact U by the local recurrence, or the spectral Newton binding.
+    // point): bounded U by the local recurrence, or the spectral Newton binding.
     // Both satisfy |U - B^(2in)/Dtop| < 3 with B^in <= U < 2B^in.
     if (inverse_basecase(in)) {
         auto scratch = b.arena->acquire(b.offset + p.shared_offset, p.newton_bytes);
         {
             Frame frame(*b.arena,scratch);
-            local_inverse(b.U,b.Dn+dn-in,in,frame);
+            local_inverse_approximate(b.U,b.Dn+dn-in,in,frame);
         }
         b.arena->release(scratch);
     } else {
@@ -1306,6 +1312,10 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
     p = q;
     return true;
 }
+void save_plan(Plan &p,Stored &s,sbn3_divrem_plan *out,sbn3_divrem_info *info) {
+    p.seal=seal(p);s.plan=p;*info=p.info;
+    memset(out,0,sizeof *out);memcpy(out->opaque,&s,sizeof s);
+}
 } // namespace
 } // namespace sbn::v3
 using namespace sbn::v3;
@@ -1318,18 +1328,23 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     p.request = *request;
     p.options = options ? *options : sbn3_divrem_options{1, 0, 0, 0, 0, 0, 0, 0};
     const size_t dn = request->denominator_limbs, nn = request->numerator_limbs;
-    if (!dn || !p.options.workers || p.options.workers > 32 || p.options.timing > 1 || p.options.residual > 2 || p.options.algorithm > 2 ||
+    if (!dn || !p.options.workers || p.options.workers > 32 || p.options.timing > 1 || p.options.residual > 2 || p.options.algorithm > SBN3_DIVREM_DC ||
         (p.options.prime_count && (p.options.prime_count < newton_limits::first_ntt_prime_count ||
                                    p.options.prime_count > newton_limits::last_ntt_prime_count)))
         return SBN3_UNSUPPORTED;
     if (nn > newton_limits::precision_words || dn > newton_limits::precision_words)
         return SBN3_QUERY_CAPACITY;
+    if(p.options.algorithm==SBN3_DIVREM_DC &&
+       (dn<17 || dn>(size_t(1)<<20) || p.options.prime_count || p.options.block_limbs || p.options.residual || !native_available()))
+        return SBN3_UNSUPPORTED;
     auto &i = p.info;
     i.numerator_limbs = nn;
     i.denominator_limbs = dn;
     i.quotient_limbs = nn >= dn ? nn - dn + 1 : 0;
     i.remainder_limbs = dn;
-    if (dn <= 2)
+    if(p.options.algorithm==SBN3_DIVREM_DC)
+        i.algorithm=SBN3_DIVREM_DC;
+    else if (dn <= 2)
         i.algorithm = SBN3_DIVREM_WORD;
     else if (p.options.algorithm)
         i.algorithm = p.options.algorithm == SBN3_DIVREM_BARRETT && i.quotient_limbs ? SBN3_DIVREM_BARRETT : SBN3_DIVREM_SCHOOLBOOK;
@@ -1341,20 +1356,19 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
     const size_t budget = p.options.memory_budget;
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
         const auto planned = plan_blocks(p, s, info);
-        if (planned != SBN3_SUPPORTED && !(planned == SBN3_QUERY_CAPACITY && budget && schoolbook_under_budget(p, s, info)))
+        if (planned != SBN3_SUPPORTED && !(planned == SBN3_QUERY_CAPACITY && budget && schoolbook_under_budget(p, s, info))) {
             return planned;
+        }
         *info = p.info;
     } else {
         if (!layout(p, s.uq, s.tq, &s.ninfo))
             return SBN3_QUERY_CAPACITY;
         *info = p.info;
-        if (budget && p.info.storage_bytes > budget)
+        if (budget && p.info.storage_bytes > budget) {
             return SBN3_QUERY_CAPACITY;
+        }
     }
-    p.seal = seal(p);
-    s.plan = p;
-    memset(out, 0, sizeof *out);
-    memcpy(out->opaque, &s, sizeof s);
+    save_plan(p,s,out,info);
     return SBN3_SUPPORTED;
 }
 extern "C" void sbn3_divrem_bind(const sbn3_divrem_plan *opaque, sbn3_arena *arena, size_t offset, sbn3_team *team,
@@ -1459,12 +1473,17 @@ extern "C" void sbn3_divrem_execute(sbn3_divrem_binding *opaque, sbn3_const_limb
         --nn_eff;
     size_t written = 0;
     if (nn_eff < dn) {
-        memcpy(remainder.data, numerator.data, nn_eff * 8);
+        if(nn_eff)memcpy(remainder.data, numerator.data, nn_eff * 8);
         memset(remainder.data + nn_eff, 0, (dn - nn_eff) * 8);
         b.metrics.products_executed = 0;
     } else if (p.info.algorithm == SBN3_DIVREM_BARRETT) {
         written = nn_eff - dn + 1;
         barrett_execute(b, numerator.data, nn_eff, quotient.data, remainder.data, *result);
+    } else if(p.info.algorithm==SBN3_DIVREM_DC) {
+        written=nn_eff-dn+1;
+        Frame work(*b.arena,b.shared);
+        u52::divide(quotient.data,remainder.data,numerator.data,nn_eff,b.D,dn,work);
+        b.metrics.products_executed=0;
     } else {
         written = nn_eff - dn + 1;
         divrem_words::schoolbook(quotient.data, remainder.data, numerator.data, nn_eff, b.D, dn, b.scratch);

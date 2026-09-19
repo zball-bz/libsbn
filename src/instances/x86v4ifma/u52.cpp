@@ -1,12 +1,61 @@
 #include "backend/u52/island.hpp"
 #include "value/limbs.hpp"
+#include <algorithm>
 #define SCRATCH(s) ::sbn::v3::AssumedFrameMark SBN3_U52_CAT(mark_,__LINE__)(*(s))
 #define SALLOC(s,T,n) (s)->alloc_assumed<T>(n)
 #include "backend/u52/mulmid.hpp"
 #include "backend/u52/mulmid_kara.hpp"
+#undef INLINE
+#undef canonize
+#include "backend/u52/division_estimate.hpp"
+#include "backend/u52/division_core.hpp"
+#include "backend/u52/dc_division.hpp"
+#undef INLINE
+#undef canonize
 #undef SCRATCH
 #undef SALLOC
 namespace sbn::v3::u52 {
+size_t divide_scratch_bytes(size_t nn,size_t dn) noexcept {
+    require(dn>=17 && dn<=(size_t(1)<<20) && nn<=(size_t(1)<<40),SBN3_FATAL_SIZE,"u52 division size");
+    const size_t db=(64*dn+415)/416,nb=(64*nn+830)/416;
+    // Normalized D/N/Q and the shared cross-product, each with conversion
+    // padding. D&C frames allocate no other arrays. Every cross-product has
+    // at most 8*db u52 digits in total: S(D)<=5D+64 (u52-workspace.md).
+    return 64*(2*nb+2*db+16)+64*((40*db+64+7)/8)+256;
+}
+void divide(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn64,const uint64_t *dp,size_t dn64,Frame &space) noexcept {
+    require(dn64>=17 && dn64<=(size_t(1)<<20) && nn64<=(size_t(1)<<40) && dp[dn64-1],SBN3_FATAL_ARGUMENT,"u52 division arguments");
+    const size_t qw=nn64>=dn64?nn64-dn64+1:0;
+    const uint64_t dbits=u64_bit_length(dp,dn64),nbits=u64_bit_length(np,nn64);
+    if(nbits<dbits){
+        if(qw)memset(qp,0,qw*8);
+        const size_t copy=std::min(nn64,dn64);
+        if(copy)memcpy(rp,np,copy*8);
+        memset(rp+copy,0,(dn64-copy)*8);return;
+    }
+    FrameMark mark(space);
+    const size_t dn=(dbits+415)/416,shift=416*dn-dbits,nn=(nbits+shift+415)/416,qn=nn-dn;
+    auto zero=[&](size_t count){auto *p=space.alloc<sb_vec>(count);memset(p,0,count*64);return p;};
+    // Fused conversion may store one full spill vector after its shifted
+    // last group, so two padding vectors are required, not just one.
+    auto *d=zero(dn+2),*n=zero(nn+2),*q=zero(qn+3),*product=zero(dn+1);
+    u52_from_u64_lsh(d,dp,dn64,shift);u52_from_u64_lsh(n,np,nn64,shift);
+    alignas(64) sb_limb inverse[24];div2b_recip(inverse,dp,dn64);
+    int high;
+    if(!qn){high=block_cmp((sb_limb*)n,(const sb_limb*)d,dn)>=0;if(high)block_sub_n((sb_limb*)n,(const sb_limb*)d,dn);}
+    else if(dn<dc_leaf_blocks)high=div2b_core((sb_limb*)q,(sb_limb*)n,nn,(const sb_limb*)d,dn,inverse,3);
+    else high=blk_dcpi1_div_qr((sb_limb*)q,(sb_limb*)n,nn,(const sb_limb*)d,dn,inverse,(sb_limb*)product,space);
+    // The old wrapper added an all-zero dividend block to make this digit
+    // implicit. Keep it explicitly and avoid the extra full-divisor step.
+    require(high==0 || high==1,SBN3_FATAL_MATH,"u52 division high quotient");
+    ((sb_limb*)q)[8*qn]=uint64_t(high);
+    size_t top=8*qn+1;while(top&&!((sb_limb*)q)[top-1])--top;
+    require(!top || 52*(top-1)+64-unsigned(__builtin_clzll(((sb_limb*)q)[top-1]))<=64*qw,SBN3_FATAL_MATH,"u52 division quotient capacity");
+    if(qw)u64_from_u52_canon(qp,q,qw);
+    memset((sb_limb*)n+8*dn,0,64);
+    u52_rshift((sb_limb*)n,(const sb_limb*)n,dn,shift);
+    u64_from_u52_canon(rp,n,dn64);
+}
 bool root_supported(Algorithm root,size_t x,size_t y) noexcept {
     if(x<y){auto t=x;x=y;y=t;}
     if(root==Algorithm::automatic)return true;

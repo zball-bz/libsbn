@@ -214,6 +214,7 @@ sbn3_query_result Assembly::assemble() noexcept {
         if (rc != SBN3_SUPPORTED)
             return rc;
         tree.transcript = &transcript;
+        tree.repeated = p.options.repeated != 0;
         if (p.integer_path == integer_tree) {
             integer_root = tree.add_tree(p.integer_fragments);
             tree.rail.count = std::max(tree.rail.count, top_bit(p.integer_fragments) + 1);

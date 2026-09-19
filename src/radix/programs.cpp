@@ -1,6 +1,8 @@
 #include "radix/programs.hpp"
 #include "value/parallel_limbs.hpp"
 #include "common/identity.hpp"
+#include "product/cost_model.hpp"
+#include "product/root_prepare_cost.hpp"
 #include "sbn3/product.h"
 #include "sbn3/divrem.h"
 #include <algorithm>
@@ -15,6 +17,42 @@ namespace {
 constexpr size_t align_to(size_t x, size_t a) noexcept { return (x + a - 1) & ~(a - 1); }
 constexpr size_t program_slack = 256; // product_program_prepare may round its objects to 128 bytes
 size_t program_bytes(size_t bytes) noexcept { return align_to(bytes, 128) + program_slack; }
+double preparation_cost(const ProductProgramPlan &p) noexcept {
+    return root_prepare_cost(p.info) + (p.info.algorithm == SBN3_MUL_PQ16 ? .27 * double(p.info.table_bytes) : 0.);
+}
+double application_cost(const ProductProgramPlan &p, size_t an, size_t bn) noexcept {
+    // The local integer kernel is serial even when the caller owns a wider team.
+    return p.info.algorithm == SBN3_MUL_U52 ? u52_product_cost(an, bn, 1)
+                                          : cost_model::linear_product(p.info, an, bn).nanoseconds;
+}
+// A finite-use product pays for its tables. The ordinary multiplication policy
+// prices prepared execution; it is not the objective of a one-use power rail.
+sbn3_query_result finite_product(size_t an, size_t bn, const sbn3_mul_options &options,
+                                uint64_t applications, ProductProgramPlan &out, ProductChoice &choice) noexcept {
+    ProductProgramPlan direct{};
+    auto short_options = options;
+    short_options.algorithm = SBN3_MUL_U52;
+    ProductChoice direct_choice = 0;
+    const auto direct_rc = product_program_choose(an, bn, short_options, direct, direct_choice);
+    const double direct_cost = direct_rc == SBN3_SUPPORTED ? application_cost(direct, an, bn) * double(applications)
+                                                          : INFINITY;
+    // A search itself costs more than these small complete integer products.
+    // Keep the threshold in time, independently of radix and operand shape.
+    constexpr double minimum_search_ns = 800.;
+    if (direct_cost <= minimum_search_ns) {
+        out = direct;
+        choice = direct_choice;
+        return SBN3_SUPPORTED;
+    }
+    const auto rc = product_program_choose(an, bn, options, out, choice);
+    if (direct_rc == SBN3_SUPPORTED &&
+        (rc != SBN3_SUPPORTED || direct_cost < preparation_cost(out) + application_cost(out, an, bn) * double(applications))) {
+        out = direct;
+        choice = direct_choice;
+        return SBN3_SUPPORTED;
+    }
+    return rc;
+}
 } // namespace
 TreePolicy &tree_policy() noexcept {
     static TreePolicy policy{};
@@ -46,7 +84,7 @@ uint64_t PlanTranscript::check(uint64_t a, uint64_t b, uint64_t c, uint64_t iden
     return (h ^ h >> 28) & ((uint64_t(1) << (64 - product_choice_bits)) - 1);
 }
 sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductShape &s,
-                                ProductProgramPlan *keep, PlanTranscript *transcript) {
+                                ProductProgramPlan *keep, PlanTranscript *transcript, uint64_t applications) {
     ProductProgramPlan local{};
     auto &p = keep ? *keep : local;
     sbn3_mul_options o{};
@@ -63,7 +101,8 @@ sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductS
     }
     if (!replayed) {
         p = {};
-        const auto rc = product_program_choose(an, bn, o, p, choice);
+        const auto rc = applications ? finite_product(an, bn, o, applications, p, choice)
+                                     : product_program_choose(an, bn, o, p, choice);
         if (transcript && transcript->replay)
             ++transcript->searched;
         if (transcript && !transcript->replay)
@@ -84,6 +123,8 @@ sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductS
     s.work_alignment = std::max<size_t>(64, p.info.workspace_alignment);
     s.output_limbs = sbn3_mul_output_capacity(&p.info);
     s.arithmetic_id = p.info.arithmetic_id;
+    s.prepare_ns = preparation_cost(p);
+    s.apply_ns = application_cost(p, an, bn);
     if (p.info.output_alignment > 64 || s.output_limbs < an + bn)
         return SBN3_UNSUPPORTED;
     return SBN3_SUPPORTED;
@@ -268,7 +309,7 @@ sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &
             }
         }
         ProductShape s{};
-        const auto rc = product_shape(rail.limbs[k], rail.limbs[k], w, s, nullptr, transcript);
+        const auto rc = product_shape(rail.limbs[k], rail.limbs[k], w, s, nullptr, transcript, 1);
         if (rc != SBN3_SUPPORTED)
             return rc;
         rail.square_choice[k] = s.choice;
@@ -366,7 +407,7 @@ Chain chain_of(const BaseInfo &b, uint64_t fragments) noexcept {
         if (!((fragments >> k) & 1))
             continue;
         done += uint64_t(1) << k;
-        const size_t next = limbs_for_bits(power_bits(b.log2_odd, done * fragment_digits));
+        const size_t next = limbs_for_bits(power_bits(b.odd_bound, done * fragment_digits));
         c.step[c.steps++] = {k, c.limbs, next, 0};
         c.widest = std::max(c.widest, c.limbs + rail_limbs(b, k));
         c.limbs = next;

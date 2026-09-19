@@ -38,6 +38,7 @@ def main():
     build_lock=(V3/'build/benchmark.lock').open('a')
     fcntl.flock(build_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     run(['python3', 'tools/generate_tuning.py', '--check'])
+    run(['python3', 'tools/generate_radix_bounds.py', '--check'])
     run(['python3', 'tools/check_native_variants.py'])
     config = json.loads((V3/'config/native.json').read_text())
     sources = json.loads((V3/'config/sources.json').read_text())['entries']

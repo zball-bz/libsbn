@@ -1,5 +1,6 @@
 #include "radix/format_tree.hpp"
 #include "value/parallel_limbs.hpp"
+#include "product/cost_model.hpp"
 #include <algorithm>
 #include <new>
 #include <string.h>
@@ -42,7 +43,7 @@ sbn3_query_result format_tree_begin(unsigned base, unsigned workers, uint64_t la
     p.frontier_limbs = std::min(policy.team_node_limbs, std::max(policy.frontier_floor_limbs, share));
     for (uint64_t n = 1; n <= group_fragments; ++n)
         p.group_limbs[n] = node_limbs(p.base, n);
-    const uint64_t leaf_bits = power_bits(p.base.log2_base, fragment_digits + word_digits) + guard_bits;
+    const uint64_t leaf_bits = power_bits(p.base.base_bound, fragment_digits + word_digits) + guard_bits;
     p.fragment_u52 = unsigned((leaf_bits + 51) / 52);
     // The leaf kernel reads whole u52 digits from the top of the fragment fraction.
     if (p.group_limbs[1] > max_fragment_limbs || p.fragment_u52 > max_fragment_u52 ||
@@ -61,8 +62,22 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
     const size_t rail_size = rail_limbs(base, c.level);
     // Everything above the window wraps at least one limb below it when the ring holds the rest of the product.
     const size_t wrapped_ring = c.split_limbs + rail_size - c.window_limbs + 1;
+    ProductShape linear{};
+    bool have_linear = false;
+    if (w == 1 && !repeated) {
+        const auto rc = product_shape(c.split_limbs, rail_size, 1, linear, nullptr, transcript, count);
+        if (rc != SBN3_SUPPORTED)
+            return rc;
+        have_linear = true;
+    }
     bool cyclic = w == 1 && policy.cyclic_products &&
                   rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic);
+    if (cyclic && have_linear) {
+        const double ordinary = pq16::native_cost(out.cyclic.shape, rail_size, c.split_limbs);
+        const double cached = .27 * double(out.cyclic.table_bytes) + cost_model::prepare_share(ordinary) +
+                              cost_model::cached_share(ordinary) * double(count);
+        cyclic = cached < linear.prepare_ns + linear.apply_ns * double(count);
+    }
     if (cyclic) {
         // The exact tie-break: limb h of the full product from the low h + 1 limbs of the operands.
         out.gap_limbs = out.cyclic.ring - wrapped_ring + 1;
@@ -81,6 +96,10 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         return SBN3_SUPPORTED;
     }
     out = {};
+    if (have_linear) {
+        out.product = linear;
+        return SBN3_SUPPORTED;
+    }
     const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
     if (!c.frontier && policy.ring_products && c.limbs >= policy.ring_node_limbs && count >= policy.ring_min_count &&
         ring_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), product_workers, out.ring, transcript)) {
@@ -135,13 +154,9 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
         const auto &l = classes[c.left], &r = classes[c.right];
         const size_t own = align_to(c.right_limbs * 8, 64);
         if (c.frontier) {
-            const auto rc = split_plan(c, 1, 0, c.split);
-            if (rc != SBN3_SUPPORTED) {
-                status = rc;
-                return -1;
-            }
             c.rest_offset = own;
-            c.region_bytes = own + align_to(std::max({c.split.episode_bytes(), l.region_bytes, r.region_bytes}), 64);
+            // Recipe and scratch follow after all roots are known: a class's
+            // occurrence count is what amortizes its prepared spectrum.
         } else {
             // A frontier child's fraction is this node's right child or a view: nothing of its own persists.
             c.persist_bytes = own + l.persist_bytes + r.persist_bytes;
@@ -149,8 +164,6 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
             c.top_nodes = 1 + l.top_nodes + r.top_nodes;
         }
     }
-    if (c.frontier)
-        frontier_region_bytes = std::max(frontier_region_bytes, c.region_bytes);
     if (class_count == max_classes) {
         status = SBN3_QUERY_CAPACITY;
         return -1;
@@ -189,6 +202,26 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
     if (status != SBN3_SUPPORTED)
         return status;
     const auto &policy = tree_policy();
+    uint64_t uses[max_classes]{};
+    for (unsigned t = 0; t < tree_count; ++t)
+        ++uses[trees[t].root];
+    for (unsigned j = class_count; j-- > 0;)
+        if (!classes[j].group) {
+            uses[classes[j].left] += uses[j];
+            uses[classes[j].right] += uses[j];
+        }
+    frontier_region_bytes = 0;
+    for (unsigned j = 0; j < class_count; ++j) {
+        auto &c = classes[j];
+        if (!c.frontier || c.group)
+            continue;
+        const auto rc = split_plan(c, 1, uses[j], c.split);
+        if (rc != SBN3_SUPPORTED)
+            return status = rc;
+        c.region_bytes = c.rest_offset + align_to(std::max({c.split.episode_bytes(), classes[c.left].region_bytes,
+                                                           classes[c.right].region_bytes}), 64);
+        frontier_region_bytes = std::max(frontier_region_bytes, c.region_bytes);
+    }
     programs = {};
     ring_stages = 0;
     for (unsigned j = 0; j < extra_count; ++j)

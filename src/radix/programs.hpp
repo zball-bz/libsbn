@@ -68,6 +68,7 @@ struct ProductShape {
     size_t work_bytes = 0, work_alignment = 64;
     size_t output_limbs = 0;
     uint64_t arithmetic_id = 0;
+    double prepare_ns = 0, apply_ns = 0; // cost of this recipe, not of its caller's search
     // Bytes of [output][padding][workspace] when the output starts 64-byte aligned.
     size_t episode_bytes() const noexcept {
         return ((output_limbs * 8 + 63) & ~size_t(63)) + (work_alignment > 64 ? work_alignment - 64 : 0) + work_bytes;
@@ -76,7 +77,7 @@ struct ProductShape {
     size_t temporary_bytes() const noexcept { return ((prepared_bytes + 127) & ~size_t(127)) + 512 + episode_bytes(); }
 };
 sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductShape &, ProductProgramPlan *keep = nullptr,
-                                PlanTranscript * = nullptr);
+                                PlanTranscript * = nullptr, uint64_t applications = 0);
 // Immutable preparation of a set of programs: [shared tables, each built once][per program state].
 struct ProgramSetPlan {
     SharedPreparation shared[max_shared_tables]{};

@@ -5,6 +5,7 @@
 #include "backend/u52/kernels.hpp"
 #include "backend/pq16/kernels.hpp"
 #include "core/x86_64/word.hpp"
+#include "common/identity.hpp"
 #include <new>
 #include <time.h>
 #include <algorithm>
@@ -44,11 +45,7 @@ struct Binding {
 };
 static_assert(sizeof(Plan) <= sizeof(sbn3_mul_plan));
 uint64_t hash(uint64_t h, uint64_t x) {
-    for (unsigned j = 0; j < 8; ++j) {
-        h = (h ^ (x & 255)) * 1099511628211ULL;
-        x >>= 8;
-    }
-    return h;
+    return identity::word(h, x);
 }
 uint64_t seal(const Plan &p) {
     uint64_t h = 1469598103934665603ULL;
@@ -604,12 +601,28 @@ struct Program {
     Plan plan{};
     const pq16::Tables *tables=nullptr;
 };
+ProgramLayout program_layout(const sbn3_mul_plan &p) {
+    const auto q=load(p); // public/private handoff: one complete validation
+    ProgramLayout result{};
+    if(q.kind!=SBN3_PRODUCT_MUL || q.ring)return result;
+    size_t header=0;
+    if(!align_size(sizeof(Program),128,header) || !add_size(header,q.info.table_bytes,result.prepared_bytes))return {};
+    result.contract=program_bounded_inputs |
+        ((q.info.algorithm==SBN3_MUL_U52 && std::max(q.an,q.bn)<=u52::strip_limbs) ||
+         (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered) ? program_consume_inputs : 0u);
+    result.local_bytes=result.prepared_bytes;
+    if(q.info.algorithm==SBN3_MUL_PQ16){
+        const auto &s=q.shape;
+        result.tables={{0x5051313654423031ULL,s.nfull,s.branch,s.radix,s.centered,uint64_t(s.recipe),s.bits,s.balanced},q.info.table_bytes,128};
+        result.local_bytes=header;
+        const size_t cached=16*size_t(s.nfull)+256;
+        const size_t original=s.centered?((8*std::max(q.an,q.bn)+127)&~size_t(127)):0;
+        result.pair_workspace_bytes=cached+original+pq16::cached_scratch_bytes(s,q.an,q.bn)+128;
+    }
+    return result;
+}
 size_t program_bytes(const sbn3_mul_plan &p) {
-    const auto q=load(p);
-    if(q.kind!=SBN3_PRODUCT_MUL || q.ring)return 0;
-    size_t header=0,total=0;
-    if(!align_size(sizeof(Program),128,header) || !add_size(header,q.info.table_bytes,total))return 0;
-    return total;
+    return program_layout(p).prepared_bytes;
 }
 const void *program_prepare(const sbn3_mul_plan &p,Frame &f) {
     const auto q=load(p);require(q.kind==SBN3_PRODUCT_MUL && !q.ring,SBN3_FATAL_ARGUMENT,"short program recipe");
@@ -618,10 +631,7 @@ const void *program_prepare(const sbn3_mul_plan &p,Frame &f) {
     return v;
 }
 SharedPreparation program_tables(const sbn3_mul_plan &p) {
-    const auto q=load(p);const auto &s=q.shape;
-    if(q.kind!=SBN3_PRODUCT_MUL || q.ring || q.info.algorithm!=SBN3_MUL_PQ16)return {};
-    return {{0x5051313654423031ULL,s.nfull,s.branch,s.radix,s.centered,uint64_t(s.recipe),s.bits,s.balanced},
-            q.info.table_bytes,128};
+    return program_layout(p).tables;
 }
 size_t program_local_bytes(const sbn3_mul_plan &) {return (sizeof(Program)+127)&~size_t(127);}
 const void *program_tables_prepare(const sbn3_mul_plan &p,Frame &f) {return pq16::prepare(f,load(p).shape);}
@@ -636,22 +646,14 @@ void program_execute(const void *p,Frame &f,sbn3_team_scope *scope,sbn3_const_li
     else pq16::multiply(out.data,a.data,a.count,b.data,b.count,*v.tables,f,scope);
 }
 unsigned program_contract(const sbn3_mul_plan &p) {
-    const auto q=load(p);
     // Centered PFA can consult raw input digits while fixing emission. Do not
     // advertise consume for it or direct u64 basecase. Short U52 converts both
     // inputs first. A long rectangular U52 product streams its long input;
     // bounded inputs can enter that path even if the planned shape does not.
-    return program_bounded_inputs |
-        ((q.info.algorithm==SBN3_MUL_U52 && std::max(q.an,q.bn)<=u52::strip_limbs) ||
-         (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered)
-             ? program_consume_inputs : 0u);
+    return program_layout(p).contract;
 }
 size_t program_pair_bytes(const sbn3_mul_plan &p) {
-    const auto q=load(p);
-    if(q.kind!=SBN3_PRODUCT_MUL || q.ring || q.info.algorithm!=SBN3_MUL_PQ16)return 0;
-    const size_t cached=16*size_t(q.shape.nfull)+256;
-    const size_t original=q.shape.centered?((8*std::max(q.an,q.bn)+127)&~size_t(127)):0;
-    return cached+original+pq16::cached_scratch_bytes(q.shape,q.an,q.bn)+128;
+    return program_layout(p).pair_workspace_bytes;
 }
 void program_pair_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs common,
                           sbn3_const_limbs x,sbn3_const_limbs y,sbn3_limbs out0,sbn3_limbs out1) {
@@ -739,6 +741,7 @@ const Backend &short_backend() noexcept {
         .program_local_bytes = program_local_bytes,
         .program_tables_prepare = program_tables_prepare,
         .program_prepare_shared = program_prepare_shared,
+        .program_layout = program_layout,
     };
     return b;
 }

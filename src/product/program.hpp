@@ -3,12 +3,16 @@
 #include "runtime/team.hpp"
 namespace sbn::v3 {
 struct ProductProgramPlan {
+    // Filled together by *_query/replay/describe and immutable afterwards.
+    // A caller replacing the opaque plan must describe it again.
     sbn3_mul_plan plan{};
     sbn3_mul_info info{};
     size_t prepared_bytes = 0;
     size_t an = 0, bn = 0;
     unsigned contract = 0;
     size_t pair_workspace_bytes = 0;
+    SharedPreparation tables{};
+    size_t local_bytes = 0;
 };
 struct ProductProgram {
     const Backend *backend = nullptr;
@@ -26,9 +30,18 @@ inline sbn3_query_result product_program_describe(size_t an,size_t bn,ProductPro
     const auto *backend=backend_lookup(p.plan.opaque[1]);
     if(!backend || !backend->program_prepare || !backend->program_execute || !backend->program_bytes)
         return SBN3_UNSUPPORTED;
-    p.prepared_bytes=backend->program_bytes(p.plan);p.an=an;p.bn=bn;
-    p.contract=backend->program_contract?backend->program_contract(p.plan):0;
-    p.pair_workspace_bytes=backend->program_pair_bytes?backend->program_pair_bytes(p.plan):0;
+    p.an=an;p.bn=bn;
+    if(backend->program_layout){
+        const auto layout=backend->program_layout(p.plan);
+        p.prepared_bytes=layout.prepared_bytes;p.local_bytes=layout.local_bytes;
+        p.contract=layout.contract;p.pair_workspace_bytes=layout.pair_workspace_bytes;p.tables=layout.tables;
+    }else{
+        p.prepared_bytes=backend->program_bytes(p.plan);
+        p.contract=backend->program_contract?backend->program_contract(p.plan):0;
+        p.pair_workspace_bytes=backend->program_pair_bytes?backend->program_pair_bytes(p.plan):0;
+        p.tables=backend->program_tables?backend->program_tables(p.plan):SharedPreparation{};
+        p.local_bytes=p.tables.bytes?backend->program_local_bytes(p.plan):p.prepared_bytes;
+    }
     return p.prepared_bytes?SBN3_SUPPORTED:SBN3_UNSUPPORTED;
 }
 inline sbn3_query_result product_program_query(size_t an,size_t bn,const sbn3_mul_options &options,ProductProgramPlan &p) {
@@ -56,8 +69,7 @@ inline sbn3_query_result product_program_replay(size_t an,size_t bn,const sbn3_m
     return rc==SBN3_SUPPORTED?product_program_describe(an,bn,p):rc;
 }
 inline SharedPreparation product_program_tables(const ProductProgramPlan &p) {
-    const auto *backend = backend_lookup(p.plan.opaque[1]);
-    return backend && backend->program_tables ? backend->program_tables(p.plan) : SharedPreparation{};
+    return p.tables;
 }
 // An execution-only alternative of a compiled plain product. Keep the
 // arithmetic geometry/codec fixed; do not repeat the NP/T search to fit RAM.
@@ -93,8 +105,7 @@ inline sbn3_query_result product_program_rebatch(const ProductProgramPlan &p, un
     return SBN3_UNSUPPORTED;
 }
 inline size_t product_program_local_bytes(const ProductProgramPlan &p) {
-    const auto *backend = backend_lookup(p.plan.opaque[1]);
-    return product_program_tables(p).bytes ? backend->program_local_bytes(p.plan) : p.prepared_bytes;
+    return p.local_bytes;
 }
 inline ProductProgram product_program_prepare(const ProductProgramPlan &p, Frame &tables,
                                                const void *shared = nullptr) {

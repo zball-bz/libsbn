@@ -25,8 +25,9 @@ size_t sbn3_divrem_basecase(uint64_t *q, uint64_t *r, const uint64_t *n, size_t 
  * scratch capacity >= n.size+d.size+1; all outputs are normalized (no negative zero). */
 void sbn3_int_divrem_basecase(sbn3_int *q, sbn3_int *r, sbn3_int_view n, sbn3_int_view d, sbn3_limbs scratch);
 
-/* Prepared service: word/schoolbook for small shapes, block Barrett with a
- * Newton block inverse and cached spectra otherwise. One binding serves any
+/* Prepared service: word/schoolbook for small shapes, local u52 D&C as an
+ * explicit middle-shape candidate, and block Barrett with a Newton block inverse and
+ * cached spectra otherwise. One binding serves any
  * numerator of at most numerator_limbs limbs against the prepared divisor,
  * and may be re-prepared with another divisor of the same length. Quotient
  * limbs left over by the block size (the first limb of 2d/d under a full
@@ -48,13 +49,14 @@ typedef struct sbn3_divrem_options {
     size_t block_limbs;     /* 0: policy (near-equal blocks); otherwise the requested Barrett block size:
                                denominator_limbs asks for complete blocks under a full inverse */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */
-    unsigned algorithm;     /* 0: policy; otherwise force SBN3_DIVREM_SCHOOLBOOK or SBN3_DIVREM_BARRETT (dn>=3; experiments) */
+    unsigned algorithm;     /* 0: policy; otherwise force SCHOOLBOOK, BARRETT (dn>=3), or DC (17<=dn<=2^20) */
     unsigned timing;        /* 1 records prepare/execute durations */
 } sbn3_divrem_options;
 typedef enum sbn3_divrem_algorithm {
     SBN3_DIVREM_WORD=0,       /* dn<=2: single/double-limb division */
     SBN3_DIVREM_SCHOOLBOOK=1, /* 3/2 quotient estimates, submul updates */
-    SBN3_DIVREM_BARRETT=2     /* block quotients from a Newton inverse, cyclic residual */
+    SBN3_DIVREM_BARRETT=2,    /* block quotients from a Newton inverse, cyclic residual */
+    SBN3_DIVREM_DC=3          /* native u52 divide-and-conquer with 416-bit quotient-block leaves */
 } sbn3_divrem_algorithm;
 /* Carries the resolved block inverse (a Newton plan above the schoolbook-inverse block sizes) and product recipes
  * so bind performs no plan search. */
@@ -73,7 +75,7 @@ typedef struct sbn3_divrem_info {
 } sbn3_divrem_info;
 typedef struct sbn3_divrem_result {
     size_t quotient_limbs,remainder_limbs; /* normalized lengths; zero for a zero value */
-    uint64_t corrections;                  /* quotient-block corrections actually applied */
+    uint64_t corrections;                  /* Barrett block corrections; other recipes do not collect this counter */
 } sbn3_divrem_result;
 typedef struct sbn3_divrem_metrics {
     uint64_t prepare_ns,execute_ns;        /* last prepare / execute, timing option only */
