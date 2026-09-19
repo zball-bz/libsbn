@@ -215,6 +215,14 @@ bool query_product(size_t a, size_t b, const ProductChoice &c, uint64_t generati
 struct Cost {
     double prepare = 0, apply = 0;
 };
+// The FFT family's tables (its own, or those of the spectrum it reads) are built by every binding and are not in
+// root_prepare_cost, which prices the NTT families' roots only (divrem_tuning).
+double table_setup(const Queried &q) {
+    const auto &i = q.consumer_info.mul;
+    if (i.algorithm != SBN3_MUL_PQ16)
+        return 0;
+    return divrem_tuning::fft_table_ns_per_byte * double(i.table_bytes + (q.cached ? q.future.table_bytes : 0));
+}
 Cost product_cost(const Queried &q, size_t a, size_t b) {
     const auto &i = q.consumer_info.mul;
     const bool deep = std::max(a, b) > native_policy::small_model_max_words;
@@ -222,32 +230,83 @@ Cost product_cost(const Queried &q, size_t a, size_t b) {
                                                      : cost_model::linear_product(i, a, b).nanoseconds;
     Cost c;
     c.apply = q.cached ? cost_model::cached_share(base) : base;
-    c.prepare = root_prepare_cost(i) + (q.cached ? cost_model::prepare_share(base) : 0);
+    c.prepare = root_prepare_cost(i) + table_setup(q) + (q.cached ? cost_model::prepare_share(base) : 0);
+    return c;
+}
+// What one policy product search costs the query that makes it (divrem_tuning).
+double search_price(size_t a, size_t b) {
+    const size_t hi = std::max(a, b);
+    return hi < 1024               ? divrem_tuning::product_search_short_ns
+           : hi < (size_t(1) << 15) ? divrem_tuning::product_search_ns
+                                    : divrem_tuning::product_search_small_domain_ns;
+}
+// The least a transform recipe over n limbs costs for these applications on the workers it would get, one spectrum
+// kept (a third of the transforms once, two thirds per application): no recipe a search can return costs less.
+double transform_floor(const Plan &p, size_t n, double applications) {
+    return divrem_tuning::transform_floor_ns_per_limb * double(n) * (1 + 2 * applications) / 3 /
+           double(newton_rung_workers(n, p.options.workers));
+}
+// A search can pay when the shorter operand is long enough for a transform at all and the recipe in hand costs more
+// than that floor and the search together.
+bool search_pays(const Plan &p, size_t a, size_t b, double applications, double in_hand) {
+    return std::min(a, b) >= divrem_tuning::transform_min_limbs &&
+           in_hand - transform_floor(p, a + b, applications) > search_price(a, b);
+}
+// The short product (no tables, no spectrum), a recipe of its own next to the policy's. It runs on one worker
+// whatever the team (10120 x 461: 117 us on one worker, 114 on eight), and its one-worker model is the measured one.
+ProductChoice short_product() {
+    ProductChoice c{};
+    c.algorithm = SBN3_MUL_U52;
+    c.workers = 1;
     return c;
 }
 unsigned product_workers(const Plan &p, size_t n) {
     return newton_rung_workers(n, p.options.workers);
 }
-// Best recipe for the U product (in+1) x in: linear, cached when the family
-// supports a reserved spectrum.
-bool choose_u(const Plan &p, size_t in, ProductChoice &out, Queried &q, Cost &cost) {
+// Best recipe for the U product (in+1) x in: the short product while no search can pay, else the policy's linear
+// product (cached when the family supports a reserved spectrum) unless the short product's preparation and
+// applications together cost less.
+bool choose_u(const Plan &p, size_t in, double applications, ProductChoice &out, Queried &q, Cost &cost) {
+    bool found = false;
+    auto total = [&](const Cost &k) { return k.prepare + applications * k.apply; };
+    if (!p.options.prime_count) {
+        const ProductChoice direct = short_product();
+        Queried candidate{};
+        if (query_product(in + 1, in, direct, 1, candidate)) {
+            found = true;
+            out = direct;
+            q = candidate;
+            cost = product_cost(candidate, in + 1, in);
+            if (!search_pays(p, in + 1, in, applications, total(cost)))
+                return true;
+        }
+    }
     ProductChoice c{};
     c.np = p.options.prime_count;
     c.workers = product_workers(p, in + 1);
-    bool found = false;
     Plain plain{};
+    bool policy = false;
+    ProductChoice choice{};
+    Queried queried{};
+    Cost best{};
     for (unsigned cached : {1u, 0u}) {
         c.cached = cached;
         Queried candidate{};
         if (!query_product(in + 1, in, c, 1, candidate, &plain))
             continue;
         const Cost k = product_cost(candidate, in + 1, in);
-        if (!found || k.apply < cost.apply) {
-            found = true;
-            out = c;
-            q = candidate;
-            cost = k;
+        if (!policy || k.apply < best.apply) {
+            policy = true;
+            choice = c;
+            queried = candidate;
+            best = k;
         }
+    }
+    if (policy && (!found || total(best) < total(cost))) {
+        found = true;
+        out = choice;
+        q = queried;
+        cost = best;
     }
     return found;
 }
@@ -277,27 +336,44 @@ void consider(Residual &b, size_t dn, size_t in, double applications, const Prod
     b.cost = k;
     b.ring = r;
 }
-// Linear family: dn+in output limbs.
-void linear_residual(const Plan &p, size_t dn, size_t in, double applications, Residual &lin) {
+// Linear family: dn+in output limbs. The short product first; the policy's product is searched when that search
+// can pay, and not when the short product costs no more than the policy's recipe did at a larger block size of this
+// request (transform: fewer, longer blocks transform no more limbs, so that recipe's cost does not fall with the
+// block size).
+void linear_residual(const Plan &p, size_t dn, size_t in, double applications, double &transform, Residual &lin) {
+    if (!p.options.prime_count) {
+        consider(lin, dn, in, applications, short_product(), 0);
+        if (lin.found && ((std::isfinite(transform) && lin.total <= transform) || !search_pays(p, dn, in, applications, lin.total)))
+            return;
+    }
     ProductChoice linear{};
     linear.np = p.options.prime_count;
     linear.workers = product_workers(p, dn);
     Plain plain{};
+    Residual policy{};
     for (unsigned cached : {1u, 0u}) {
         linear.cached = cached;
-        consider(lin, dn, in, applications, linear, 0, &plain);
+        consider(policy, dn, in, applications, linear, 0, &plain);
     }
+    if (!policy.found)
+        return;
+    transform = std::min(transform, policy.total);
+    // The search is made for a transform recipe. Another short product of the policy's replaces nothing: between
+    // short products its model compares executions of balanced operands (a 300007 x 6 product: scalar by the
+    // model, 622 us measured against 197 by u52).
+    const unsigned algorithm = policy.queried.consumer_info.mul.algorithm;
+    const bool transformed = algorithm != SBN3_MUL_SCALAR && algorithm != SBN3_MUL_U52;
+    if (!lin.found || (transformed && policy.total < lin.total))
+        lin = policy;
 }
-// Cyclic family: the supported rings >= dn + guard (the expensive part of the query).
-void cyclic_residual(const Plan &p, size_t dn, size_t in, double applications, Residual &cyc) {
+// Cyclic family: the ring lattice >= dn + guard, one visit per candidate recipe.
+template <class Visit> void ring_lattice(const Plan &p, size_t dn, Visit visit) {
     const size_t minimum = dn + divrem_tuning::ring_guard_words;
     const unsigned width = product_workers(p, dn);
     const unsigned first = p.options.prime_count ? p.options.prime_count : newton_limits::first_ntt_prime_count,
                    last = p.options.prime_count ? p.options.prime_count : newton_limits::last_ntt_prime_count;
-    if (!p.options.prime_count && minimum <= 512) {
-        ProductChoice c{0, SBN3_MUL_SCALAR, 1, 0, minimum, 0};
-        consider(cyc, dn, in, applications, c, minimum);
-    }
+    if (!p.options.prime_count && minimum <= 512)
+        visit(ProductChoice{0, SBN3_MUL_SCALAR, 1, 0, minimum, 0}, minimum);
     for (unsigned np = first; np <= last; ++np)
         for (int T = np == 4 ? 88 : 24 * int(np) - 8; T >= (np == 4 ? 80 : 24 * int(np) - 32); T -= np == 4 ? 4 : 8) {
             size_t r = 2 * size_t(T);
@@ -308,8 +384,7 @@ void cyclic_residual(const Plan &p, size_t dn, size_t in, double applications, R
                     continue;
                 if (algorithm == SBN3_MUL_BAILEY && r < 2048)
                     continue;
-                ProductChoice c{np, algorithm, width, T, r, 1};
-                consider(cyc, dn, in, applications, c, r);
+                visit(ProductChoice{np, algorithm, width, T, r, 1}, r);
             }
         }
     if (!p.options.prime_count && minimum <= 32768)
@@ -322,11 +397,19 @@ void cyclic_residual(const Plan &p, size_t dn, size_t in, double applications, R
                 continue;
             // At one worker the two widths are one candidate (its twin ties and is not taken).
             const unsigned widths[2] = {1u, width};
-            for (unsigned k = 0; k < (width > 1 ? 2u : 1u); ++k) {
-                ProductChoice c{0, SBN3_MUL_PQ16, widths[k], 16, r, 1};
-                consider(cyc, dn, in, applications, c, r);
-            }
+            for (unsigned k = 0; k < (width > 1 ? 2u : 1u); ++k)
+                visit(ProductChoice{0, SBN3_MUL_PQ16, widths[k], 16, r, 1}, r);
         }
+}
+// The supported rings of the lattice (the expensive part of the query).
+void cyclic_residual(const Plan &p, size_t dn, size_t in, double applications, Residual &cyc) {
+    ring_lattice(p, dn, [&](const ProductChoice &c, size_t r) { consider(cyc, dn, in, applications, c, r); });
+}
+// Its least ring, supported or not: no query.
+size_t least_ring(const Plan &p, size_t dn) {
+    size_t least = SIZE_MAX;
+    ring_lattice(p, dn, [&](const ProductChoice &, size_t r) { least = std::min(least, r); });
+    return least;
 }
 // Linear and cyclic families are ranked separately by the cost model; the
 // family is then chosen by the structural ring rule (divrem_tuning).
@@ -396,13 +479,13 @@ double applications(const Plan &p, size_t in) {
 }
 // The searches both the order and the final recipe need. A request for the
 // cyclic residual only (experiments) has no linear family.
-bool search(const Plan &p, size_t in, Candidate &c) {
+bool search(const Plan &p, size_t in, Candidate &c, double &transform) {
     c = {};
     c.in = in;
-    if (!choose_u(p, in, c.u, c.uq, c.ucost))
+    if (!choose_u(p, in, applications(p, in), c.u, c.uq, c.ucost))
         return false;
     if (p.options.residual != 2)
-        linear_residual(p, p.request.denominator_limbs, in, applications(p, in), c.linear);
+        linear_residual(p, p.request.denominator_limbs, in, applications(p, in), transform, c.linear);
     c.searched = true;
     return true;
 }
@@ -411,8 +494,8 @@ bool search(const Plan &p, size_t in, Candidate &c) {
 // The total prices whole blocks, the quotient limbs a size leaves over as one
 // more product pair: the word-division head serves what the taken size leaves
 // over, it is no reason to take a size (divrem_tuning).
-bool order(const Plan &p, size_t in, Candidate &c) {
-    if (!search(p, in, c))
+bool order(const Plan &p, size_t in, Candidate &c, double &transform) {
+    if (!search(p, in, c, transform))
         return false;
     Residual lattice{};
     const Residual *t = &c.linear;
@@ -435,10 +518,18 @@ bool order(const Plan &p, size_t in, Candidate &c) {
 // block otherwise.
 bool finish(const Plan &p, Candidate &c) {
     const size_t dn = p.request.denominator_limbs, in = c.in;
-    if (!c.searched && !search(p, in, c))
+    double transform = INFINITY;
+    if (!c.searched && !search(p, in, c, transform))
         return false;
+    // The ring lattice is the expensive part of the query (divrem_tuning). Against a linear recipe that keeps a
+    // spectrum the family rule decides by the ring alone, and no ring passes it when the lattice's least one does not
+    // (the plan is then the one the search would give). And a ring saves at most the share of the linear output it
+    // drops: the search is made when that saving exceeds the search's own price.
+    const double fraction = double(least_ring(p, dn)) / double(dn + in);
+    const bool reachable = !c.linear.queried.cached || fraction <= divrem_tuning::cyclic_ring_fraction,
+               pays = (1 - fraction) * c.linear.total > divrem_tuning::lattice_search_ns;
     Residual cyclic{};
-    if (p.options.residual != 1)
+    if (p.options.residual == 2 || (p.options.residual != 1 && (!c.linear.found || (reachable && pays))))
         cyclic_residual(p, dn, in, applications(p, in), cyclic);
     const Residual *t = residual_family(p, dn, in, c.linear, cyclic);
     if (!t)
@@ -457,6 +548,7 @@ struct Ranking {
     Candidate sizes[4]{};
     unsigned ordered[4]{};
     unsigned count = 0, next = 0;
+    double transform = INFINITY; // least complete cost of the policy's residual recipe at the sizes searched so far
 };
 void rank(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
@@ -491,7 +583,7 @@ void rank(const Plan &p, Ranking &r) {
     }
     auto insert = [&](size_t in) {
         Candidate &c = r.sizes[r.count];
-        if (!order(p, in, c))
+        if (!order(p, in, c, r.transform))
             return;
         unsigned at = r.count++;
         for (; at && c.total < r.sizes[r.ordered[at - 1]].total; --at)
@@ -536,7 +628,7 @@ Candidate *take(const Plan &p, Ranking &r) {
 // One-use cost (divrem_tuning): the schoolbook work of all expected executions
 // against the fixed cost of planning and preparing a block-Barrett division.
 bool schoolbook_use(const Plan &p) {
-    const size_t qn = p.info.quotient_limbs, floor = divrem_tuning::schoolbook_max_quotient;
+    const size_t qn = p.info.quotient_limbs, floor = divrem_tuning::schoolbook_level_quotient;
     const double work = double(std::max(1u, p.options.reuse_hint)) * double(qn > floor ? qn - floor : 0) *
                         double(p.request.denominator_limbs);
     return work <= divrem_tuning::schoolbook_use_work;
@@ -982,8 +1074,7 @@ extern "C" sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *reques
         i.algorithm = SBN3_DIVREM_WORD;
     else if (p.options.algorithm)
         i.algorithm = p.options.algorithm == SBN3_DIVREM_BARRETT && i.quotient_limbs ? SBN3_DIVREM_BARRETT : SBN3_DIVREM_SCHOOLBOOK;
-    else if (dn <= divrem_tuning::schoolbook_max_divisor || i.quotient_limbs <= divrem_tuning::schoolbook_max_quotient ||
-             (!p.options.block_limbs && schoolbook_use(p)))
+    else if (!i.quotient_limbs || dn <= divrem_tuning::schoolbook_max_divisor || (!p.options.block_limbs && schoolbook_use(p)))
         i.algorithm = SBN3_DIVREM_SCHOOLBOOK;
     else
         i.algorithm = SBN3_DIVREM_BARRETT;

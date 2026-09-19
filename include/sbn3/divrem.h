@@ -40,9 +40,11 @@ typedef struct sbn3_divrem_options {
     unsigned workers;       /* 1..32 */
     unsigned prime_count;   /* 0 selects; explicit 4..10 pins the NTT family of every product */
     size_t memory_budget;   /* 0: no filter; otherwise the policy passes over block sizes whose storage_bytes exceed it */
-    unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot. Enters the recipe costs and the
-                               algorithm choice: a request whose schoolbook work over all expected executions is
-                               below the cost of planning the block algorithm is served by the schoolbook */
+    unsigned reuse_hint;    /* expected executions per prepared divisor; 0/1 one-shot. Enters the recipe costs (few
+                               executions take short products without tables or spectra, many take transforms and
+                               kept spectra) and the algorithm choice: a request whose schoolbook work over all
+                               expected executions is below the cost of planning and preparing the block algorithm
+                               is served by the schoolbook */
     size_t block_limbs;     /* 0: policy (near-equal blocks); otherwise the requested Barrett block size:
                                denominator_limbs asks for complete blocks under a full inverse */
     unsigned residual;      /* 0: policy; 1: linear residual product only; 2: cyclic only (experiments) */

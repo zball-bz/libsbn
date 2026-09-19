@@ -5,26 +5,29 @@ namespace sbn::v3::divrem_tuning {
 // Clang 21.1.8. Calibrated by experiments/results/divrem_2026-09-18 (crossover
 // sweep of the schoolbook entry against the block-Barrett service); the
 // values only choose between exact algorithms and never change results.
-// Forced-algorithm sweep (results/divrem_2026-09-18/crossover2): the block
-// Barrett execute beats the 3/2 schoolbook from dn=64 on balanced shapes
-// (1.8x at 64x128, 2.9x at 64x512) and from 12 quotient limbs at any dn
-// (1.5-2.7x at 12, 1.4-5.6x at 16); at 8 quotient limbs the two are within
-// noise. The thresholds below keep the schoolbook where it is at least as fast.
-inline constexpr size_t schoolbook_max_divisor = 64;   // dn <= this: 3/2 schoolbook
-inline constexpr size_t schoolbook_max_quotient = 8;   // quotient limbs <= this: schoolbook (O(dn) per limb)
-// One use of a plan, complete (query, bind, divisor preparation, executions, unbind): the two thresholds above
-// compare executions only, and a block-Barrett division first pays its planning (recipe searches of the query, the
-// block inverse, divisor-side spectra and their tables): 90-130 us up to dn~1000, 190-270 us at 2^11..2^14, 360 us
-// to 1 ms at 2^15..2^18 on one Zen 5 core, whatever the quotient length. The schoolbook pays none of it, so it
-// serves a request whose schoolbook work beyond the execution-level threshold,
-//   reuse_hint * (quotient limbs - schoolbook_max_quotient) * divisor limbs,
-// is at most schoolbook_use_work limb steps. Measured equal-cost points of complete calls (experiments
-// results/divrem_fresh_2026-09-19/crossover, forced algorithms in interleaved windows, one and sixteen workers
-// alike): 335k (64d/d, dn~73), 405-412k (2d/d at dn~640, 8d/d at dn~243), 590-850k (quotients of 21-420 limbs on
-// divisors of 2^11..2^17 limbs), 470k (2^18). The constant sits under the least of them: at the switch the
-// schoolbook is level with or ahead of the blocks (0.83-0.98 of their complete call), never behind. A requested
-// block size is a request for blocks and is not subject to this rule.
-inline constexpr double schoolbook_use_work = 360000.0;
+// One use of a plan, complete (query, bind, divisor preparation, executions, unbind). The schoolbook plans and
+// prepares nothing; a block-Barrett division pays its planning and preparation, then about an eighth of the
+// schoolbook's price per limb step (short products), and both pass over the divisor a few times per call, the blocks
+// about four quotient limbs' worth more. So the schoolbook serves a request whose work beyond that level,
+//   reuse_hint * (quotient limbs - schoolbook_level_quotient) * divisor limbs,
+// is at most schoolbook_use_work limb steps, whatever the divisor length. Measured equal-cost points of complete
+// calls (experiments results/divrem_fresh_c2_2026-09-19/crossover, forced algorithms in interleaved windows, one
+// worker; sixteen alike): 17-19k limb steps for divisors of 24..300 limbs (quotients of 700..62 limbs), 16-20k at
+// 603..3001, 13.5-17k at 4500..10007, 24k at 20011, 13.5k at 45000; at 100003 and 300007 limbs the two are level
+// at four quotient limbs and the blocks ahead from five. The constant sits at the low end: at the switch the
+// schoolbook is level with the blocks (within a quotient limb's granularity on long divisors). Before the planner
+// priced a recipe's one-use preparation and searched only where a search can pay (below), the same points lay at
+// 335k-920k and moved with the divisor length (stage C-1: 360000 above a level of eight limbs, which left the
+// blocks up to 2.0x behind the schoolbook just above the switch for divisors of 1.5k-100k limbs). A requested block
+// size is a request for blocks and is not subject to this rule.
+inline constexpr size_t schoolbook_level_quotient = 4;
+inline constexpr double schoolbook_use_work = 16000.0;
+// A block holds at most dn quotient limbs, and its fixed work (two product calls, the passes over residual and
+// divisor) is shared by that many: on divisors this short the blocks stay behind the schoolbook at any quotient
+// length (same measurement, quotients up to 21000 limbs: schoolbook / blocks 0.22 at three limbs, 0.63 at eight,
+// 0.71 at ten, 0.85-0.97 at twelve, 0.94-1.10 at thirteen, 1.08-1.34 at sixteen). Stage C-1 and before: 64, from
+// an execution-only sweep of a planner that priced no short product.
+inline constexpr size_t schoolbook_max_divisor = 12;
 // Block inverse: up to this many limbs one schoolbook division U = floor((B^(2in) - 1) / Dtop) replaces the Newton
 // ladder (its query, binding and execution). Equal complete cost near 880 limbs (the radix reciprocal's
 // measurement, src/radix/programs.hpp); on complete divisions the step across the switch is +1.5-2 %
@@ -46,9 +49,41 @@ inline constexpr double inverse_newton_planning_ns = 300000.0;
 // the best one's. Complete one-shot 2d/d calls by requested block count (experiments
 // results/divrem_fresh_2026-09-19/crossover, list5/list6, one worker): dn=1024 189 us at three blocks, 145 at five
 // to eight; 2048: 421 -> 292; 2896: 558 -> 387; 4096: 725 -> 472; the pairs of five to twelve blocks cost about
-// what three cost, the inverse falls with in^2. Above dn~5000 the estimate declines it (the policy's plans there
-// are the former ones, query differential plan-diff-*); a Newton-route size with more blocks, which measured up to
-// 11 % better at dn 5793-9742, is not a candidate.
+// what three cost, the inverse falls with in^2. For 2d/d the estimate declines it above dn~5000; for quotients of
+// 430-2600 limbs it is taken up to divisors of about 142000 limbs (one Newton-route block becomes two to four
+// schoolbook-inverse blocks; stage C-1 review, 40000-shape query differential). A Newton-route size with more
+// blocks, which measured up to 11 % better at dn 5793-9742, is not a candidate.
+// One use of a recipe, complete. The FFT family builds its tables at every binding (its own, or those of the spectrum
+// a cached recipe reads), and root_prepare_cost prices the NTT families' roots only, so the order priced them at
+// zero: measured 56 us at dn=3001, 112 us at 6428, 113 us at 10120, 125 us at 45000, 1063 us at 100003 (seven-way
+// radix), 90 us for 4096 x 513 = 0.27-0.42 ns per table byte whatever the other operand (experiments
+// results/divrem_fresh_c2_2026-09-19/recipe-base, one worker); the NTT families measured 19-25 us against 24-32
+// modelled at 2^18. The least measured price, so a transform is never priced out by its tables.
+inline constexpr double fft_table_ns_per_byte = 0.27;
+// The short product (u52: no tables, no spectrum) is a recipe of both block products next to the policy's, which
+// compares executions only. One application of D' x qhat, tables + spectrum + product (same measurement): 3001 x 130
+// 16 us short against 70; 6428 x 121 34 against 144; 6428 x 287 57 against 143; 10120 x 593 131 against 172;
+// 45000 x 501 541 against 436; 16384 x 5462 677 against 205: a transform pays once it is applied often or to long
+// blocks, and the order prices both with their preparation.
+// What a search costs the query that makes it (same measurement, query column): one policy product search 5.0-7.8
+// us for a longer operand of 2^10..2^15 limbs, 51-79 us from 2^15 (the small-NTT domain enumerates its candidates);
+// the cyclic ring lattice 60-135 us (about a hundred pinned product and spectrum queries). A search returns a
+// transform recipe, and none applies for less than transform_floor_ns_per_limb per output limb on one worker (least
+// measured complete product: 3.9 ns at 514 x 513, 4.8-8.6 for 3001..100003-limb divisors, 10.6 for the NTT at 2^18;
+// a kept spectrum saves a third per application). The short product in hand is taken without the search when its
+// complete modelled cost (preparation and all expected applications) is not above that floor by more than the
+// search's price: the search could not save what it costs.
+inline constexpr double product_search_short_ns = 2800.0; // longer operand below 2^10 limbs: 2.8-3.4 us
+inline constexpr double product_search_ns = 6000.0;
+inline constexpr double product_search_small_domain_ns = 55000.0;
+inline constexpr double lattice_search_ns = 100000.0;
+inline constexpr double transform_floor_ns_per_limb = 3.5;
+// Below this many limbs of the shorter operand no search is made whatever the model says: the short product
+// measured 0.45-0.65 ns per limb of the longer operand plus 0.04-0.06 ns per limb pair (3001 x 130 .. 300007 x 10),
+// under the floor above up to about 48 limbs for any longer operand, while its one-worker model adds memory-pressure
+// terms calibrated on saturated batches (1.6 ms modelled for 300007 x 6, 0.2 ms measured) that would send every
+// long divisor into three 50-80 us searches for nothing.
+inline constexpr size_t transform_min_limbs = 48;
 // Planning seed for the block inverse: a Newton ladder to precision n costs
 // about this many linear n x n products (rungs sum to ~2 products of the
 // final size plus the smaller rungs). Only orders block-size candidates.
@@ -63,6 +98,15 @@ inline constexpr size_t ring_guard_words = 2; // ring >= dn + guard for the sign
 // 294912/349526=0.84 wins (6.86 vs 7.88); 1048576: 1310720/1398102=0.94 loses
 // (25.8 vs 22.8). The cost model ranked both cases the other way, so this
 // structural rule replaces its linear-versus-cyclic comparison only.
+// Controlled experiment 2026-09-19 (experiments results/divrem_fresh_c2_2026-09-19/ring, complete calls of 2d/d with
+// the linear family only, the cyclic only and the policy, 1/8-octave divisor lengths, one and eight executions, one
+// and sixteen workers, 228 shapes): among rings of 0.67-0.89 of the linear output the fraction does not separate
+// wins from losses; the divisor length and the executions do. One use: the ring family is behind below about 40000
+// limbs on one worker (2-16 %, the lattice search included) and about 150000 on sixteen (5-33 %), ahead above
+// (10-25 % and 2-14 %). Eight executions: ahead nearly everywhere on one worker (geometric mean 0.93, behind 3-16 %
+// at 32768-46341), behind 5-29 % at 8192-30048 limbs on sixteen workers (eight-worker products), ahead above.
+// The fraction stays; what changed is when the lattice is searched at all (lattice_search_ns below): a ring saves
+// at most the share of the linear output it drops.
 inline constexpr double cyclic_ring_fraction = 0.9;
 // Short head block (quotient limbs modulo the block size) by word division:
 // one multiply-subtract pass over the divisor per limb, against one padded

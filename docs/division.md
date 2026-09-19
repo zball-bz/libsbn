@@ -20,12 +20,24 @@ reports the normalized lengths.
 | `sbn3_divrem_query/bind/prepare/execute/unbind` | prepared divisor, repeated numerators, large shapes | word/schoolbook below the shape thresholds; block Barrett otherwise |
 
 The service chooses at query time, by the complete cost of one use of the
-plan: the schoolbook pays no planning, so besides the execution-level
-thresholds (divisors up to 64 limbs, quotients up to 8) it serves every
-request whose remaining schoolbook work, `reuse_hint` x (quotient limbs - 8)
-x divisor limbs, stays below the measured cost of planning and preparing the
-block algorithm (`divrem_tuning.hpp`). A requested `block_limbs` is a
-request for blocks and is not subject to that rule.
+plan: the schoolbook plans and prepares nothing, so it serves divisors of up
+to 12 limbs (a block holds at most dn quotient limbs and never pays there)
+and every request whose schoolbook work beyond the level at which the two
+algorithms pass over the divisor alike, `reuse_hint` x (quotient limbs - 4) x
+divisor limbs, stays below the measured equal-cost point of complete calls
+(`divrem_tuning.hpp`). A requested `block_limbs` is a request for blocks and
+is not subject to that rule.
+
+The planner prices one use of every recipe, preparation included: the FFT
+family builds its tables at each binding (priced per table byte; the NTT
+roots have their own model), and the short product (u52: no tables, no
+spectrum) is a recipe of both block products next to the policy's transform
+product. A search is made only where it can pay: the policy product search
+when the short product in hand costs more than the least a transform could
+plus the search itself, and not when it costs no more than the transform
+recipe found for a larger block size of the same request; the cyclic ring
+lattice when a ring within the family rule's fraction exists and the share
+of the linear output a ring can drop is worth more than the lattice's price.
 
 Block Barrett computes the block inverse U of the top `block_limbs` limbs of
 the normalized divisor, |U - B^(2in)/Dtop| < 3: up to 864 limbs by one

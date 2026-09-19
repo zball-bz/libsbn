@@ -475,6 +475,23 @@ int main() {
     service_gates(300, 4096, 1, 0, 0, 0, 2);
     service_gates(1000, 2000, 1, 0, 0, 0, 1);
     algorithm_policy_gates();
+    // One use, as the policy plans it: blocks on short divisors under long quotients and under quotients of a few
+    // limbs on long divisors, the short product as the recipe of one or both block products (medium quotients), the
+    // same requests with many expected executions (transform recipes, kept spectra), one and sixteen workers.
+    for (unsigned reuse : {0u, 64u}) {
+        service_gates(13, 3000, 1, 0, reuse);
+        service_gates(17, 2017, 1, 0, reuse);
+        service_gates(40, 1240, 1, 0, reuse);
+        service_gates(64, 704, 1, 0, reuse);
+        service_gates(5000, 5004, 1, 0, reuse);
+        service_gates(5000, 5008, 1, 0, reuse);
+        service_gates(3001, 3130, 1, 0, reuse);
+        service_gates(6428, 6548, 1, 0, reuse);
+        service_gates(6428, 7000, 16, 0, reuse);
+        service_gates(10120, 10712, 16, 0, reuse);
+    }
+    service_gates(20011, 20017, 16);
+    service_gates(13, 3000, 1, 0, 0, 0, 2);
     service_gates(1000, 2000, 1, 0, 0, 0, 1);
     service_gates(1000, 2000, 1, 0, 0, 2);
     service_gates(65536, 131072, 16, 0, 0, 2);
