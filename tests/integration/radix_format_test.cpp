@@ -102,11 +102,12 @@ struct Stats {
     uint64_t cases = 0, fallbacks = 0, ties = 0, enclosed = 0, shortened = 0;
 } stats;
 void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64_t> &m, int64_t exponent2,
-           uint64_t digits, sbn3_radix_mode mode, bool alphabet, int expect_fallback = -1) {
+           uint64_t digits, sbn3_radix_mode mode, bool alphabet, int expect_fallback = -1, size_t budget = 0) {
     Fixture &f = pool.f;
     sbn3_format_spec spec{base, m.size(), exponent2, digits, mode};
     sbn3_radix_options options{};
     options.workers = workers;
+    options.memory_budget = budget;
     options.repeated = unsigned(random_word() & 1); // the integer tree from 32 limbs, or from 256
     unsigned char table[64];
     sbn3_radix_alphabet(base, table);
@@ -265,6 +266,10 @@ int main() {
             }
         }
         // larger trees, integer and fraction, with the team
+        // Small trees need no huge-page-aligned empty pool. A sub-2-MiB
+        // caller budget must admit and execute these ordinary conversions.
+        for (size_t n : {129u,181u,255u})
+            check(pool, workers, 10, random_limbs(n), 0, 0, SBN3_RADIX_EXACT, false, -1, size_t(1)<<20);
         for (unsigned base : {10u, 7u}) {
             check(pool, workers, base, random_limbs(3000), 0, 0, SBN3_RADIX_EXACT, false);
             check(pool, workers, base, random_limbs(3000), -int64_t(64) * 3000, 57000, SBN3_RADIX_EXACT, false);

@@ -239,7 +239,7 @@ sbn3_query_result Assembly::assemble() noexcept {
         }
         info.lease_peak += 3;
     }
-    info.storage_alignment = std::max<size_t>({size_t(1) << 21, prepared_alignment, divide_alignment});
+    info.storage_alignment = std::max<size_t>({4096, prepared_alignment, divide_alignment});
     info.control_bytes = align_to(align_to(sizeof(Binding), 64) + size_t(classes) * (sizeof(ProductProgram) + sizeof(RailProduct)) + 64, 4096);
     p.prepared_offset = align_to(info.control_bytes, prepared_alignment);
     p.prepared_bytes = p.shift ? 0 : align_to(tree.prepared_bytes() + 128, 4096);
@@ -247,7 +247,7 @@ sbn3_query_result Assembly::assemble() noexcept {
     p.values_bytes = align_to(values * 8, 4096);
     p.divide_offset = 0;
     p.divide_bytes = p.divide_limbs ? divide_info.storage_bytes : 0; // bind-time use of the work range
-    p.work_offset = align_to(p.values_offset + p.values_bytes, std::max<size_t>(size_t(1) << 21, divide_alignment));
+    p.work_offset = align_to(p.values_offset + p.values_bytes, divide_alignment);
     p.work_bytes = p.shift ? 0 : align_to(work + 64, 4096);
     info.storage_bytes = p.work_offset + p.work_bytes;
     info.table_bytes = p.prepared_bytes;

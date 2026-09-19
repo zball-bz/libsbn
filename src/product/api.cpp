@@ -1,4 +1,5 @@
 #include "product/backend.hpp"
+#include "product/native_capabilities.hpp"
 #include "product/cost_model.hpp"
 #include "common/checked.hpp"
 #include "common/small_checks.h"
@@ -47,6 +48,24 @@ static bool cyclic_product(const sbn3_mul_info &) {
 static bool cyclic_product(const sbn3_product_info &i) {
     return i.cyclic_limbs != 0;
 }
+// A search needs geometry, storage and cost fields. Identities and arithmetic
+// constants are materialized only for its winner; every bind still validates
+// a complete ordinary plan. Cached descriptions keep the full query path.
+static sbn3_query_result search_query(const Backend &b, const sbn3_product_request &r,
+                                      const sbn3_mul_options &o, sbn3_mul_plan &p, sbn3_product_info &i,
+                                      bool geometry) {
+    if (!geometry || !b.geometry_query || r.cached_a[0] || r.cached_a[1])
+        return b.product_query(r,o,p,i);
+    i={};i.kind=r.kind;i.cyclic_limbs=r.cyclic_limbs;
+    return b.geometry_query(r,o,i.mul);
+}
+static sbn3_query_result search_query(const Backend &b, const sbn3_product_spec &s,
+                                      const sbn3_mul_options &o, sbn3_mul_plan &p, sbn3_mul_info &i,
+                                      bool geometry) {
+    if (!geometry || !b.geometry_query) return b.query(s,o,p,i);
+    sbn3_product_request r{};r.a_limbs=s.a_limbs;r.b_limbs=s.b_limbs;
+    return b.geometry_query(r,o,i);
+}
 // Exact geometry and cached bases retain their constraints. Work counts use
 // both operand lengths; unbalanced shapes must not fall into a padded deep tower.
 using cost_model::small_domain;
@@ -82,27 +101,32 @@ static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_
     bool found = false;
     double best = 0;
     auto rejection = SBN3_UNSUPPORTED;
+    sbn3_query_result last_result = SBN3_UNSUPPORTED;
+    int last_trunk_bits = 0;
+    ProductChoice winner = 0, least_rejected = 0;
     auto consider = [&](unsigned np, const sbn3_mul_options &options) {
         sbn3_mul_plan p{};
         Info ci{};
-        const auto result = query(*lookup(np), options, p, ci);
+        const auto result = query(*lookup(np), options, p, ci, true);
         const auto &mi = mul_info(ci);
+        last_result = result;
+        last_trunk_bits = int(mi.trunk_bits);
         if (result == SBN3_SUPPORTED) {
             const double cost = small ? cost_model::small_ntt(mi, operation_kind(ci) == SBN3_PRODUCT_MUL).nanoseconds
                                       : deep_score(mi, cyclic_product(ci));
             if (!found || cost < best) {
                 found = true;
                 best = cost;
-                plan = p;
                 info = ci;
-                if (choice)
-                    *choice = encode_choice(np, options);
+                winner = encode_choice(np, options);
             }
         } else if (!found && result == SBN3_QUERY_CAPACITY) {
             rejection = result;
             if (mi.workspace_bytes &&
-                (!mul_info(info).workspace_bytes || mi.workspace_bytes < mul_info(info).workspace_bytes))
+                (!mul_info(info).workspace_bytes || mi.workspace_bytes < mul_info(info).workspace_bytes)) {
                 info = ci;
+                least_rejected = encode_choice(np, options);
+            }
         }
     };
     // NP9/10 admission is measured at W32 (actual 5B consumer shapes and
@@ -122,13 +146,16 @@ static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_
             continue;
         // Obtain the widest certified digit independently of the workspace
         // filter. Every candidate is then checked against the original budget.
-        auto seed = opt;
-        seed.workspace_budget = 0;
-        sbn3_mul_plan unused{};
-        Info si{};
-        if (query(*lookup(np), seed, unused, si) != SBN3_SUPPORTED)
-            continue;
-        const int widest = mul_info(si).trunk_bits;
+        int widest = last_trunk_bits;
+        if (opt.workspace_budget) {
+            auto seed = opt;
+            seed.workspace_budget = 0;
+            sbn3_mul_plan unused{};
+            Info si{};
+            if (query(*lookup(np), seed, unused, si, true) != SBN3_SUPPORTED)
+                continue;
+            widest = int(mul_info(si).trunk_bits);
+        } else if (last_result != SBN3_SUPPORTED) continue;
         const int preferred = np == 4 ? 80 : 24 * int(np) - 16;
         const int digits[] = {widest, preferred, np == 4 ? 84 : widest};
         for (unsigned d = 0; d < 3; ++d) {
@@ -170,18 +197,18 @@ static sbn3_query_result select_plan(const sbn3_product_spec &s, const sbn3_mul_
         candidate.algorithm = SBN3_MUL_FLAT;
         consider(10, candidate);
     }
-    return found ? SBN3_SUPPORTED : rejection;
+    if (found) {
+        const auto result = query_chosen(opt,winner,plan,info,query);
+        require(result==SBN3_SUPPORTED,SBN3_FATAL_MATH,"search geometry/full query equivalence");
+        if (choice) *choice=winner;
+        return result;
+    }
+    if (least_rejected) return query_chosen(opt,least_rejected,plan,info,query);
+    return rejection;
 }
 static bool short_options(const sbn3_mul_options &o) {
     return !o.prime_count && !o.prime_batch && !o.trunk_bits && !o.column_log2 && !o.row_log2 &&
            !o.crt_mode && !o.codec_mode && !o.fused_start_skew_us;
-}
-static bool native_available() {
-    return __builtin_cpu_supports("avx512ifma") && __builtin_cpu_supports("avx512vbmi") &&
-           __builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512dq") &&
-           __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512cd") &&
-           __builtin_cpu_supports("avx512vbmi2") && __builtin_cpu_supports("avx512vpopcntdq") &&
-           __builtin_cpu_supports("pclmul") && __builtin_cpu_supports("vpclmulqdq");
 }
 template <class Info, class Query>
 static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mul_options &opt,
@@ -279,7 +306,7 @@ sbn3_query_result sbn::v3::mul_query_choose(const sbn3_product_spec &s, const sb
         return SBN3_UNSUPPORTED;
     return select_family(s, opt, p, i,
                          [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                             sbn3_mul_info &ci) { return b.query(s, co, cp, ci); },
+                             sbn3_mul_info &ci, bool geometry = false) { return search_query(b, s, co, cp, ci, geometry); },
                          &choice);
 }
 sbn3_query_result sbn::v3::mul_query_chosen(const sbn3_product_spec &s, const sbn3_mul_options &opt, ProductChoice choice,
@@ -289,7 +316,7 @@ sbn3_query_result sbn::v3::mul_query_chosen(const sbn3_product_spec &s, const sb
         return SBN3_UNSUPPORTED;
     return query_chosen(opt, choice, p, i,
                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                            sbn3_mul_info &ci) { return b.query(s, co, cp, ci); });
+                            sbn3_mul_info &ci, bool geometry = false) { return search_query(b, s, co, cp, ci, geometry); });
 }
 sbn3_query_result sbn::v3::square_query_choose(size_t limbs, const sbn3_mul_options &opt, sbn3_mul_plan &p,
                                                sbn3_product_info &i, ProductChoice &choice) noexcept {
@@ -300,7 +327,7 @@ sbn3_query_result sbn::v3::square_query_choose(size_t limbs, const sbn3_mul_opti
     const auto r = square_request(limbs);
     return select_family(sbn3_product_spec{limbs, limbs}, opt, p, i,
                          [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                             sbn3_product_info &ci) { return b.product_query(r, co, cp, ci); },
+                             sbn3_product_info &ci, bool geometry = false) { return search_query(b, r, co, cp, ci, geometry); },
                          &choice);
 }
 sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_options &opt, ProductChoice choice,
@@ -311,7 +338,7 @@ sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_opti
     const auto r = square_request(limbs);
     return query_chosen(opt, choice, p, i,
                         [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                            sbn3_product_info &ci) { return b.product_query(r, co, cp, ci); });
+                            sbn3_product_info &ci, bool geometry = false) { return search_query(b, r, co, cp, ci, geometry); });
 }
 extern "C" sbn3_query_result sbn3_mul_query(const sbn3_product_spec *s, const sbn3_mul_options *o,
                                             sbn3_mul_plan *p, sbn3_mul_info *i) {
@@ -323,7 +350,7 @@ extern "C" sbn3_query_result sbn3_mul_query(const sbn3_product_spec *s, const sb
     const auto &opt = o ? *o : defaults;
     return select_family(*s, opt, *p, *i,
                          [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                             sbn3_mul_info &ci) { return b.query(*s, co, cp, ci); });
+                             sbn3_mul_info &ci, bool geometry = false) { return search_query(b, *s, co, cp, ci, geometry); });
 }
 extern "C" void sbn3_mul_bind(const sbn3_mul_plan *p, sbn3_arena *a, const sbn3_lease *t, const sbn3_lease *w,
                               sbn3_team *team, sbn3_mul_binding **out) {
@@ -411,15 +438,15 @@ extern "C" sbn3_query_result sbn3_product_query(const sbn3_product_request *s, c
         const sbn3_product_spec spec{s->a_limbs, s->kind == SBN3_PRODUCT_SQR ? s->a_limbs : s->b_limbs};
         return select_family(spec, opt, *p, *i,
                              [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                                 sbn3_product_info &ci) { return b.product_query(*s, co, cp, ci); });
+                                 sbn3_product_info &ci, bool geometry = false) { return search_query(b, *s, co, cp, ci, geometry); });
     }
     const sbn3_product_spec spec{s->a_limbs, s->kind == SBN3_PRODUCT_SQR ? s->a_limbs : s->b_limbs};
     const bool small = !s->cyclic_limbs && s->kind == SBN3_PRODUCT_MUL && !s->cached_a[0] &&
                        !s->cached_a[1] && small_domain(spec, opt);
     const auto status = select_plan(
         spec, opt, *p, *i,
-        [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp, sbn3_product_info &ci) {
-            return b.product_query(*s, co, cp, ci);
+        [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp, sbn3_product_info &ci, bool geometry = false) {
+            return search_query(b, *s, co, cp, ci, geometry);
         },
         small);
     if (!s->cached_a[0] && !s->cached_a[1] && !opt.algorithm && short_options(opt) &&

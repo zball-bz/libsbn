@@ -64,8 +64,10 @@ typedef struct sbn3_divrem_info {
     unsigned algorithm,workers,products,blocks; /* blocks: quotient blocks for the longest numerator */
     size_t block_limbs,inverse_limbs,ring_limbs; /* Barrett geometry; ring 0 means a linear residual product */
     size_t storage_bytes,storage_alignment;      /* complete binding storage */
-    size_t control_bytes,persistent_bytes,shared_bytes; /* control; divisor state incl. spectra; prepare/execute union */
+    size_t control_bytes,persistent_bytes,shared_bytes; /* control; normalized divisor/U/spectra; phase union */
     size_t table_bytes,product_workspace_bytes,spectrum_bytes,scratch_bytes;
+    /* Tables/product workspace/scratch are phase components, not additive to
+     * shared_bytes. storage_bytes is the complete maximum across phases. */
     uint64_t plan_id;
     size_t head_limbs; /* longest numerator: leading quotient limbs by O(dn) word division, outside blocks */
 } sbn3_divrem_info;
@@ -81,10 +83,13 @@ typedef struct sbn3_divrem_metrics {
 } sbn3_divrem_metrics;
 typedef struct sbn3_divrem_binding sbn3_divrem_binding;
 
-/* Pure query. Under memory_budget the plan is the policy's first block size, in
- * cost order, whose storage fits; when none fits the result is
- * SBN3_QUERY_CAPACITY, info reports the least requirement among them and the
- * plan output is untouched. */
+/* Pure query. Under memory_budget the plan is the first the policy reaches whose
+ * storage fits: its block sizes in cost order, each with the residual recipe it
+ * takes and then the other family; then smaller blocks (the least size halved,
+ * a bounded number of times); then the schoolbook where its cost is bounded (a
+ * short divisor or a quotient of a few limbs). A named algorithm or block size
+ * is never replaced. When nothing fits the result is SBN3_QUERY_CAPACITY, info
+ * reports the least requirement met on the way and the plan output is untouched. */
 sbn3_query_result sbn3_divrem_query(const sbn3_divrem_request *,const sbn3_divrem_options *,
                                     sbn3_divrem_plan *,sbn3_divrem_info *);
 /* Caller prepares an unleased, aligned arena range of info.storage_bytes,

@@ -10,7 +10,7 @@ constexpr size_t parse_group_limbs = 56; // value of eight fragments of base 63,
 unsigned pow2_floor(unsigned v) noexcept { return 1u << (31 - unsigned(__builtin_clz(v))); }
 } // namespace
 sbn3_query_result parse_tree_begin(unsigned base, unsigned workers, uint64_t largest_fragments, ParseTreePlan &p) noexcept {
-    p.~ParseTreePlan();
+    static_assert(__is_trivially_destructible(ParseTreePlan)); // may be raw storage
     ::new (&p) ParseTreePlan{};
     if (!base_info(base, p.base) || p.base.odd == 1 || !workers || workers > 32)
         return p.status = SBN3_UNSUPPORTED;

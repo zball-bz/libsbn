@@ -1,4 +1,5 @@
 #include "backend/u52/island.hpp"
+#include "value/limbs.hpp"
 #define SCRATCH(s) ::sbn::v3::AssumedFrameMark SBN3_U52_CAT(mark_,__LINE__)(*(s))
 #define SALLOC(s,T,n) (s)->alloc_assumed<T>(n)
 #include "backend/u52/mulmid.hpp"
@@ -21,15 +22,22 @@ bool root_supported(Algorithm root,size_t x,size_t y) noexcept {
     }
 }
 size_t scratch_bytes(size_t an,size_t bn,Algorithm root) noexcept {
-    require(an<=(1u<<20) && bn<=(1u<<20),SBN3_FATAL_SIZE,"u52 input bound");
+    const bool streaming=root==Algorithm::automatic && streams(an,bn);
+    require(an<=(size_t(1)<<31) && bn<=(size_t(1)<<31) &&
+            (streaming || (an<=(1u<<20) && bn<=(1u<<20))),SBN3_FATAL_SIZE,"u52 input bound");
     if(!an || !bn)return 0;
+    size_t extra=0;
+    if(streaming){
+        bn=an<bn?an:bn;an=strip_limbs;
+        extra=(bn*8+63)&~size_t(63);
+    }
     const size_t a=(an*64+51)/52,b=(bn*64+51)/52,d=a+b;
     const size_t va=(a+7)/8+1,vb=(b+7)/8+1;
     // Conversion owns A, B and their product: 2*(va+vb) vectors.
     // Recursive envelope S(D)<=5D+64 digits; see u52-workspace.md.
     const bool leaf=root==Algorithm::basecase || (root==Algorithm::automatic && (a<b?a:b)<MUL_U52_T22_THRESHOLD);
     const size_t recursive=leaf?0:((5*d+64+7)/8)*64;
-    return 128*(va+vb)+recursive;
+    return extra+128*(va+vb)+recursive;
 }
 
 static Algorithm choose(size_t an,size_t bn) noexcept {
@@ -73,17 +81,36 @@ static inline Algorithm multiply_buffers(uint64_t *out,const uint64_t *a,size_t 
     if(cls)u64_from_u52_canonneg(out,px,an+bn);else u64_from_u52_canon(out,px,an+bn);
     return root;
 }
-Prepared prepare_buffers(Frame &space,size_t an,size_t bn) noexcept {
+Prepared prepare_buffers(Frame &space,size_t an,size_t bn,bool allow_streaming) noexcept {
     if(!an||!bn)return {};
+    const bool streaming=allow_streaming && streams(an,bn);
+    if(streaming){bn=an<bn?an:bn;an=strip_limbs;}
     const size_t va=u52_vec_count((an*16+12)/13)+1,vb=u52_vec_count((bn*16+12)/13)+1;
     auto *a=space.alloc<sb_vec>(va),*b=space.alloc<sb_vec>(vb),*p=space.alloc<sb_vec>(va+vb);
-    return {a,b,p,va,vb};
+    auto *strip=streaming?space.alloc<uint64_t>(bn):nullptr;
+    return {a,b,p,va,vb,strip,streaming?strip_limbs:0};
 }
 void multiply_prepared(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,const Prepared &p,Frame &space) noexcept {
+    if(p.strip_limbs){
+        if(an<bn){auto *t=a;a=b;b=t;auto n=an;an=bn;bn=n;}
+        for(size_t at=0;at<an;at+=p.strip_limbs){
+            const size_t n=an-at<p.strip_limbs?an-at:p.strip_limbs;
+            if(at)memcpy(p.strip_product,out+at,bn*8);
+            (void)multiply_buffers<false>(out+at,a+at,n,b,bn,static_cast<sb_vec *>(p.a),
+                                          static_cast<sb_vec *>(p.b),static_cast<sb_vec *>(p.product),
+                                          p.a_vectors,p.b_vectors,space,Algorithm::automatic);
+            // The preceding strips have written exactly [0,at+bn). Only
+            // those bn overlap limbs are added; no whole-output clear or
+            // reread of the long operand, and the carry stays in this strip.
+            if(at)require(!limbs::add_to(out+at,n+bn,p.strip_product,bn),SBN3_FATAL_MATH,"u52 strip carry");
+        }
+        return;
+    }
     (void)multiply_buffers<false>(out,a,an,b,bn,static_cast<sb_vec *>(p.a),static_cast<sb_vec *>(p.b),static_cast<sb_vec *>(p.product),p.a_vectors,p.b_vectors,space,Algorithm::automatic);
 }
 Algorithm multiply(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &space,Algorithm root) noexcept {
-    FrameMark mark(space);const auto p=prepare_buffers(space,an,bn);
+    FrameMark mark(space);const auto p=prepare_buffers(space,an,bn,root==Algorithm::automatic);
+    if(p.strip_limbs){multiply_prepared(out,a,an,b,bn,p,space);return Algorithm::stripmine;}
     return multiply_buffers<true>(out,a,an,b,bn,static_cast<sb_vec *>(p.a),static_cast<sb_vec *>(p.b),static_cast<sb_vec *>(p.product),p.a_vectors,p.b_vectors,space,root);
 }
 }

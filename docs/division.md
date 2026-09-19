@@ -19,14 +19,24 @@ reports the normalized lengths.
 | `sbn3_divrem_basecase`, `sbn3_int_divrem_basecase` | one-shot, no plan/arena/team; caller scratch of nn+dn+1 limbs | O(nn·dn) words: GMP-derived divrem_1/divrem_2/3-by-2 schoolbook |
 | `sbn3_divrem_query/bind/prepare/execute/unbind` | prepared divisor, repeated numerators, large shapes | word/schoolbook below the shape thresholds; block Barrett otherwise |
 
-The service chooses at query time, by the complete cost of one use of the
-plan: the schoolbook plans and prepares nothing, so it serves divisors of up
-to 12 limbs (a block holds at most dn quotient limbs and never pays there)
-and every request whose schoolbook work beyond the level at which the two
-algorithms pass over the divisor alike, `reuse_hint` x (quotient limbs - 4) x
-divisor limbs, stays below the measured equal-cost point of complete calls
-(`divrem_tuning.hpp`). A requested `block_limbs` is a request for blocks and
-is not subject to that rule.
+The service chooses at query time by the complete cost of using a plan.
+Schoolbook serves divisors of up to 14 limbs and requests whose
+`reuse_hint * max(quotient_limbs - 5, 0) * divisor_limbs` stays below the
+measured fixed planning cost (`divrem_tuning.hpp`). Repeated uses amortize one
+extra preparation pass when the live spans fit a CCD cache or the value
+passes run in parallel; serial memory-bound short quotients retain their
+per-execution cost. An explicitly requested
+algorithm or block size bypasses this policy. Long rectangular u52 products
+stream a bounded conversion buffer: their scratch does not grow with the
+long operand, and crossing 2^20 divisor limbs does not force a transform.
+
+Only the normalized divisor persists for Barrett. The residual product is
+replaced in place by the signed remainder; its low shifted numerator block
+reuses the already-consumed quotient-estimate operand buffer. The inverse
+binding and subsequent product bindings/scratch occupy a shared lifetime
+pool. Storage is the maximum of these phases, not their sum. Components in
+`info` describe their phases and must not be summed to infer peak storage;
+`storage_bytes` is the complete bound.
 
 The planner prices one use of every recipe, preparation included: the FFT
 family builds its tables at each binding (priced per table byte; the NTT
@@ -36,15 +46,25 @@ product. A search is made only where it can pay: the policy product search
 when the short product in hand costs more than the least a transform could
 plus the search itself, and not when it costs no more than the transform
 recipe found for a larger block size of the same request; the cyclic ring
-lattice when a ring within the family rule's fraction exists and the share
-of the linear output a ring can drop is worth more than the lattice's price.
+lattice from the divisor length at which the ring family pays on the block
+product's team for the expected executions (50000 limbs on one worker and one
+execution, times workers^0.8, over executions^0.7) and where a ring can be
+taken: against a linear recipe that keeps a spectrum when the lattice's least
+ring passes the family rule's fraction; against a linear transform without a
+spectrum also when the share of its output a ring drops is worth the
+lattice's price; against a short product from 48-limb blocks, when that
+product costs more than the least transform over the ring plus the search and
+the lattice's least ring, queried alone, is modelled cheaper. Block sizes are
+ordered by their linear recipes; when the first is left with an FFT linear
+recipe where rings pay, the next sizes within the measured model bias are
+asked for their ring, and the first that takes one goes first.
 
 Block Barrett computes the block inverse U of the top `block_limbs` limbs of
-the normalized divisor, |U - B^(2in)/Dtop| < 3: up to 864 limbs by one
-schoolbook division (no Newton plan and no Newton storage), above by the
+the normalized divisor, |U - B^(2in)/Dtop| < 3: up to 3072 limbs by a local u52 Newton recurrence with exact correction
+(no product search or root tables), above by the
 Newton ladder (`SBN3_NEWTON_INVERSE`). Block sizes are ordered by modelled
 cost: one to three blocks (or the fewest blocks of at most dn limbs and one
-more), and, where the modelled optimum under a schoolbook inverse lies below
+more), and, where the modelled optimum under a local inverse lies below
 those, the whole-block size next to it. The query performs each recipe
 search once: the order's searches are the taken size's searches, and the
 cached and plain recipes of one product share one search. It estimates each
@@ -59,12 +79,14 @@ the research repository (`docs/divrem-design-2026-09-18.md`).
 ## Resources and lifetime
 
 `sbn3_divrem_info` reports the complete storage of a binding and its
-components. Persistent divisor state (normalized divisor, block inverse,
-cached spectra, product tables/workspaces) lives from `prepare` until the
-next `prepare` or `unbind`. The shared region holds the block inverse's
-working storage (the schoolbook division's scratch or the Newton binding)
-during `prepare` and the block scratch during `execute`; the two never
-coexist. Execution performs no allocation, page operation, plan search
+components. The normalized divisor, block inverse and cached spectra persist
+until the next `prepare` or `unbind`. The shared region first holds the
+inverse's scratch, then the product tables/workspaces and block scratch.
+When both products use caches and sharing saves a large aligned workspace,
+U and T reuse one workspace serially. Their immutable roots remain in their
+spectra; switching rebinds their already compiled plans and codec constants.
+Small products remain bound throughout. Execution performs no allocation,
+page operation, plan search
 or algorithm switch. Extra workspace grows with the divisor, block and ring
 lengths, not with the total quotient length: numerator blocks are read
 through an in-flight shift.

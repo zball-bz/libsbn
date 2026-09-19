@@ -333,6 +333,7 @@ size_t owned_table_bytes(size_t entries,size_t levels,size_t M2,bool flat) {
     if(flat)tables.take(sizeof(p::FlatConstants));
     size_t bytes=0;return tables.ok && align_size(tables.at,64,bytes)?bytes:0;
 }
+template<bool materialize=true>
 sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_options &options,
                           sbn3_mul_plan &out,sbn3_mul_info &info) {
     if constexpr(LEAF!=8)if(request.cyclic_limbs || request.kind!=SBN3_PRODUCT_MUL || request.cached_a[0] || request.cached_a[1] ||
@@ -445,6 +446,8 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     i.rowscale=g.rowscale;i.row_task_grain=LEAF==8?UR:2;i.fused_row_grain=p::fuse_row_grain(g.T);i.format_slot_bytes=SLOT;i.format_block_slots=TB;
     i.fused_items=i.fused?(i.workers<g.C/i.fused_row_grain?i.workers:unsigned(g.C/i.fused_row_grain)):0;
     if(i.root_order_log2>32)return SBN3_QUERY_CAPACITY;
+    uint64_t h=0;
+    if constexpr(materialize) {
     q.arithmetic.basis.id=i.basis_id=basis_id(g);
     q.arithmetic.rows_a={g.lbv,g.lbw,1,{}};q.arithmetic.rows_b={g.lbv,g.lbw,1,{}};
     q.arithmetic.product={g.lbv,g.lbw,2,{}};
@@ -468,12 +471,13 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     }
     if(r.cached_mask&1){q.arithmetic.rows_a.frontier=1+r.cached[0].frontier;
         for(unsigned k=0;k<PN;++k)q.arithmetic.rows_a.scale[k]=r.cached[0].scale[k];}
-    uint64_t h=feed(i.basis_id,i.crt_mode);
+    h=feed(i.basis_id,i.crt_mode);
     for(auto v:q.arithmetic.scale_a)h=feed(h,v);
     for(uint64_t n:{g.an,g.yn,g.nat,g.nyt,g.lbv,g.lbw,uint64_t(g.full),g.rowscale})h=feed(h,n);
     h=feed(h,r.kind);h=feed(h,g.ring_rn);h=feed(h,request.window_limbs);for(auto v:r.lengths)h=feed(h,v);
     for(unsigned t=0;t<2;++t)for(auto v:r.k[t])h=feed(h,v);
     i.arithmetic_id=h;
+    }
     const size_t owned_tables=owned_table_bytes(i.table_entries,i.factor_levels,g.M2,flat);
     if(!owned_tables)return SBN3_QUERY_CAPACITY;
     if(r.cached_mask) {
@@ -528,15 +532,25 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     work.take(e.tail_bytes);if(e.journal_bytes)work.take(e.journal_bytes);if(e.spill_bytes)work.take(e.spill_bytes);
     for(unsigned k=0;k<i.workers;++k)work.take(i.per_worker_bytes);
     if(!work.ok || !align_size(work.at,64,i.workspace_bytes))return SBN3_QUERY_CAPACITY;
+    if constexpr(materialize) {
     for(uint64_t n:{uint64_t(i.workers),uint64_t(i.prime_batch),uint64_t(i.fused),uint64_t(i.borrow_output),
                    i.table_bytes,i.plane_pitch,i.workspace_bytes,i.per_worker_bytes,i.transpose_bytes,i.block_stride,i.product_row_stride,
                    uint64_t(i.row_task_grain),uint64_t(i.fused_row_grain),uint64_t(i.fused_items)})h=feed(h,n);
-    h=feed(h,i.algorithm);h=feed(h,i.fused_start_skew_us);h=feed(h,i.codec_mode);h=feed(h,r.cached_mask);for(const auto &d:r.cached)h=feed(h,d.frontier);i.execution_id=h;info=i;
+    h=feed(h,i.algorithm);h=feed(h,i.fused_start_skew_us);h=feed(h,i.codec_mode);h=feed(h,r.cached_mask);for(const auto &d:r.cached)h=feed(h,d.frontier);i.execution_id=h;
+    }
+    info=i;
     if(options.workspace_budget && i.workspace_bytes>options.workspace_budget) {
-        if(!flat && !options.prime_batch && q.options.prime_batch>1){auto smaller=options;smaller.prime_batch=1;return query_impl(request,smaller,out,info);}
+        if(!flat && !options.prime_batch && q.options.prime_batch>1){auto smaller=options;smaller.prime_batch=1;return query_impl<materialize>(request,smaller,out,info);}
         return SBN3_QUERY_CAPACITY;
     }
-    q.seal=plan_seal(q);memset(&out,0,sizeof out);memcpy(out.opaque,&q,sizeof q);return SBN3_SUPPORTED;
+    if constexpr(materialize){q.seal=plan_seal(q);memset(&out,0,sizeof out);memcpy(out.opaque,&q,sizeof q);}
+    return SBN3_SUPPORTED;
+}
+sbn3_query_result geometry_query(const sbn3_product_request &r,const sbn3_mul_options &o,sbn3_mul_info &i) {
+    i={};
+    if(r.cached_a[0] || r.cached_a[1])return SBN3_UNSUPPORTED;
+    sbn3_mul_plan unused;
+    return query_impl<false>(r,o,unused,i);
 }
 sbn3_query_result query(const sbn3_product_spec &spec,const sbn3_mul_options &opt,sbn3_mul_plan &out,sbn3_mul_info &info){
     sbn3_product_request r{};r.a_limbs=spec.a_limbs;r.b_limbs=spec.b_limbs;return query_impl(r,opt,out,info);
@@ -544,7 +558,11 @@ sbn3_query_result query(const sbn3_product_spec &spec,const sbn3_mul_options &op
 sbn3_query_result product_query(const sbn3_product_request &req,const sbn3_mul_options &opt,sbn3_mul_plan &out,sbn3_product_info &info){
     if constexpr(LEAF!=8){info={};return SBN3_UNSUPPORTED;} // experiment exposes the one-shot MUL recipe only
     info={};auto result=query_impl(req,opt,out,info.mul);if(result!=SBN3_SUPPORTED)return result;
-    const auto q=load_plan(out);info.kind=static_cast<sbn3_product_kind>(q.recipe.kind);info.cached_mask=q.recipe.cached_mask;
+    // query_impl just constructed and sealed this plan in this call. Loading
+    // it through the public-plan validation path would hash every field a
+    // second time for every search candidate. Bind/spectrum entry points still
+    // validate caller-supplied plans before using them.
+    ProductPlan q;memcpy(&q,out.opaque,sizeof q);info.kind=static_cast<sbn3_product_kind>(q.recipe.kind);info.cached_mask=q.recipe.cached_mask;
     info.window=q.recipe.window;info.spectrum_bytes=q.recipe.spectrum_bytes;info.spectrum_alignment=64;info.cyclic_limbs=q.arithmetic.transform.ring_rn;
     for(unsigned t=0;t<2;++t)for(unsigned k=0;k<PN;++k)info.leaf_scale[t][k]=q.recipe.k[t][k];return result;
 }
@@ -992,6 +1010,7 @@ const Backend &SBN3_P48_BACKEND() noexcept {
         .program_prepare_shared = program_prepare_shared,
         .program_options = program_options,
         .spectrum_multiply = compute_multiply,
+        .geometry_query = geometry_query,
     };
     return instance;
 }

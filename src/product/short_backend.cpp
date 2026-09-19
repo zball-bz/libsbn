@@ -131,7 +131,9 @@ sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_op
     q.bn = r.kind == SBN3_PRODUCT_SQR ? r.a_limbs : r.b_limbs;
     q.kind = r.kind;
     q.ring = r.cyclic_limbs;
-    const size_t limit = o.algorithm == SBN3_MUL_SCALAR ? size_t(1) << 31 : size_t(1) << 20;
+    const size_t limit = o.algorithm == SBN3_MUL_SCALAR ||
+                         (o.algorithm == SBN3_MUL_U52 && u52::streams(q.an,q.bn))
+                             ? size_t(1) << 31 : size_t(1) << 20;
     if (q.an > limit || q.bn > limit)
         return SBN3_QUERY_CAPACITY;
     auto &i = q.info;
@@ -636,10 +638,12 @@ void program_execute(const void *p,Frame &f,sbn3_team_scope *scope,sbn3_const_li
 unsigned program_contract(const sbn3_mul_plan &p) {
     const auto q=load(p);
     // Centered PFA can consult raw input digits while fixing emission. Do not
-    // advertise consume for it or direct u64 basecase. U52 converts both raw
-    // operands into its own digit arrays before emitting any u64 output.
+    // advertise consume for it or direct u64 basecase. Short U52 converts both
+    // inputs first. A long rectangular U52 product streams its long input;
+    // bounded inputs can enter that path even if the planned shape does not.
     return program_bounded_inputs |
-        (q.info.algorithm==SBN3_MUL_U52 || (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered)
+        ((q.info.algorithm==SBN3_MUL_U52 && std::max(q.an,q.bn)<=u52::strip_limbs) ||
+         (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered)
              ? program_consume_inputs : 0u);
 }
 size_t program_pair_bytes(const sbn3_mul_plan &p) {

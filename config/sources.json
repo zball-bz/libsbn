@@ -720,6 +720,24 @@
       "donor_ids": []
     },
     {
+      "path": "src/algorithms/local_inverse.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/inverse_seed.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/core/x86_64/word.cpp",
+        "src/value/divrem_basecase.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::local_inverse",
+        "sbn::v3::local_inverse_bytes"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
       "path": "src/algorithms/inverse_program.cpp",
       "language": "cxx",
       "group": "common",
@@ -832,7 +850,8 @@
         "src/algorithms/newton_service.cpp",
         "src/value/divrem_basecase.cpp",
         "src/runtime/team.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/algorithms/local_inverse.cpp"
       ],
       "provides_symbols": [
         "sbn3_divrem_query",
@@ -1299,7 +1318,8 @@
         "src/common/base.cpp",
         "src/product/api.cpp",
         "src/runtime/team.cpp",
-        "src/value/divrem_basecase.cpp"
+        "src/value/divrem_basecase.cpp",
+        "src/algorithms/local_inverse.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],

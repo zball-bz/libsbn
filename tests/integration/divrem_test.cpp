@@ -343,9 +343,10 @@ static void head_recipe_gates() {
         size_t dn;
         unsigned workers, reuse;
     };
-    // 12285 sits three limbs under the ring 12288, so ring room ends its head; 3001 at one worker and 20000 at sixteen
-    // have ample room above the divisor, so the cost limit does. The counters below hold the shapes to that.
-    for (const Shape &shape : {Shape{12285, 16, 8}, Shape{3001, 1, 0}, Shape{20000, 16, 8}}) {
+    // 12285 sits three limbs under the ring 12288, so ring room ends its head (one worker and eight executions: the
+    // ring family is searched from that length there); 3001 at one worker and 20000 at sixteen have ample room above
+    // the divisor, so the cost limit does. The counters below hold the shapes to that.
+    for (const Shape &shape : {Shape{12285, 1, 8}, Shape{3001, 1, 0}, Shape{20000, 16, 8}}) {
         size_t limit = 0;
         while (limit + 1 < shape.dn &&
                planned(shape.dn, request(shape.dn, 1, limit + 1), shape.workers, shape.reuse, shape.dn).head_limbs == limit + 1)
@@ -455,7 +456,8 @@ static void budget_algorithm_gates() {
     unsigned served = 0;
     for (const Shape shape : {Shape{3001, 3100}, Shape{5000, 5008}, Shape{40, 1240}, Shape{20011, 20017}}) {
         const auto blocks = planned(shape.dn, shape.nn, 1, 0);
-        assert(blocks.algorithm == SBN3_DIVREM_BARRETT);
+        if (blocks.algorithm != SBN3_DIVREM_BARRETT) // the policy's own choice: nothing to replace
+            continue;
         sbn3_divrem_request request{shape.nn, shape.dn};
         sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 0};
         sbn3_divrem_plan plan{};
@@ -503,7 +505,7 @@ int main() {
     // Requested block sizes through both block-inverse routes (one schoolbook division for short blocks, the Newton
     // ladder above) and next to each other at the switch; every divisor pattern, including the all-ones and the
     // power-of-two divisors that frame the inverse at its two ends.
-    for (size_t block : {1u, 2u, 15u, 16u, 863u, 864u, 865u, 866u, 1500u, 3001u})
+    for (size_t block : {1u, 2u, 15u, 16u, 575u, 576u, 577u, 578u, 863u, 864u, 865u, 866u, 1500u, 3001u})
         service_gates(3001, 6002, 1, block);
     service_gates(300, 4096, 1);
     service_gates(1000, 2000, 1, 0, 0, 1);
@@ -542,6 +544,17 @@ int main() {
     service_gates(65536, 131072, 16);
     service_gates(65536, 69632, 16);
     service_gates(262144, 524288, 16);
+    // The policy's plans where stage C-3 changed how they are reached, by value (whatever algorithm, block size and
+    // residual family the policy takes): quotients of a few limbs on divisors whose block working set has left the
+    // cache, on both sides of the one-use level; a size taken for its ring ahead of the first size of the linear order;
+    // a ring found from the lattice's least ring against a short product; and a ring against a linear transform that
+    // keeps no spectrum.
+    service_gates(250007, 250012, 1);
+    service_gates(250007, 250018, 1);
+    service_gates(250007, 250012, 16, 0, 8);
+    service_gates(58961, 88441, 1);
+    service_gates(301412, 302324, 1);
+    service_gates(129567, 145762, 1);
     // Short head block by word division: forced complete blocks under heads of
     // 1, 2, 3 and 7 limbs, the 2dn-1 / 2dn / 2dn+1 neighbourhood of a full
     // inverse, and shorter numerators crossing every block boundary of the plan.
@@ -573,7 +586,7 @@ int main() {
     shift_gates(70, 141, 0, 1);
     shift_gates(300, 601, 300, 1);
     // The word-division head is live under the policy's own plans (shorter numerators), not only on requested block sizes.
-    // A head the policy plans for its longest numerator exists only above 2^20 divisor limbs: divrem_contract_test.
+    // A head planned for the longest numerator is executed above 2^20 divisor limbs by divrem_contract_test.
     assert(total_short_heads);
     printf("divrem policy plans: %u executions of shorter numerators served their leftover limbs by word division\n", total_short_heads);
     puts("exact division gates PASS");

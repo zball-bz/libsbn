@@ -7,25 +7,29 @@
 #include "algorithms/newton_tuning.hpp"
 #include "product/cost_model.hpp"
 #include "product/root_prepare_cost.hpp"
+#include "product/backend.hpp"
+#include "product/native_capabilities.hpp"
 #include "common/checked.hpp"
 #include <algorithm>
 #include <cmath>
 namespace sbn::v3::newton_detail {
-// Every cold cycle cost is the producer's forward share plus the producer's
-// root preparation plus nonnegative terms (cycle_cost, cold_cycle_cost), and
-// floating-point addition is monotone, so this never exceeds it.
-double producer_lower_bound(Cycle kind, size_t m, size_t n, const Bundle &b) {
+// Every cold cycle includes the producer's forward share and roots. An
+// inverse additionally applies its one cached product twice, with exactly
+// the producer's cyclic geometry and input lengths. Bailey's cost fields
+// therefore agree. Flat's one-buffer factor may fall to .79 (small_tuning),
+// so use that lower bound before constructing the consumer. Other cycle
+// kinds have different second-product shapes and retain the weaker bound.
+double producer_lower_bound(Cycle kind, size_t m, size_t n, const sbn3_mul_info &i) {
     const bool deep = (kind == Cycle::Inverse ? n : kind == Cycle::Rsqrt ? m + 1 : n + 1) >
                       native_policy::small_model_max_words;
-    return cost_model::prepare_share(cost_model::cyclic_product(b.producer_info.mul, deep).nanoseconds) +
-           root_prepare_cost(b.producer_info.mul);
+    const double product = cost_model::cyclic_product(i, deep).nanoseconds;
+    double bound = cost_model::prepare_share(product);
+    if (kind == Cycle::Inverse && i.np)
+        bound += cost_model::cached_share(product * (i.algorithm == SBN3_MUL_FLAT ? .79 : 1.), 2);
+    return bound + root_prepare_cost(i);
 }
-// relevant/pruned (optional): after the producer query, the lower bound of
-// this candidate's cold cost is compared with `relevant`; above it the
-// remaining queries are skipped and *pruned is set. See choose_cycle.
-bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &c, Bundle &out,
-                     double relevant = INFINITY, bool *pruned = nullptr) {
-    sbn3_mul_options o{};
+void producer_request(Cycle kind, size_t m, size_t n, size_t ring, const Choice &c,
+                      sbn3_product_request &r, sbn3_mul_options &o) {
     o.workers = c.workers;
     o.prime_count = c.np;
     o.trunk_bits = c.T;
@@ -33,7 +37,6 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
     // The division ring is temporary, so its backing can also hold E1 when
     // codec/row padding extends slightly beyond the mathematical ring.
     o.borrow_output = kind == Cycle::Division ? 2 : 1;
-    sbn3_product_request r{};
     r.cyclic_limbs = ring;
     r.kind = kind == Cycle::Rsqrt ? SBN3_PRODUCT_SQR : SBN3_PRODUCT_MUL;
     r.window_limbs = kind == Cycle::Rsqrt ? m + newton_contract::guard_words : 0;
@@ -41,6 +44,21 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
     r.b_limbs = kind == Cycle::Rsqrt      ? 0
                 : kind == Cycle::Division ? std::max(m + 1, newton_contract::residual_words(m, n))
                                           : n;
+}
+bool producer_geometry(Cycle kind, size_t m, size_t n, const Choice &c, sbn3_mul_info &i) {
+    if (!native_available()) return false;
+    const Backend *b = backend_lookup(c.np);
+    if (!b || !b->geometry_query) return false;
+    sbn3_product_request r{};
+    sbn3_mul_options o{};
+    producer_request(kind, m, n, c.ring, c, r, o);
+    return b->geometry_query(r, o, i) == SBN3_SUPPORTED;
+}
+// Complete candidate, used only after its geometry lower bound survives.
+bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &c, Bundle &out) {
+    sbn3_mul_options o{};
+    sbn3_product_request r{};
+    producer_request(kind, m, n, ring, c, r, o);
     if (sbn3_product_query(&r, &o, &out.producer, &out.producer_info) != SBN3_SUPPORTED)
         return false;
     if (c.algorithm == SBN3_MUL_SCALAR) {
@@ -60,10 +78,6 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
             out.count = 2;
         }
         return true;
-    }
-    if (pruned && producer_lower_bound(kind, m, n, out) > relevant) {
-        *pruned = true;
-        return false;
     }
     if (sbn3_spectrum_query(&out.producer, SBN3_SPECTRUM_COLUMNS, n, &out.future) != SBN3_SUPPORTED)
         return false;
@@ -124,7 +138,20 @@ bool cycle_bound_probe(Cycle kind, size_t m, size_t n, const Choice &c, bool com
     if (!cycle_candidate(kind, m, n, c.ring, c, b))
         return false;
     const size_t largest = kind == Cycle::Inverse ? n : kind == Cycle::Rsqrt ? m + 1 : n + 1;
-    bound = producer_lower_bound(kind, m, n, b);
+    if (c.np) {
+        sbn3_mul_info estimate{};
+        require(producer_geometry(kind,m,n,c,estimate),SBN3_FATAL_MATH,"Newton geometry estimate support");
+        const auto &full=b.producer_info.mul;
+#define CHECK_GEOMETRY(field) require(estimate.field==full.field,SBN3_FATAL_MATH,"Newton geometry: " #field)
+        CHECK_GEOMETRY(algorithm);CHECK_GEOMETRY(np);CHECK_GEOMETRY(workers);CHECK_GEOMETRY(trunk_bits);
+        CHECK_GEOMETRY(C);CHECK_GEOMETRY(M2);CHECK_GEOMETRY(nat);CHECK_GEOMETRY(nyt);CHECK_GEOMETRY(lbv);CHECK_GEOMETRY(lbw);
+        CHECK_GEOMETRY(full);CHECK_GEOMETRY(prime_batch);CHECK_GEOMETRY(fused_row_grain);CHECK_GEOMETRY(fused_items);
+        CHECK_GEOMETRY(digit_words);CHECK_GEOMETRY(transform_trunks);CHECK_GEOMETRY(emit_trunks);
+        CHECK_GEOMETRY(table_entries);CHECK_GEOMETRY(factor_levels);CHECK_GEOMETRY(root_order_log2);
+        CHECK_GEOMETRY(table_bytes);CHECK_GEOMETRY(workspace_bytes);CHECK_GEOMETRY(per_worker_bytes);
+#undef CHECK_GEOMETRY
+        bound=producer_lower_bound(kind,m,n,estimate);
+    } else bound = producer_lower_bound(kind, m, n, b.producer_info.mul);
     cost = cold_cycle_cost(kind, b, largest > native_policy::small_model_max_words, compact);
     return true;
 }
@@ -196,9 +223,11 @@ bool choose_cycle(Plan &p, Cycle kind, size_t m, size_t n, unsigned index, bool 
                     if (algorithm == SBN3_MUL_BAILEY && ring < 2048)
                         continue;
                     const Choice c{np, algorithm, width_limit, T, ring};
-                    bool pruned = false;
-                    if (!cycle_candidate(kind, m, n, ring, c, candidate, native_policy::memory_trade_time_ratio * best,
-                                         &pruned))
+                    sbn3_mul_info geometry{};
+                    if (!producer_geometry(kind,m,n,c,geometry) ||
+                        producer_lower_bound(kind,m,n,geometry) > native_policy::memory_trade_time_ratio * best)
+                        continue;
+                    if (!cycle_candidate(kind, m, n, ring, c, candidate))
                         continue;
                     consider(c, candidate);
                 }

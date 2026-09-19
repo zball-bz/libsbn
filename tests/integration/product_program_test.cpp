@@ -134,6 +134,7 @@ int main() {
     assert(cost_model::small_ntt(smt_plan.info).evidence == cost_model::Evidence::Transferred);
     bounded(32, 23, 1, SBN3_MUL_SCALAR);
     bounded(256, 137, 1, SBN3_MUL_U52);
+    bounded(8193, 513, 1, SBN3_MUL_U52); // streamed, disjoint and shortened runtime inputs
     bounded(8192, 6845, 1, SBN3_MUL_PQ16);
     bounded(32768, 28001, 16, SBN3_MUL_PQ16);
     for (unsigned np : {4u, 5u, 6u, 7u, 8u, 9u, 10u})

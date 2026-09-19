@@ -296,7 +296,7 @@ void sealed_values() {
     // integer format and fraction parse above the schoolbook reciprocal: layout + Newton plan + transcript
     sbn3_format_spec fs{};
     fs.base = 10;
-    fs.limbs = 3000;
+    fs.limbs = 4097;
     fs.exponent2 = 0;
     fs.mode = SBN3_RADIX_EXACT;
     sbn3_format_plan fplan{};
@@ -304,8 +304,8 @@ void sealed_values() {
     assert(sbn3_format_query(&fs, &o, &fplan, &finfo) == SBN3_SUPPORTED && finfo.divide_bytes);
     sbn3_parse_spec ps{};
     ps.base = 10;
-    ps.fraction_digits = 60000;
-    ps.fraction_bits = 64 * 3100;
+    ps.fraction_digits = 80000;
+    ps.fraction_bits = 64 * 4200;
     sbn3_parse_plan pplan{};
     sbn3_parse_info pinfo{};
     assert(sbn3_parse_query(&ps, &o, &pplan, &pinfo) == SBN3_SUPPORTED && pinfo.divide_bytes);

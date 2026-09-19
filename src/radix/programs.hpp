@@ -1,6 +1,8 @@
 #pragma once
 // Exact product programs and the power rail shared by the radix conversion trees.
 #include "radix/geometry.hpp"
+#include "algorithms/inverse_tuning.hpp"
+#include "algorithms/local_inverse.hpp"
 #include "product/program.hpp"
 #include "product/table_pool.hpp"
 namespace sbn::v3::radix {
@@ -123,13 +125,12 @@ void rail_build(const BaseInfo &, const RailPlan &, unsigned workers, Arena &, s
                 uint64_t *storage, const uint64_t **entries) noexcept;
 // ---- reciprocal of a scaling power ----------------------------------------------------------------------
 // U = floor((B^(2n) - 1) / D) for a normalized n-limb D (top bit set), n + 1 limbs with U[n] = 1: inside the
-// Newton INVERSE contract (|U - B^(2n)/D| < 3). One schoolbook division. For one reciprocal it is cheaper than
-// the complete Newton route (query, bind, execute) up to about 880 limbs (measured 2026-09-19 on Zen 5:
-// 1.6 us at 64 limbs against a 111 us query alone; 87 against 238 us at 512; 194 against 252 at 768; 264
-// against 256 at 896; 345 against 294 at 1024), so such plans carry no Newton plan and no Newton storage.
-inline constexpr size_t reciprocal_basecase_limbs = 864;
+// Newton INVERSE contract (|U - B^(2n)/D| < 3). Local u52 recurrence with exact correction, cheaper than
+// the complete Newton route (query, bind, execute) below the shared crossover
+// in inverse_tuning.hpp. Such plans carry no Newton plan/storage.
+inline constexpr size_t reciprocal_basecase_limbs = inverse_tuning::basecase_limbs;
 inline bool reciprocal_is_basecase(size_t n) noexcept { return n && n <= reciprocal_basecase_limbs; }
-inline size_t reciprocal_basecase_bytes(size_t n) noexcept { return (((2 * n + 8) * 8 + 63) & ~size_t(63)) * 3 + 256; }
+inline size_t reciprocal_basecase_bytes(size_t n) noexcept { return local_inverse_bytes(n); }
 void reciprocal_basecase(const uint64_t *d, size_t n, uint64_t *out, Frame &scratch) noexcept;
 // ---- odd^(64 F) for any F, from the rail (rail.count > top bit of F) ----------------------------------
 inline constexpr size_t chain_basecase_limbs = 24;

@@ -28,7 +28,9 @@ constexpr size_t align_to(size_t x, size_t a) noexcept { return (x + a - 1) & ~(
 unsigned pow2_floor(unsigned v) noexcept { return 1u << (31 - unsigned(__builtin_clz(v))); }
 } // namespace
 sbn3_query_result format_tree_begin(unsigned base, unsigned workers, uint64_t largest_fragments, FormatTreePlan &p) noexcept {
-    p.~FormatTreePlan();
+    // The caller may supply raw storage. The plan owns no resources; placement
+    // construction also safely replaces an existing trivially destructible plan.
+    static_assert(__is_trivially_destructible(FormatTreePlan));
     ::new (&p) FormatTreePlan{};
     if (!base_info(base, p.base) || p.base.odd == 1 || !workers || workers > 32)
         return p.status = SBN3_UNSUPPORTED;

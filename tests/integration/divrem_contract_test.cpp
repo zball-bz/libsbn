@@ -18,7 +18,7 @@ struct Case {
     size_t block;
     unsigned reuse;
     int head;           // expected word-division head; -1: the policy decides
-    bool varies = true; // guards the producer/consumer variation; otherwise a default plan's own head of two limbs or more
+    bool varies = true; // guards the producer/consumer variation; otherwise a planned head of two limbs or more
 };
 size_t mem_available() {
     FILE *f = fopen("/proc/meminfo", "r");
@@ -62,18 +62,23 @@ std::vector<uint64_t> random_limbs(size_t n) {
         w = random_word();
     return v;
 }
-// Shortest numerator with a quotient of 9 to 32 limbs whose default-option plan serves two or more leading quotient
-// limbs by word division; 0 when the policy plans no such head on this divisor length.
-size_t planned_head_numerator(size_t dn, unsigned workers) {
-    for (size_t qn = 9; qn <= 32; ++qn) {
-        sbn3_divrem_request request{dn + qn - 1, dn};
-        sbn3_divrem_options options{workers, 0, 0, 0, 0, 0, 0, 0};
-        sbn3_divrem_plan plan{};
-        sbn3_divrem_info info{};
-        if (sbn3_divrem_query(&request, &options, &plan, &info) == SBN3_SUPPORTED && info.algorithm == SBN3_DIVREM_BARRETT &&
-            info.head_limbs >= 2)
-            return request.numerator_limbs;
-    }
+// Shortest numerator with a quotient of 9 to 32 limbs whose plan serves two or more leading quotient limbs by word
+// division: the default-option plan where the policy plans such a head on this divisor length, else (the one-use
+// rule hands these quotients to the schoolbook) the plan of the least requested block size that leaves one; 0 when
+// neither exists. `block` receives the block size to request (0: default options).
+size_t planned_head_numerator(size_t dn, unsigned workers, size_t &block) {
+    for (unsigned requested = 0; requested < 2; ++requested)
+        for (size_t qn = 9; qn <= 32; ++qn)
+            for (block = requested ? 3 : 0; block < (requested ? qn - 1 : 1); ++block) {
+                sbn3_divrem_request request{dn + qn - 1, dn};
+                sbn3_divrem_options options{workers, 0, 0, 0, block, 0, 0, 0};
+                sbn3_divrem_plan plan{};
+                sbn3_divrem_info info{};
+                if (sbn3_divrem_query(&request, &options, &plan, &info) == SBN3_SUPPORTED && info.algorithm == SBN3_DIVREM_BARRETT &&
+                    info.head_limbs >= 2)
+                    return request.numerator_limbs;
+            }
+    block = 0;
     return 0;
 }
 bool run(const Case &c) {
@@ -87,7 +92,7 @@ bool run(const Case &c) {
     const bool u_varies = c.varies && representation_varies(in + 1, in, c.workers, c.prime_count),
                t_varies = c.varies && !info.ring_limbs && representation_varies(c.dn, in, c.workers, c.prime_count);
     // The case must exercise what it guards, or it no longer guards it.
-    assert(c.varies ? info.spectrum_bytes && (u_varies || t_varies) : !c.block && info.head_limbs >= 2);
+    assert(c.varies ? info.spectrum_bytes && (u_varies || t_varies) : info.head_limbs >= 2);
     const size_t team_bytes = sbn3_team_storage_bytes() + sbn3_team_stack_resident_bytes(c.workers);
     const size_t admission = info.storage_bytes + team_bytes + (size_t(8) << 20);
     assert(admission <= budget);
@@ -174,7 +179,9 @@ bool run(const Case &c) {
            "head limbs and product pairs as planned on every execute, storage %zu MiB within the %zu MiB budget, 4 prepares, "
            "%u executes, rebind identical PASS\n",
            c.dn, c.nn, c.workers, c.prime_count, c.block, c.reuse, in, info.ring_limbs, info.blocks, info.head_limbs,
-           c.varies ? "producer/consumer variation" : "the policy's own word-division head, variation not required", int(u_varies),
+           c.varies ? "producer/consumer variation" : c.block ? "word-division head under a requested block size, variation not required"
+                                                              : "the policy's own word-division head, variation not required",
+           int(u_varies),
            int(t_varies), info.storage_bytes >> 20, budget >> 20, executes + 1);
     fflush(stdout);
     return true;
@@ -193,12 +200,14 @@ int main() {
         ran += run(c);
         ++total;
     }
-    // Default options on a short quotient, at one worker and across a team of three: the numerator is the shortest
-    // whose plan states a head of two limbs or more, so the gate follows the policy instead of naming its block size.
+    // A short quotient, at one worker and across a team of three: the numerator is the shortest whose plan states a
+    // head of two limbs or more, so the gate follows the policy instead of naming its block size; where the policy
+    // serves such quotients by the schoolbook, the head path is reached by the least requested block size that leaves one.
     for (unsigned workers : {1u, 3u}) {
-        const size_t dn = 1048579, nn = planned_head_numerator(dn, workers);
-        assert(nn); // no default plan with a head here any more: find where the policy plans one, or that path has no gate
-        ran += run({dn, nn, workers, 0, 0, 0, -1, false});
+        size_t block = 0;
+        const size_t dn = 1048579, nn = planned_head_numerator(dn, workers, block);
+        assert(nn); // no plan with a head here any more: find where one is planned, or that path has no gate
+        ran += run({dn, nn, workers, 0, block, 0, -1, false});
         ++total;
     }
     printf("division spectrum contract and planned-head gates %s (%u of %u cases ran)\n", ran ? "PASS" : "SKIPPED", ran, total);

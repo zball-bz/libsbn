@@ -1,29 +1,26 @@
 #pragma once
 #include <stddef.h>
+#include "algorithms/inverse_tuning.hpp"
 namespace sbn::v3::divrem_tuning {
-// Initial shape thresholds for the exact division service. Zen5 AI Max 395,
-// Clang 21.1.8. Calibrated by experiments/results/divrem_2026-09-18 (crossover
-// sweep of the schoolbook entry against the block-Barrett service); the
-// values only choose between exact algorithms and never change results.
-// One use of a plan, complete (query, bind, divisor preparation, executions, unbind). The schoolbook plans and
-// prepares nothing; a block-Barrett division pays its planning and preparation, then about an eighth of the
-// schoolbook's price per limb step (short products), and both pass over the divisor a few times per call, the blocks
-// about four quotient limbs' worth more. So the schoolbook serves a request whose work beyond that level,
-//   reuse_hint * (quotient limbs - schoolbook_level_quotient) * divisor limbs,
-// is at most schoolbook_use_work limb steps, whatever the divisor length. Measured equal-cost points of complete
-// calls (experiments results/divrem_fresh_c2_2026-09-19): forced algorithms in interleaved windows (crossover, one
-// worker; sixteen alike) 17-19k limb steps for divisors of 24..300 limbs (quotients of 700..62 limbs), 16-20k at
-// 603..3001, 13.5-17k at 4500..10007, 24k at 20011, 13.5k at 45000, and at 100003 and 300007 limbs the two level at
-// four quotient limbs with the blocks ahead from five; adjacent shapes of the fresh driver across the switch
-// (boundary, 36 sets, one and sixteen workers, the constant then at 16000) 16.5-17k for 2d/d and 8d/d, 17-18k for
-// quotients of 60-260 limbs, 19-21k for quotients of 16-20 limbs. The constant sits in the middle: either side is
-// within about 6 % of the other at the switch. Before the planner priced a recipe's one-use preparation and searched
-// only where a search can pay (below), the same points lay at 335k-920k and moved with the divisor length (stage
-// C-1: 360000 above a level of eight limbs, which left the blocks up to 2.0x behind the schoolbook just above the
-// switch for divisors of 1.5k-100k limbs). A requested block size is a request for blocks and is not subject to
-// this rule.
-inline constexpr size_t schoolbook_level_quotient = 4;
+// Native one-use crossover, Zen5 AI Max 395 / Clang 21.1.8. The rule prices
+// fixed planning against repeated schoolbook limb steps. Rectangular u52
+// products stream a bounded working set; the block remainder overwrites the
+// product and only the normalized divisor persists. Thus both algorithms
+// hold about 24 bytes per divisor limb for short quotients, without a
+// transform-capacity cliff at 2^20 or a separate page-commit penalty.
+// Complete-call pool/grow comparisons, W1/W16, divisors 65537..2097169,
+// quotients 4/5/6/8/12/16: blocks are consistently worthwhile from six
+// quotient limbs; four/five straddle equality. Preserve schoolbook there.
+// Evidence: experiments/results/codex_divrem_radix_2026-09-19/struct2/crossover-*.
+// The 18000-limb-step fixed-work term retains the smaller-divisor calibration
+// of stage C-2. Requested algorithms/block sizes bypass this policy.
+inline constexpr size_t schoolbook_level_quotient = 5;
 inline constexpr double schoolbook_use_work = 18000.0;
+// Short-quotient live spans: D', residual, product and caller N/R, ~40 B
+// per divisor limb against a 32-MiB CCD cache. REUSE_K=8 measurements keep
+// the preparation credit in this regime, and when value passes are parallel;
+// serial DRAM at 2M limbs still favors schoolbook for a five-limb quotient.
+inline constexpr size_t short_cache_limbs = (size_t(32)<<20)/40;
 // Under a memory budget that no block size meets, the schoolbook (it holds the least storage of all) serves the
 // request where its complete cost is bounded: within a factor of two of the blocks (divisors up to 64 limbs at any
 // quotient length, quotients up to 8 limbs at any divisor length: same measurement) or at most this many limb steps
@@ -40,34 +37,21 @@ inline constexpr double schoolbook_budget_work = 360000.0;
 // A block holds at most dn quotient limbs, and its fixed work (two product calls, the passes over residual and
 // divisor) is shared by that many: on divisors this short the blocks stay behind the schoolbook at any quotient
 // length (same measurement, quotients up to 21000 limbs: schoolbook / blocks 0.22 at three limbs, 0.63 at eight,
-// 0.71 at ten, 0.85-0.97 at twelve, 0.94-1.10 at thirteen, 1.08-1.34 at sixteen). Stage C-1 and before: 64, from
-// an execution-only sweep of a planner that priced no short product.
-inline constexpr size_t schoolbook_max_divisor = 12;
-// Block inverse: up to this many limbs one schoolbook division U = floor((B^(2in) - 1) / Dtop) replaces the Newton
-// ladder (its query, binding and execution). Equal complete cost near 880 limbs (the radix reciprocal's
-// measurement, src/radix/programs.hpp); on complete divisions the step across the switch is +1.5-2 %
-// (results/divrem_fresh_2026-09-19/crossover, list3). A binding that is re-prepared many times pays the
-// schoolbook inverse each time (about twice the Newton execution at 340 limbs); the hint has no field for that.
-inline constexpr size_t inverse_basecase_limbs = 864;
-// Ordering price of that schoolbook inverse (a 2in/in division): 1.6 us at 64 limbs, 87 us at 512, 194 us at 768,
-// 264 us at 896 (src/radix/programs.hpp, same routine) = 0.33-0.39 ns per limb squared.
-inline constexpr double inverse_basecase_ns_per_limb2 = 0.33;
-// Ordering price of the Newton route's planning (its query and binding), which a schoolbook inverse does not pay:
-// the ladder's query alone measured 288 us at 1366 limbs, 418 us at 5462, 629 us at 21846 (experiments
-// results/divrem_fresh_2026-09-19/profile-base). One constant for every Newton size, so the order among sizes that
-// all take the ladder is what it was; it only weighs a ladder against a schoolbook inverse.
-inline constexpr double inverse_newton_planning_ns = 300000.0;
-// With those two prices the order also weighs one size the quotient-driven sizes (one to three blocks, or the
-// fewest blocks and one more) do not contain: under a schoolbook inverse the modelled cost a*in^2 + executions *
-// ceil(qn/in) * pair is least near in* = cbrt(executions * qn * pair / (2a)), pair being the best ordered size's
-// product pair; the whole-block size at in* joins the order when it lies below the others and its estimate beats
-// the best one's. Complete one-shot 2d/d calls by requested block count (experiments
-// results/divrem_fresh_2026-09-19/crossover, list5/list6, one worker): dn=1024 189 us at three blocks, 145 at five
-// to eight; 2048: 421 -> 292; 2896: 558 -> 387; 4096: 725 -> 472; the pairs of five to twelve blocks cost about
-// what three cost, the inverse falls with in^2. For 2d/d the estimate declines it above dn~5000; for quotients of
-// 430-2600 limbs it is taken up to divisors of about 142000 limbs (one Newton-route block becomes two to four
-// schoolbook-inverse blocks; stage C-1 review, 40000-shape query differential). A Newton-route size with more
-// blocks, which measured up to 11 % better at dn 5793-9742, is not a candidate.
+// 0.71 at ten, 0.85-0.97 at twelve, 0.94-1.10 at thirteen, 1.08-1.34 at sixteen; complete fresh calls, stage C-2
+// review: blocks / schoolbook 1.12 at thirteen limbs, one use and eight, 0.86 from fifteen; the forced curve 1.065,
+// 1.125, 1.047 at thirteen to fifteen). Stage C-1 and before: 64, from an execution-only sweep of a planner that
+// priced no short product.
+inline constexpr size_t schoolbook_max_divisor = 14;
+// One-use reciprocal route, shared with radix. The cutoff tracks the complete
+// Newton path, including planning (inverse_tuning.hpp).
+inline constexpr size_t inverse_basecase_limbs = inverse_tuning::basecase_limbs;
+// Planning/binding seed after geometry-only search; ~80 us of a 110-140 us
+// complete 513..1219-limb reciprocal. Same price for all Newton candidates.
+inline constexpr double inverse_newton_planning_ns = 80000.0;
+// Besides quotient-driven block sizes, rank one candidate near the minimum
+// of local_inverse_cost(in) + executions*ceil(qn/in)*pair. Its own product
+// prices decide; a larger block's pair price is not a pruning bound. The
+// local inverse's measured exponent is 1.5 (inverse_tuning.hpp).
 // One use of a recipe, complete. The FFT family builds its tables at every binding (its own, or those of the spectrum
 // a cached recipe reads), and root_prepare_cost prices the NTT families' roots only, so the order priced them at
 // zero: measured 56 us at dn=3001, 112 us at 6428, 113 us at 10120, 125 us at 45000, 1063 us at 100003 (seven-way
@@ -120,9 +104,45 @@ inline constexpr size_t ring_guard_words = 2; // ring >= dn + guard for the sign
 // limbs on one worker (2-16 %, the lattice search included) and about 150000 on sixteen (5-33 %), ahead above
 // (10-25 % and 2-14 %). Eight executions: ahead nearly everywhere on one worker (geometric mean 0.93, behind 3-16 %
 // at 32768-46341), behind 5-29 % at 8192-30048 limbs on sixteen workers (eight-worker products), ahead above.
-// The fraction stays; what changed is when the lattice is searched at all (lattice_search_ns below): a ring saves
-// at most the share of the linear output it drops.
+// The fraction stays as the family rule between two recipes that keep a spectrum. What the experiment separates is
+// applied first: the ring family is searched from cyclic_ring_min_limbs divisor limbs on one worker and one
+// execution per divisor, times workers^0.8 of the block product's team, over executions^0.7. Forced cyclic / forced
+// linear in that experiment: one worker, one use 1.02-1.20 at 19484..46341 limbs and 0.78-0.92 from 50535; eight
+// executions 1.01-1.08 up to 10624 and 0.85-0.99 from 11585 (1.01-1.08 again at 35734-42495); sixteen workers
+// (eight on the product up to 262160 limbs), one use 1.06-1.58 up to 131072, 0.94-1.14 at 142935..440872 and
+// 0.90-0.99 from 480774; eight executions 1.03-1.37 up to 30048, 0.83-1.12 to 120194, 0.83-0.99 from 131072. The
+// policy of stage C-2 and before took rings the fraction admits from 18658 limbs on one worker (2d/d), 10-29 %
+// behind the linear family up to 36000. Against a short product (no tables, no spectrum) no ring is searched below
+// transform_min_limbs of the block: that recipe was taken because no transform pays for so short a block, and a
+// ring is a transform of the divisor's length (stage C-2 review: rings in its place 1.1-2.3 times slower at sixteen
+// workers, quotients of 11-39 limbs). From that length on a ring may win by its kept spectrum, a ring longer than
+// the linear output included (301412 / 913-limb quotient, one worker, 5.2 against 6.6 ms; 359409 / 749 with eight
+// executions 30 against 51 ms; same review), but a lattice searched for nothing is 100-170 us, 4-20 % of a complete
+// call for 1000-limb quotients on 131101..370727 limbs (results/divrem_fresh_c3_2026-09-19/ab-c2, ring3-w1): when
+// the short product costs more than the least transform over the ring and the lattice's price, the lattice's least
+// ring is queried alone, and the lattice is searched when that ring is modelled cheaper; the cost model decides.
+// Against a linear transform that keeps no spectrum the cost model decides as well, and the lattice is searched when
+// its least ring passes the fraction (a ring of 0.899, 131072 for 129567 + 16196 limbs, saved 545 us of a 4 ms call
+// where the stage C-2 bound below declined the search) or when the share of the linear output a ring drops, times
+// the linear recipe's cost, exceeds the lattice's price (stage C-2's bound: it declines the rings of 0.956-0.99 on
+// long divisors at sixteen workers, where the linear recipes measured 0.84-1.03 of them, and keeps the ring of
+// 0.9035 for 92683 + 11586 limbs on one worker, 2.8 against 4.1 ms without it).
 inline constexpr double cyclic_ring_fraction = 0.9;
+inline constexpr double cyclic_ring_min_limbs = 50000.0;
+inline constexpr double cyclic_ring_worker_scaling = 0.8;
+inline constexpr double cyclic_ring_execution_scaling = 0.7;
+inline constexpr unsigned cyclic_ring_execution_limit = 8; // the most executions per divisor that were measured
+// Block sizes are ordered by their linear recipes. Where rings pay, the cost model has the FFT family's linear
+// recipe at 0.9-1.0 of the ring recipe of a neighbouring size (210472 / 26310-limb quotient, one worker: two linear
+// blocks modelled 5.27 ms against one block under the ring 212992 at 5.74) while complete calls measured the ring
+// plan 1.11-1.35 times faster (8.09 against 5.99 ms there; 20 of 20 such shapes from 58961 limbs, stage C-2
+// review): that family's model is calibrated inside the cache. When the first size of the order is left with an FFT
+// linear recipe, the following sizes whose linear totals are within this multiple of its total are asked for their
+// ring in order, and the first that takes one goes first. Asking every size at ordering time measured 6-9 % of a
+// complete call at 59000-103000 limbs (two to three lattices of about 85 us each on plans that did not change).
+// The same bias applies where the cost model decides between such a linear transform and a ring of the same size
+// (the ring of 0.899 above: the linear recipe without a spectrum is modelled cheaper and measured 16 % slower).
+inline constexpr double fft_linear_order_bias = 1.25;
 // Short head block (quotient limbs modulo the block size) by word division:
 // one multiply-subtract pass over the divisor per limb, against one padded
 // block's product pair. Planning seeds (ns) for that crossover, measured

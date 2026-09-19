@@ -355,15 +355,7 @@ void rail_build(const BaseInfo &base, const RailPlan &rail, unsigned workers, Ar
     }
 }
 void reciprocal_basecase(const uint64_t *d, size_t n, uint64_t *out, Frame &scratch) noexcept {
-    require(n && (d[n - 1] >> 63), SBN3_FATAL_MATH, "radix reciprocal divisor");
-    FrameMark mark(scratch);
-    // [numerator 2n][remainder n][division scratch 3n + 1], limbs
-    auto *numerator = scratch.alloc<uint64_t>(2 * n), *remainder = scratch.alloc<uint64_t>(n);
-    auto *work = scratch.alloc<uint64_t>(3 * n + 1);
-    for (size_t j = 0; j < 2 * n; ++j)
-        numerator[j] = ~uint64_t(0); // B^(2n) - 1
-    const size_t qn = sbn3_divrem_basecase(out, remainder, numerator, 2 * n, d, n, work);
-    require(qn == n + 1 && out[n] == 1, SBN3_FATAL_MATH, "radix reciprocal range");
+    local_inverse(out,d,n,scratch);
 }
 Chain chain_of(const BaseInfo &b, uint64_t fragments) noexcept {
     Chain c{};

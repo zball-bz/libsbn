@@ -298,7 +298,8 @@ sbn3_query_result Assembly::assemble() noexcept {
     // Layout: [control][prepared][values][divide][work], all relative to a base aligned to storage_alignment.
     const size_t prepared_alignment = trees ? std::max<size_t>(4096, tree.prepared_alignment()) : 4096;
     const size_t divide_alignment = p.divide_limbs ? std::max<size_t>(4096, divide_info.storage_alignment) : 4096;
-    info.storage_alignment = std::max<size_t>({size_t(1) << 21, prepared_alignment, divide_alignment});
+    const size_t pool_alignment = trees && tree.pool_bytes() ? size_t(1) << 21 : 4096;
+    info.storage_alignment = std::max({pool_alignment, prepared_alignment, divide_alignment});
     info.control_bytes = align_to(align_to(sizeof(Binding), 64) + size_t(trees ? tree.program_slots() : 0) * sizeof(ProductProgram) +
                                       size_t(classes) * sizeof(RailProduct) + size_t(trees ? tree.ring_stages : 0) * sizeof(RingStage) + 192,
                                   4096);
@@ -310,8 +311,8 @@ sbn3_query_result Assembly::assemble() noexcept {
     p.divide_bytes = p.divide_limbs ? divide_info.storage_bytes : 0; // bind-time use of the work range
     // The pool of the ring stages stays unleased: the product service leases inside it stage by stage.
     p.pool_bytes = trees ? align_to(tree.pool_bytes(), 4096) : 0;
-    p.pool_offset = align_to(p.values_offset + p.values_bytes, size_t(1) << 21);
-    p.work_offset = align_to(p.pool_offset + p.pool_bytes, std::max<size_t>(size_t(1) << 21, divide_alignment));
+    p.pool_offset = align_to(p.values_offset + p.values_bytes, pool_alignment);
+    p.work_offset = align_to(p.pool_offset + p.pool_bytes, divide_alignment);
     if (p.pool_bytes)
         info.lease_peak += 1 + 2 * ring_max_groups;
     p.work_bytes = trees ? align_to(work + 64, 4096) : 0;

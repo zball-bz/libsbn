@@ -5,11 +5,14 @@
 #include "algorithms/divrem_tuning.hpp"
 #include "algorithms/newton_tuning.hpp"
 #include "algorithms/newton_limits.hpp"
+#include "algorithms/local_inverse.hpp"
 #include "common/checked.hpp"
 #include "common/identity.hpp"
 #include "product/cost_model.hpp"
+#include "product/backend.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "runtime/team.hpp"
+#include "runtime/scratch.hpp"
 #include "value/divrem_words.hpp"
 #include "value/limbs.hpp"
 #include "value/parallel_limbs.hpp"
@@ -42,6 +45,7 @@ struct Plan {
     size_t shared_offset = 0, newton_bytes = 0, newton_alignment = 0;
     size_t xbuf_offset = 0, tbuf_offset = 0, ubuf_offset = 0, pbuf_offset = 0, qbuf_offset = 0, rbuf_offset = 0;
     size_t tcap = 0, pcap = 0, scratch_words = 0;
+    bool shared_products = false;
 };
 struct Queried {
     sbn3_mul_plan producer{}, consumer{};
@@ -89,7 +93,7 @@ uint64_t seal(const Plan &p) {
                               p.info.plan_id, p.in, p.ring, p.xlen, p.head, p.u.np, p.u.algorithm, p.u.workers,
                               uint64_t(p.u.T), p.u.ring, p.u.cached, p.t.np, p.t.algorithm, p.t.workers,
                               uint64_t(p.t.T), p.t.ring, p.t.cached, p.persistent_offset, p.shared_offset,
-                              p.newton_bytes, p.newton_alignment, p.tcap, p.pcap, p.scratch_words};
+                              p.newton_bytes, p.newton_alignment, p.tcap, p.pcap, p.scratch_words, uint64_t(p.shared_products)};
     for (uint64_t w : words)
         h = feed(h, w);
     return h;
@@ -295,7 +299,7 @@ bool choose_u(const Plan &p, size_t in, double applications, ProductChoice &out,
         if (!query_product(in + 1, in, c, 1, candidate, &plain))
             continue;
         const Cost k = product_cost(candidate, in + 1, in);
-        if (!policy || k.apply < best.apply) {
+        if (!policy || total(k) < total(best)) {
             policy = true;
             choice = c;
             queried = candidate;
@@ -322,6 +326,24 @@ struct Residual {
 };
 void consider(Residual &b, size_t dn, size_t in, double applications, const ProductChoice &c, size_t r,
               Plain *plain = nullptr) {
+    if (r && c.np && c.cached && b.found) {
+        // Same exact cyclic geometry in producer and cached consumer. The
+        // only downward cost change is Flat's one-buffer factor (>= .79).
+        // Discard a loser from cheap geometry metadata; survivors still
+        // construct and validate both ordinary plans and the cache contract.
+        sbn3_product_request request{};
+        request.a_limbs=dn;request.b_limbs=in;request.cyclic_limbs=r;
+        sbn3_mul_info geometry{};
+        const auto *backend=backend_lookup(c.np);
+        if (backend && backend->geometry_query &&
+            backend->geometry_query(request,product_options(c),geometry)==SBN3_SUPPORTED) {
+            const double base=cost_model::cyclic_product(geometry,std::max(dn,in)>native_policy::small_model_max_words).nanoseconds;
+            const double cached=base*(geometry.algorithm==SBN3_MUL_FLAT?.79:1.);
+            const double bound=root_prepare_cost(geometry)+cost_model::prepare_share(base)+
+                               applications*cost_model::cached_share(cached);
+            if (bound>b.total) return;
+        }
+    }
     Queried candidate{};
     if (!query_product(dn, in, c, 2, candidate, plain))
         return;
@@ -411,6 +433,10 @@ size_t least_ring(const Plan &p, size_t dn) {
     ring_lattice(p, dn, [&](const ProductChoice &, size_t r) { least = std::min(least, r); });
     return least;
 }
+bool short_recipe(const Residual &t) {
+    const unsigned algorithm = t.queried.consumer_info.mul.algorithm;
+    return algorithm == SBN3_MUL_SCALAR || algorithm == SBN3_MUL_U52;
+}
 // Linear and cyclic families are ranked separately by the cost model; the
 // family is then chosen by the structural ring rule (divrem_tuning).
 const Residual *residual_family(const Plan &p, size_t dn, size_t in, const Residual &lin, const Residual &cyc) {
@@ -418,19 +444,62 @@ const Residual *residual_family(const Plan &p, size_t dn, size_t in, const Resid
         return lin.found ? &lin : nullptr;
     if (!lin.found || p.options.residual == 2)
         return &cyc;
-    // Cached against cached: the ring rule; otherwise (no cyclic spectrum, e.g.
-    // the scalar ring) the cost model decides.
+    // Cached against cached: the ring rule; otherwise (a linear recipe that keeps no spectrum, a short product,
+    // the scalar ring) the cost model decides, the FFT family's linear transform at its measured bias against a
+    // ring (divrem_tuning: a lattice is searched only where rings pay).
     if (cyc.queried.cached && lin.queried.cached)
         return double(cyc.ring) <= divrem_tuning::cyclic_ring_fraction * double(dn + in) ? &cyc : &lin;
-    return cyc.total < lin.total ? &cyc : &lin;
+    const double bias = lin.queried.consumer_info.mul.algorithm == SBN3_MUL_PQ16 ? divrem_tuning::fft_linear_order_bias : 1.0;
+    return cyc.total < bias * lin.total ? &cyc : &lin;
 }
-// Block inverse: one schoolbook division up to inverse_basecase_limbs (no
-// Newton plan, its storage is the division's scratch), the Newton ladder above.
+// The divisor length from which the ring family pays on the block product's team for these executions (divrem_tuning).
+bool ring_pays(const Plan &p, size_t dn) {
+    namespace t = divrem_tuning;
+    const unsigned workers = product_workers(p, dn),
+                   executions = std::clamp(p.options.reuse_hint, 1u, t::cyclic_ring_execution_limit);
+    double least = t::cyclic_ring_min_limbs;
+    if (workers > 1)
+        least *= std::pow(double(workers), t::cyclic_ring_worker_scaling);
+    if (executions > 1)
+        least /= std::pow(double(executions), t::cyclic_ring_execution_scaling);
+    return double(dn) >= least;
+}
+// Whether the ring lattice is searched for a block size (divrem_tuning): from the divisor length at which the ring
+// family pays on the block product's team for these executions, and where a ring can be taken at all. Between two
+// recipes that keep a spectrum the family rule decides by the ring alone, and no ring passes it when the lattice's
+// least one does not. A linear transform without a spectrum is decided by the cost model: searched when the least
+// ring passes that rule or the share of the linear output it drops is worth the lattice's price. Against a short
+// product a ring is a transform recipe like the policy's: considered from the same operand length and when the
+// recipe in hand costs more than the least such transform and the search; then the lattice's least ring is queried
+// alone (a few queries against about a hundred), and the lattice is searched when that ring is modelled cheaper.
+bool lattice_wanted(const Plan &p, size_t dn, size_t in, double applications, const Residual &lin) {
+    namespace t = divrem_tuning;
+    if (p.options.residual == 1)
+        return false;
+    if (p.options.residual == 2 || !lin.found)
+        return true;
+    if (!ring_pays(p, dn))
+        return false;
+    const size_t ring = least_ring(p, dn);
+    const double fraction = double(ring) / double(dn + in);
+    if (short_recipe(lin)) {
+        if (in < t::transform_min_limbs || lin.total - transform_floor(p, ring, applications) <= t::lattice_search_ns)
+            return false;
+        Residual least{};
+        ring_lattice(p, dn, [&](const ProductChoice &c, size_t r) {
+            if (r == ring)
+                consider(least, dn, in, applications, c, r);
+        });
+        return least.found && least.total < lin.total;
+    }
+    if (lin.queried.cached)
+        return fraction <= t::cyclic_ring_fraction;
+    return fraction <= t::cyclic_ring_fraction || (1 - fraction) * lin.total > t::lattice_search_ns;
+}
+// Block inverse: local u52 recurrence/exact correction without a product
+// planner below the shared crossover, spectral Newton above it.
 bool inverse_basecase(size_t in) {
     return in <= divrem_tuning::inverse_basecase_limbs;
-}
-size_t inverse_basecase_words(size_t in) {
-    return 6 * in + 1; // [B^(2in)-1: 2in][remainder: in][division scratch: 3in+1]
 }
 double newton_estimate(const Plan &p, size_t in) {
     ProductChoice c{};
@@ -442,10 +511,10 @@ double newton_estimate(const Plan &p, size_t in) {
     return divrem_tuning::inverse_cost_ratio * cost_model::linear_product(q.consumer_info.mul, in, in).nanoseconds;
 }
 // Ordering price of the block inverse, by the route the plan would take: the
-// schoolbook division, or the Newton ladder with the planning it brings.
+// local arithmetic, or the spectral Newton ladder with its planning.
 double inverse_estimate(const Plan &p, size_t in) {
     if (inverse_basecase(in))
-        return divrem_tuning::inverse_basecase_ns_per_limb2 * double(in) * double(in);
+        return inverse_tuning::local_cost(in);
     return divrem_tuning::inverse_newton_planning_ns + newton_estimate(p, in);
 }
 // One head limb by word division: an O(dn) multiply-subtract pass.
@@ -490,7 +559,8 @@ bool search(const Plan &p, size_t in, Candidate &c, double &transform) {
     return true;
 }
 // Block-size ordering uses the linear residual recipe only; the cyclic
-// lattice (the expensive part of the query) runs for the size that is taken.
+// lattice (the expensive part of the query) runs for the size that is taken
+// and, where the first size is left without a ring, for the sizes next to it (rank).
 // The total prices whole blocks, the quotient limbs a size leaves over as one
 // more product pair: the word-division head serves what the taken size leaves
 // over, it is no reason to take a size (divrem_tuning).
@@ -520,28 +590,44 @@ void adopt(const Plan &p, Candidate &c, const Residual &t) {
     const size_t xlen = c.ring ? c.ring : dn + in;
     c.head = std::min(head_limit(p, dn, in, c.ucost.apply + t.cost.apply), xlen - dn);
 }
+// Block-size candidates in cost order; take() hands them out one at a time so
+// that the query can pass over a size whose storage exceeds the budget.
+struct Ranking {
+    Candidate sizes[4]{};
+    unsigned ordered[4]{};
+    unsigned count = 0, next = 0;
+    double transform = INFINITY; // least complete cost of the policy's residual recipe at the sizes searched so far
+    // The ring lattice of one block size at a time, constructed when it is searched (a recipe is 8 KB; the queries
+    // of short divisions never search one).
+    alignas(Residual) unsigned char lattice_bytes[sizeof(Residual)];
+    Residual *lattice = nullptr;
+    size_t lattice_in = 0;
+    Ranking() {}
+};
+// The ring lattice of a block size where it is wanted (divrem_tuning): searched once while the size stays the last
+// one asked for, so the order's search serves the final recipe.
+const Residual &lattice(const Plan &p, Ranking &r, const Candidate &c) {
+    const size_t dn = p.request.denominator_limbs;
+    if (r.lattice && r.lattice_in == c.in)
+        return *r.lattice;
+    r.lattice = ::new (r.lattice_bytes) Residual{};
+    r.lattice_in = c.in;
+    if (lattice_wanted(p, dn, c.in, applications(p, c.in), c.linear))
+        cyclic_residual(p, dn, c.in, applications(p, c.in), *r.lattice);
+    return *r.lattice;
+}
 // Final recipes of a block size: the order's searches are not repeated, the
 // cyclic lattice joins them and the family rule decides. The order priced
 // whole blocks, so the final recipe owes it no head: the plan serves by word
 // division what that recipe allows (nothing when the ring leaves no room above
 // the divisor or the product pair is cheaper than the word steps) and pads a
 // block otherwise.
-bool finish(const Plan &p, Candidate &c) {
+bool finish(const Plan &p, Ranking &r, Candidate &c) {
     const size_t dn = p.request.denominator_limbs, in = c.in;
     double transform = INFINITY;
     if (!c.searched && !search(p, in, c, transform))
         return false;
-    // The ring lattice is the expensive part of the query (divrem_tuning). Against a linear recipe that keeps a
-    // spectrum the family rule decides by the ring alone, and no ring passes it when the lattice's least one does not
-    // (the plan is then the one the search would give). And a ring saves at most the share of the linear output it
-    // drops: the search is made when that saving exceeds the search's own price.
-    const double fraction = double(least_ring(p, dn)) / double(dn + in);
-    const bool reachable = !c.linear.queried.cached || fraction <= divrem_tuning::cyclic_ring_fraction,
-               pays = (1 - fraction) * c.linear.total > divrem_tuning::lattice_search_ns;
-    Residual cyclic{};
-    if (p.options.residual == 2 || (p.options.residual != 1 && (!c.linear.found || (reachable && pays))))
-        cyclic_residual(p, dn, in, applications(p, in), cyclic);
-    const Residual *t = residual_family(p, dn, in, c.linear, cyclic);
+    const Residual *t = residual_family(p, dn, in, c.linear, lattice(p, r, c));
     if (!t)
         return false;
     adopt(p, c, *t);
@@ -565,15 +651,7 @@ bool other_family(const Plan &p, Candidate &c) {
     adopt(p, c, cyclic);
     return true;
 }
-// Block-size candidates in cost order; take() hands them out one at a time so
-// that the query can pass over a size whose storage exceeds the budget.
-struct Ranking {
-    Candidate sizes[4]{};
-    unsigned ordered[4]{};
-    unsigned count = 0, next = 0;
-    double transform = INFINITY; // least complete cost of the policy's residual recipe at the sizes searched so far
-};
-void rank(const Plan &p, Ranking &r) {
+void order_sizes(const Plan &p, Ranking &r) {
     const size_t dn = p.request.denominator_limbs, qn = p.info.quotient_limbs;
     size_t candidates[4]{};
     unsigned count = 0;
@@ -615,45 +693,80 @@ void rank(const Plan &p, Ranking &r) {
     };
     for (unsigned j = 0; j < count; ++j)
         insert(candidates[j]);
-    // The sizes above follow the quotient alone. A schoolbook block inverse costs
-    // a*in^2, and the block pairs of a shorter size cost about what the best size
-    // above pays per pair, so the modelled optimum under that inverse is
-    // in* = cbrt(executions * qn * pair / (2a)). When it lies below every size
-    // above and its estimate beats the best one's inverse and pairs, the
-    // whole-block size at in* joins the order (divrem_tuning).
+    // The quotient-driven sizes can miss the local-inverse optimum. With
+    // inverse price a*in^p and qn/in block pairs it is near
+    // (executions*qn*pair/(p*a))^(1/(p+1)). Add that whole-block size, then
+    // price its actual product recipes rather than pruning by larger ones.
     if (p.options.block_limbs || !r.count || r.count == 4)
         return;
     const Candidate &best = r.sizes[r.ordered[0]];
     size_t smallest = candidates[0];
     for (unsigned j = 1; j < count; ++j)
         smallest = std::min(smallest, candidates[j]);
-    const double a = divrem_tuning::inverse_basecase_ns_per_limb2, executions = std::max(1u, p.options.reuse_hint);
-    const double star = std::cbrt(executions * double(qn) * best.pair / (2 * a));
+    const double executions = std::max(1u, p.options.reuse_hint);
+    const double star = std::pow(executions * double(qn) * best.pair / (1.5 * 1.7), 1./2.5);
     if (!(star >= 1) || star >= double(smallest))
         return;
     size_t in = size_t(std::min(star, double(divrem_tuning::inverse_basecase_limbs)));
     const size_t blocks = (qn + in - 1) / in;
     in = (qn + blocks - 1) / blocks;
-    const double estimate = a * double(in) * double(in) + executions * double(blocks) * best.pair,
-                 reference = best.inverse + executions * double((qn + best.in - 1) / best.in) * best.pair;
-    if (in < smallest && estimate < reference)
+    // Price this candidate's own shorter products. Multiplying the larger
+    // candidate's pair price by the new block count is not a lower bound:
+    // it excluded profitable schoolbook-inverse plans at 2k..5k limbs.
+    if (in < smallest)
         insert(in);
+}
+// The order prices linear recipes. Where the ring family pays, the model has the FFT family's linear recipe at
+// 0.9-1.0 of a ring recipe that measured 1.11-1.35 times faster (divrem_tuning), and an order of linear recipes
+// passed over a size with a ring for one more block without one. So when the first size is left with that linear
+// recipe, the next sizes whose linear totals lie within the measured bias are asked for their ring in turn, and the
+// first that takes one goes first. A first size that takes a ring costs the one lattice the final recipe needs.
+void rank(const Plan &p, Ranking &r) {
+    order_sizes(p, r);
+    const size_t dn = p.request.denominator_limbs;
+    if (r.count < 2 || p.options.residual || !ring_pays(p, dn))
+        return;
+    const Candidate &first = r.sizes[r.ordered[0]];
+    if (first.linear.queried.consumer_info.mul.algorithm != SBN3_MUL_PQ16 ||
+        residual_family(p, dn, first.in, first.linear, lattice(p, r, first)) != &first.linear)
+        return;
+    for (unsigned j = 1; j < r.count; ++j) {
+        const Candidate &c = r.sizes[r.ordered[j]];
+        if (c.total > divrem_tuning::fft_linear_order_bias * first.total)
+            return;
+        const Residual &ring = lattice(p, r, c);
+        if (residual_family(p, dn, c.in, c.linear, ring) == &ring) {
+            const unsigned taken = r.ordered[j];
+            for (unsigned k = j; k; --k)
+                r.ordered[k] = r.ordered[k - 1];
+            r.ordered[0] = taken;
+            return;
+        }
+    }
 }
 // Next block size with its final recipes.
 Candidate *take(const Plan &p, Ranking &r) {
     while (r.next < r.count) {
         Candidate &c = r.sizes[r.ordered[r.next++]];
-        if (finish(p, c))
+        if (finish(p, r, c))
             return &c;
     }
     return nullptr;
 }
-// One-use cost (divrem_tuning): the schoolbook work of all expected executions
-// against the fixed cost of planning and preparing a block-Barrett division.
+// One-use cost (divrem_tuning): the schoolbook work of all expected executions beyond that level against the fixed
+// cost of planning and preparing a block-Barrett division.
 bool schoolbook_use(const Plan &p) {
-    const size_t qn = p.info.quotient_limbs, floor = divrem_tuning::schoolbook_level_quotient;
-    const double work = double(std::max(1u, p.options.reuse_hint)) * double(qn > floor ? qn - floor : 0) *
-                        double(p.request.denominator_limbs);
+    const double qn = double(p.info.quotient_limbs), executions = std::max(1u,p.options.reuse_hint);
+    const size_t dn=p.request.denominator_limbs;
+    double level = double(divrem_tuning::schoolbook_level_quotient);
+    // Share the extra preparation pass across repeated uses where subsequent
+    // value passes stay in one CCD's cache or actually use the parallel path.
+    // In the serial memory-bound regime streaming the divisor still costs
+    // that pass on every execute: do not extrapolate a cached crossover there.
+    if(executions>1 && (dn<=divrem_tuning::short_cache_limbs ||
+                       (p.options.workers>1 && dn>=parallel_limbs::minimum_parallel_words)))
+        level-=1.-1./executions;
+    const double work = executions * std::max(0.0, qn - level) * double(dn);
     return work <= divrem_tuning::schoolbook_use_work;
 }
 sbn3_query_result inverse_query(size_t in, const sbn3_newton_options &o, sbn3_newton_plan &plan, sbn3_newton_info &info) {
@@ -664,7 +777,7 @@ sbn3_query_result inverse_query(size_t in, const sbn3_newton_options &o, sbn3_ne
     info.kind = SBN3_NEWTON_INVERSE;
     info.precision_limbs = in;
     info.workers = 1;
-    info.storage_bytes = bytes_for(inverse_basecase_words(in), 8);
+    info.storage_bytes = local_inverse_bytes(in);
     info.storage_alignment = page;
     info.plan_id = feed(feed(1469598103934665603ULL, magic), in);
     return SBN3_SUPPORTED;
@@ -696,38 +809,58 @@ bool layout(Plan &p, const Queried &uq, const Queried &tq, const sbn3_newton_inf
     if (i.algorithm == SBN3_DIVREM_BARRETT) {
         p.persistent_offset = aligned(cursor, page);
         cursor = p.persistent_offset;
-        if (!place(bytes_for(dn, 8), 128, p.d_offset) || !place(bytes_for(dn, 8), 128, p.dn_offset) ||
+        if (!place(bytes_for(dn, 8), 128, p.dn_offset) ||
             !place(bytes_for(in + 1, 8), 128, p.u_offset))
             return false;
+        p.d_offset = p.dn_offset; // only the normalized divisor persists
         if (uq.cached && !place(uq.future.storage_bytes, page, p.uspec_offset))
             return false;
         if (tq.cached && !place(tq.future.storage_bytes, page, p.dspec_offset))
             return false;
         i.spectrum_bytes = (uq.cached ? uq.future.storage_bytes : 0) + (tq.cached ? tq.future.storage_bytes : 0);
-        const auto &um = uq.consumer_info.mul, &tm = tq.consumer_info.mul;
-        if (!place(um.table_bytes, page, p.utab_offset) ||
-            !place(um.workspace_bytes, std::max(um.workspace_alignment, page), p.uwork_offset) ||
-            !place(tm.table_bytes, page, p.ttab_offset) ||
-            !place(tm.workspace_bytes, std::max(tm.workspace_alignment, page), p.twork_offset))
-            return false;
-        i.table_bytes = um.table_bytes + tm.table_bytes;
-        i.product_workspace_bytes = um.workspace_bytes + tm.workspace_bytes;
         i.persistent_bytes = cursor - p.persistent_offset;
-        // Shared union: Newton inverse storage during prepare, block scratch during execute.
+        // The inverse completes before either product is bound. Its entire
+        // binding can share storage with the later product tables, mutable
+        // workspaces and block scratch; only D/U/spectra persist outside it.
         p.newton_bytes = ninfo->storage_bytes;
         p.newton_alignment = std::max(ninfo->storage_alignment, page);
         p.shared_offset = aligned(cursor, p.newton_alignment);
         cursor = p.shared_offset;
+        const auto &um = uq.consumer_info.mul, &tm = tq.consumer_info.mul;
+        // Cached consumers borrow their immutable roots from the spectra.
+        // Rebinding only their small control/codec state lets the two serial
+        // products share one mutable workspace. Use it when it saves at least
+        // one of the existing large aligned allocations, keeping tiny products
+        // bound throughout to avoid adding a binder to their inner loop.
+        const size_t work_alignment = std::max({um.workspace_alignment,tm.workspace_alignment,page});
+        p.shared_products = uq.cached && tq.cached && work_alignment >= (size_t(1)<<20) &&
+                            std::min(um.workspace_bytes,tm.workspace_bytes)>=work_alignment;
+        if (p.shared_products) {
+            i.table_bytes=std::max(um.table_bytes,tm.table_bytes);
+            i.product_workspace_bytes=std::max(um.workspace_bytes,tm.workspace_bytes);
+            if(!place(i.table_bytes,page,p.utab_offset) ||
+               !place(i.product_workspace_bytes,work_alignment,p.uwork_offset))return false;
+            p.ttab_offset=p.utab_offset;p.twork_offset=p.uwork_offset;
+        } else {
+            if (!place(um.table_bytes, page, p.utab_offset) ||
+                !place(um.workspace_bytes, std::max(um.workspace_alignment, page), p.uwork_offset) ||
+                !place(tm.table_bytes, page, p.ttab_offset) ||
+                !place(tm.workspace_bytes, std::max(tm.workspace_alignment, page), p.twork_offset))
+                return false;
+            i.table_bytes = um.table_bytes + tm.table_bytes;
+            i.product_workspace_bytes = um.workspace_bytes + tm.workspace_bytes;
+        }
         p.xlen = p.ring ? p.ring : dn + in;
         if (p.head >= in || dn + p.head > p.xlen) // X = R*B^head + block lives in xbuf
             return false;
         p.tcap = std::max(sbn3_mul_output_capacity(&tm), tm.output_limbs);
         p.pcap = std::max(sbn3_mul_output_capacity(&um), um.output_limbs);
-        if (!place(bytes_for(p.xlen, 8), page, p.xbuf_offset) || !place(bytes_for(p.tcap, 8), page, p.tbuf_offset) ||
+        if (!place(bytes_for(p.tcap, 8), page, p.tbuf_offset) ||
             !place(bytes_for(in, 8), page, p.ubuf_offset) || !place(bytes_for(p.pcap, 8), page, p.pbuf_offset) ||
             !place(bytes_for(in, 8), page, p.qbuf_offset) || !place(bytes_for(dn, 8), page, p.rbuf_offset))
             return false;
-        i.scratch_bytes = cursor - p.shared_offset;
+        p.xbuf_offset = p.tbuf_offset; // product T becomes the signed residual, after its last read
+        i.scratch_bytes = cursor - p.tbuf_offset;
         const size_t newton_end = aligned(p.shared_offset + p.newton_bytes, page);
         cursor = std::max(cursor, newton_end);
         max_align = std::max(max_align, p.newton_alignment);
@@ -761,7 +894,7 @@ bool layout(Plan &p, const Queried &uq, const Queried &tq, const sbn3_newton_inf
     uint64_t key = feed(1469598103934665603ULL, i.algorithm);
     for (uint64_t v : {i.storage_bytes, i.storage_alignment, i.control_bytes, i.persistent_bytes, i.shared_bytes,
                        i.table_bytes, i.product_workspace_bytes, i.spectrum_bytes, i.scratch_bytes, p.xlen, p.head, p.tcap,
-                       p.pcap, p.newton_bytes, uq.consumer_info.mul.arithmetic_id, tq.consumer_info.mul.arithmetic_id,
+                       p.pcap, p.newton_bytes, uint64_t(p.shared_products), uq.consumer_info.mul.arithmetic_id, tq.consumer_info.mul.arithmetic_id,
                        uq.consumer_info.mul.execution_id, tq.consumer_info.mul.execution_id,
                        ninfo ? ninfo->plan_id : 0})
         key = feed(key, v);
@@ -790,7 +923,7 @@ void check_span(const Binding &b, const void *data, size_t bytes, const char *wh
         require(!overlaps(data, bytes, l.data, l.bytes), SBN3_FATAL_ARGUMENT, "division value/team overlap");
     }
 }
-void release_products(Binding &b) {
+void unbind_products(Binding &b) {
     if (b.uprod) {
         sbn3_mul_unbind(b.uprod);
         b.uprod = nullptr;
@@ -799,6 +932,27 @@ void release_products(Binding &b) {
         sbn3_mul_unbind(b.tprod);
         b.tprod = nullptr;
     }
+    for (auto *l : {&b.utab, &b.uwork, &b.ttab, &b.twork})
+        if (l->token) {
+            b.arena->release(*l);
+            *l = {};
+        }
+}
+sbn3_mul_binding *product_binding(Binding &b,bool inverse) {
+    auto *&slot=inverse?b.uprod:b.tprod;
+    if(slot)return slot;
+    if(b.plan.shared_products)unbind_products(b);
+    const auto &q=inverse?b.uq:b.tq;
+    const auto &i=q.consumer_info.mul;
+    auto &table=inverse?b.utab:b.ttab;
+    auto &work=inverse?b.uwork:b.twork;
+    table=b.arena->acquire(b.offset+(inverse?b.plan.utab_offset:b.plan.ttab_offset),i.table_bytes);
+    work=b.arena->acquire(b.offset+(inverse?b.plan.uwork_offset:b.plan.twork_offset),i.workspace_bytes);
+    sbn3_product_bind(&q.consumer,b.arena,&table,&work,b.team,inverse?b.uspec:b.dspec,nullptr,&slot);
+    return slot;
+}
+void release_products(Binding &b) {
+    unbind_products(b);
     if (b.uspec) {
         sbn3_spectrum_release(b.uspec);
         b.uspec = nullptr;
@@ -809,11 +963,6 @@ void release_products(Binding &b) {
         b.dspec = nullptr;
         b.arena->release(b.dspec_lease);
     }
-    for (auto *l : {&b.utab, &b.uwork, &b.ttab, &b.twork})
-        if (l->token) {
-            b.arena->release(*l);
-            *l = {};
-        }
     if (b.shared_leased) {
         b.arena->release(b.shared);
         b.shared = {};
@@ -838,22 +987,21 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
     const size_t dn = p.request.denominator_limbs, in = p.in;
     release_products(b);
     b.prepared = false;
-    memcpy(b.D, D, dn * 8);
     b.shift = unsigned(__builtin_clzll(D[dn - 1]));
     if (b.shift)
-        divrem_words::shift_left(b.Dn, D, dn, b.shift);
+        shifted_span(b.team, b.Dn, D, dn, 0, dn, b.shift);
     else
-        memcpy(b.Dn, D, dn * 8);
+        parallel_limbs::copy(b.team, b.Dn, D, dn);
     // Block inverse of the top in limbs, in the shared union (unleased at this
-    // point): U = floor((B^(2in) - 1) / Dtop) by one schoolbook division, or the
-    // Newton binding. Both satisfy |U - B^(2in)/Dtop| < 3 with B^in <= U < 2B^in.
+    // point): exact U by the local recurrence, or the spectral Newton binding.
+    // Both satisfy |U - B^(2in)/Dtop| < 3 with B^in <= U < 2B^in.
     if (inverse_basecase(in)) {
         auto scratch = b.arena->acquire(b.offset + p.shared_offset, p.newton_bytes);
-        auto *numerator = reinterpret_cast<uint64_t *>(scratch.data), *remainder = numerator + 2 * in, *work = remainder + in;
-        memset(numerator, 0xff, 2 * in * 8);
-        const size_t qn = sbn3_divrem_basecase(b.U, remainder, numerator, 2 * in, b.Dn + dn - in, in, work);
+        {
+            Frame frame(*b.arena,scratch);
+            local_inverse(b.U,b.Dn+dn-in,in,frame);
+        }
         b.arena->release(scratch);
-        require(qn == in + 1, SBN3_FATAL_MATH, "division block inverse range");
     } else {
         sbn3_newton_binding *inverse = nullptr;
         sbn3_newton_bind(&b.nplan, b.arena, b.offset + p.shared_offset, b.team, &inverse);
@@ -865,13 +1013,8 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
     require(b.U[in] == 1, SBN3_FATAL_MATH, "division block inverse framing");
     b.dinv = divrem_words::invert_pi1(b.Dn[dn - 1], b.Dn[dn - 2]);
     // Persistent products and divisor-side spectra.
-    b.shared = b.arena->acquire(b.offset + p.shared_offset, p.info.shared_bytes);
+    b.shared = b.arena->acquire(b.offset + p.tbuf_offset, p.info.scratch_bytes);
     b.shared_leased = true;
-    const auto &um = b.uq.consumer_info.mul, &tm = b.tq.consumer_info.mul;
-    b.utab = b.arena->acquire(b.offset + p.utab_offset, um.table_bytes);
-    b.uwork = b.arena->acquire(b.offset + p.uwork_offset, um.workspace_bytes);
-    b.ttab = b.arena->acquire(b.offset + p.ttab_offset, tm.table_bytes);
-    b.twork = b.arena->acquire(b.offset + p.twork_offset, tm.workspace_bytes);
     if (b.uq.cached) {
         b.uspec_lease = b.arena->acquire(b.offset + p.uspec_offset, b.uq.future.storage_bytes);
         sbn3_spectrum_reserve_plan(&b.uq.producer, SBN3_SPECTRUM_COLUMNS, b.uq.future.generation, b.arena,
@@ -882,12 +1025,12 @@ void barrett_prepare(Binding &b, const uint64_t *D) {
         sbn3_spectrum_reserve_plan(&b.tq.producer, SBN3_SPECTRUM_COLUMNS, b.tq.future.generation, b.arena,
                                    &b.dspec_lease, &b.dspec);
     }
-    sbn3_product_bind(&b.uq.consumer, b.arena, &b.utab, &b.uwork, b.team, b.uspec, nullptr, &b.uprod);
-    sbn3_product_bind(&b.tq.consumer, b.arena, &b.ttab, &b.twork, b.team, b.dspec, nullptr, &b.tprod);
+    auto *u=product_binding(b,true);
     if (b.uspec)
-        sbn3_spectrum_compute(b.uprod, b.uspec, {b.U, in + 1});
+        sbn3_spectrum_compute(u, b.uspec, {b.U, in + 1});
+    auto *t=product_binding(b,false);
     if (b.dspec)
-        sbn3_spectrum_compute(b.tprod, b.dspec, {b.Dn, dn});
+        sbn3_spectrum_compute(t, b.dspec, {b.Dn, dn});
     b.prepared = true;
 }
 // One exact quotient limb by word division. x holds X = R*B + n0 on dn+1
@@ -923,6 +1066,57 @@ uint64_t word_step(sbn3_team *team, uint64_t *x, const uint64_t *Dn, size_t dn, 
     }
     require(!x[dn], SBN3_FATAL_MATH, "division head remainder");
     return q;
+}
+// Replace T by [high:low] - T, zero extending the concatenation to n limbs.
+// Both sources stay disjoint from T. Independent subtractions are joined by
+// one borrow per partition; even an all-zero borrow chain visits O(n) words.
+uint64_t residual_subtract(sbn3_team *team, uint64_t *t, size_t n, const uint64_t *low, size_t ln,
+                          const uint64_t *high, size_t hn) {
+    const unsigned parts = parallel_limbs::parts(team, n);
+    uint64_t borrows[32]{};
+    parallel_limbs::each(team, n, parts, [&](size_t begin, size_t end, unsigned k) {
+        size_t at = begin;
+        uint64_t borrow = 0;
+        auto subtract = [&](const uint64_t *source, size_t count) {
+            if (!count) return;
+            const uint64_t next = sbn3i_sub_n(t + at, source, t + at, long(count));
+            borrow = next + (borrow ? parallel_limbs::sub_word(t + at, count, 1) : 0);
+            at += count;
+        };
+        if (at < ln) subtract(low + at, std::min(end, ln) - at);
+        if (at < end && at < ln + hn) subtract(high + at - ln, std::min(end, ln + hn) - at);
+        if (at < end) {
+            uint64_t carry = 1 - borrow;
+            for (; at < end; ++at) {
+                const __uint128_t v = __uint128_t(~t[at]) + carry;
+                t[at] = uint64_t(v);
+                carry = uint64_t(v >> 64);
+            }
+            borrow = 1 - carry;
+        }
+        borrows[k] = borrow;
+    });
+    uint64_t borrow = 0;
+    for (unsigned k = 0; k < parts; ++k) {
+        const size_t begin = parallel_limbs::cut(n, parts, k), end = parallel_limbs::cut(n, parts, k + 1);
+        borrow = borrows[k] + (borrow ? parallel_limbs::sub_word(t + begin, end - begin, 1) : 0);
+    }
+    return borrow;
+}
+bool residual_absolute(sbn3_team *team, uint64_t *r, size_t n) {
+    if (!(r[n - 1] >> 63)) return false;
+    const unsigned parts = parallel_limbs::parts(team, n);
+    uint64_t any[32]{};
+    parallel_limbs::each(team, n, parts, [&](size_t begin, size_t end, unsigned k) {
+        uint64_t bits = 0;
+        for (size_t j = begin; j < end; ++j) bits |= (r[j] = ~r[j]);
+        any[k] = bits;
+    });
+    uint64_t bits = 0;
+    for (unsigned k = 0; k < parts; ++k) bits |= any[k];
+    // Folding after subtraction can represent zero as B^n-1. Its one's
+    // complement is zero, with no negative sign and no quotient correction.
+    return bits != 0;
 }
 void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint64_t *R, sbn3_divrem_result &out) {
     auto &p = b.plan;
@@ -961,36 +1155,31 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
         if (!b.uspec)
             pin.a = {b.U, in + 1};
         pin.b = {ubuf, in};
-        sbn3_product_execute(b.uprod, &pin, {pbuf, p.pcap});
+        sbn3_product_execute(product_binding(b,true), &pin, {pbuf, p.pcap});
         ++products;
         parallel_limbs::copy(team, qbuf, pbuf + in, ic);
         if (!parallel_limbs::zero(team, pbuf + in + ic, in + 1 - ic))
             parallel_limbs::fill(team, qbuf, ic, UINT64_MAX);
         parallel_limbs::fill(team, qbuf + ic, in - ic);
-        // X = R*B^ic + N'block, folded once when it exceeds the ring.
-        shifted_span(team, xbuf, N, nn, pos, ic, s);
-        if (ic + dn <= L) {
-            parallel_limbs::copy(team, xbuf + ic, rbuf, dn);
-            parallel_limbs::fill(team, xbuf + ic + dn, L - ic - dn);
-        } else {
-            parallel_limbs::copy(team, xbuf + ic, rbuf, L - ic);
-            if (parallel_limbs::add_to(team, xbuf, L, rbuf + (L - ic), ic + dn - L))
-                parallel_limbs::add_word(xbuf, L, 1);
-        }
         // T = qhat * D' (mod B^ring-1 on the cyclic recipe).
         sbn3_product_inputs tin{};
         if (!b.dspec)
             tin.a = {Dn, dn};
         tin.b = {qbuf, in};
-        sbn3_product_execute(b.tprod, &tin, {tbuf, p.tcap});
+        sbn3_product_execute(product_binding(b,false), &tin, {tbuf, p.tcap});
         ++products;
-        // E = X - T, |E| < 7 D' < B^(dn+1): exact signed lift.
-        const uint64_t borrow = parallel_limbs::sub_from(team, xbuf, L, tbuf, L);
+        // E = R*B^ic + N'block - T, |E| < 7 D' < B^(dn+1).
+        // T's output storage becomes E. The U operand has already been read,
+        // so reuse ubuf for the shifted low block instead of materializing X.
+        shifted_span(team, ubuf, N, nn, pos, ic, s);
+        const uint64_t borrow = residual_subtract(team, xbuf, L, ubuf, ic, rbuf, std::min(dn, L - ic));
         bool negative;
         if (cyclic) {
             if (borrow)
                 limbs::cyclic_sub_power(xbuf, L, 0);
-            negative = parallel_limbs::cyclic_absolute(team, xbuf, L);
+            if (ic + dn > L && parallel_limbs::add_to(team, xbuf, L, rbuf + L - ic, ic + dn - L))
+                parallel_limbs::add_word(xbuf, L, 1);
+            negative = residual_absolute(team, xbuf, L);
         } else {
             negative = borrow != 0;
             if (negative) {
@@ -1025,7 +1214,10 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
         parallel_limbs::copy(team, rbuf, xbuf, dn);
     }
     if (s)
-        divrem_words::shift_right(R, rbuf, dn, s);
+        parallel_limbs::each(team, dn, parallel_limbs::parts(team, dn), [&](size_t begin, size_t end, unsigned) {
+            for (size_t j = begin; j < end; ++j)
+                R[j] = (rbuf[j] >> s) | (j + 1 < dn ? rbuf[j + 1] << (64 - s) : 0);
+        });
     else
         parallel_limbs::copy(team, R, rbuf, dn);
     out.corrections = corrections;
@@ -1085,7 +1277,7 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
         for (unsigned k = 0; k < divrem_tuning::budget_halvings && in > 1; ++k) {
             const size_t qn = p.info.quotient_limbs, blocks = (qn + (in + 1) / 2 - 1) / ((in + 1) / 2);
             in = (qn + blocks - 1) / blocks;
-            if (!search(p, in, smaller, ranking.transform) || !finish(p, smaller))
+            if (!search(p, in, smaller, ranking.transform) || !finish(p, ranking, smaller))
                 break;
             if (fits(smaller) || (other_family(p, smaller) && fits(smaller)))
                 return SBN3_SUPPORTED;
@@ -1302,7 +1494,17 @@ extern "C" void sbn3_int_divrem_execute(sbn3_divrem_binding *opaque, sbn3_int *q
         --d.size;
     while (n.size && !n.data[n.size - 1])
         --n.size;
-    require(d.size == dn && !memcmp(d.data, b.D, dn * 8), SBN3_FATAL_ARGUMENT, "integer division prepared divisor");
+    bool same = d.size == dn;
+    if (same && b.plan.info.algorithm == SBN3_DIVREM_BARRETT && b.shift) {
+        uint64_t difference = 0, carry = 0;
+        for (size_t j = 0; j < dn; ++j) {
+            const uint64_t word = d.data[j];
+            difference |= ((word << b.shift) | carry) ^ b.Dn[j];
+            carry = word >> (64 - b.shift);
+        }
+        same = !difference && !carry;
+    } else if (same) same = !memcmp(d.data, b.D, dn * 8);
+    require(same, SBN3_FATAL_ARGUMENT, "integer division prepared divisor");
     const size_t qn = n.size >= dn ? n.size - dn + 1 : 0;
     require(q->capacity >= qn && r->capacity >= dn, SBN3_FATAL_SIZE, "integer division capacity");
     sbn3_divrem_result out{};

@@ -22,6 +22,14 @@ int main(){
     for(size_t n:{127u,128u,129u,255u,256u,257u,426u,532u,619u,1024u,4096u,8192u})
         for(size_t m:{n,n/2,n/3,1ul})one(n,m,u52::Algorithm::automatic);
     for(size_t n:{32u,64u})one(n,n,u52::Algorithm::basecase);
+    // Strip seams, a final strip shorter than the short operand, both input
+    // orientations, all-ones carry chains and high-zero/zero operands.
+    for(size_t n:{4097u,8191u,8193u,16385u})
+        for(size_t m:{5u,89u,513u,1024u}){
+            one(n,m,u52::Algorithm::automatic);
+            one(m,n,u52::Algorithm::automatic);
+        }
+    one(1048583,5,u52::Algorithm::automatic); // beyond the old whole-conversion capacity
     for(size_t n:{64u,128u,257u,512u})one(n,n,u52::Algorithm::karatsuba);
     for(size_t n:{128u,256u,512u}){
         one(n,n,u52::Algorithm::toom33);

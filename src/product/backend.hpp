@@ -62,6 +62,11 @@ struct Backend {
     // The spectrum is immutable/ready only after the whole episode returns.
     void (*spectrum_multiply)(sbn3_mul_binding *, sbn3_spectrum *, sbn3_const_limbs,
                               sbn3_const_limbs, sbn3_limbs) = nullptr;
+    // Private search-only metadata: identical geometry/resources/cost fields,
+    // but no identities, scaling constants or bindable plan. Uncached inputs
+    // only. A surviving candidate must still pass the ordinary full query.
+    sbn3_query_result (*geometry_query)(const sbn3_product_request &, const sbn3_mul_options &,
+                                       sbn3_mul_info &) = nullptr;
 };
 const Backend *backend_lookup(uint64_t) noexcept;
 // The winning candidate of a plain product search (sbn3_mul_query, or sbn3_product_query of a plain square), in
