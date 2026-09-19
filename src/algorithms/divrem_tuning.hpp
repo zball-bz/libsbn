@@ -11,17 +11,19 @@ namespace sbn::v3::divrem_tuning {
 // about four quotient limbs' worth more. So the schoolbook serves a request whose work beyond that level,
 //   reuse_hint * (quotient limbs - schoolbook_level_quotient) * divisor limbs,
 // is at most schoolbook_use_work limb steps, whatever the divisor length. Measured equal-cost points of complete
-// calls (experiments results/divrem_fresh_c2_2026-09-19/crossover, forced algorithms in interleaved windows, one
-// worker; sixteen alike): 17-19k limb steps for divisors of 24..300 limbs (quotients of 700..62 limbs), 16-20k at
-// 603..3001, 13.5-17k at 4500..10007, 24k at 20011, 13.5k at 45000; at 100003 and 300007 limbs the two are level
-// at four quotient limbs and the blocks ahead from five. The constant sits at the low end: at the switch the
-// schoolbook is level with the blocks (within a quotient limb's granularity on long divisors). Before the planner
-// priced a recipe's one-use preparation and searched only where a search can pay (below), the same points lay at
-// 335k-920k and moved with the divisor length (stage C-1: 360000 above a level of eight limbs, which left the
-// blocks up to 2.0x behind the schoolbook just above the switch for divisors of 1.5k-100k limbs). A requested block
-// size is a request for blocks and is not subject to this rule.
+// calls (experiments results/divrem_fresh_c2_2026-09-19): forced algorithms in interleaved windows (crossover, one
+// worker; sixteen alike) 17-19k limb steps for divisors of 24..300 limbs (quotients of 700..62 limbs), 16-20k at
+// 603..3001, 13.5-17k at 4500..10007, 24k at 20011, 13.5k at 45000, and at 100003 and 300007 limbs the two level at
+// four quotient limbs with the blocks ahead from five; adjacent shapes of the fresh driver across the switch
+// (boundary, 36 sets, one and sixteen workers, the constant then at 16000) 16.5-17k for 2d/d and 8d/d, 17-18k for
+// quotients of 60-260 limbs, 19-21k for quotients of 16-20 limbs. The constant sits in the middle: either side is
+// within about 6 % of the other at the switch. Before the planner priced a recipe's one-use preparation and searched
+// only where a search can pay (below), the same points lay at 335k-920k and moved with the divisor length (stage
+// C-1: 360000 above a level of eight limbs, which left the blocks up to 2.0x behind the schoolbook just above the
+// switch for divisors of 1.5k-100k limbs). A requested block size is a request for blocks and is not subject to
+// this rule.
 inline constexpr size_t schoolbook_level_quotient = 4;
-inline constexpr double schoolbook_use_work = 16000.0;
+inline constexpr double schoolbook_use_work = 18000.0;
 // Under a memory budget that no block size meets, the schoolbook (it holds the least storage of all) serves the
 // request where its complete cost is bounded: within a factor of two of the blocks (divisors up to 64 limbs at any
 // quotient length, quotients up to 8 limbs at any divisor length: same measurement) or at most this many limb steps
