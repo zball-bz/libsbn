@@ -5,6 +5,7 @@
 // branch-free validity mask. Magics satisfy the exact Granlund-Montgomery
 // criterion and are re-verified by the leaf gate against the scalar reference.
 #include "radix/leaf.hpp"
+#include "radix/word_base.hpp"
 #include "common/checked.hpp"
 #include <immintrin.h>
 #include <cstring>
@@ -90,6 +91,42 @@ void emit_words(uint8_t *out, const uint64_t *words, size_t count, const DigitPl
         const __m512i ry = _mm512_sub_epi16(y, _mm512_mullo_epi16(qy, B1));
         const __m512i digits = _mm512_or_si512(qy, _mm512_slli_epi16(ry, 8));
         _mm512_storeu_si512(out + i * 8, _mm512_permutexvar_epi8(digits, table));
+    }
+}
+void emit_word_chunks(uint8_t *out,const uint64_t *words,unsigned count,const DigitPlan &p) noexcept {
+    require(count<=8,SBN3_FATAL_ARGUMENT,"radix chunk count");
+    const auto wb=word_bases[p.base];
+    const unsigned groups=(wb.digits+7)/8,prefix=groups*8-wb.digits;
+    const __m512i zero=_mm512_setzero_si512(),M=_mm512_set1_epi64((long long)wb.reciprocal8),
+                  B=_mm512_set1_epi64((long long)p.b8),one=_mm512_set1_epi64(1);
+    __m512i q=_mm512_maskz_loadu_epi64(__mmask8((1u<<count)-1),words);
+    alignas(64) uint64_t remainders[8];
+    alignas(64) uint8_t digits[8][64];
+    for(unsigned j=groups;j-->0;){
+        __m512i r=q;
+        if(j){
+            // b>=3 => floor(2^64/b^8)<2^52. Only the first numerator
+            // can exceed 52 bits; every following quotient also fits.
+            __m512i lo=_mm512_madd52hi_epu64(zero,q,M),hi=zero;
+            if(j+1==groups){
+                const __m512i qhi=_mm512_srli_epi64(q,52);
+                lo=_mm512_madd52lo_epu64(lo,qhi,M);hi=_mm512_madd52hi_epu64(zero,qhi,M);
+            }
+            __m512i quotient=_mm512_add_epi64(_mm512_srli_epi64(lo,12),_mm512_slli_epi64(hi,40));
+            r=_mm512_sub_epi64(q,_mm512_mullo_epi64(quotient,B));
+            const __mmask8 correction=_mm512_cmp_epu64_mask(r,B,_MM_CMPINT_NLT);
+            q=_mm512_mask_add_epi64(quotient,correction,quotient,one);
+            r=_mm512_mask_sub_epi64(r,correction,r,B);
+        }
+        _mm512_store_si512(remainders,r);emit_words(digits[j],remainders,8,p);
+    }
+    for(unsigned lane=0;lane<count;++lane){
+        auto *dst=out+size_t(lane)*wb.digits;
+        uint64_t head;memcpy(&head,digits[0]+8*lane,8);head>>=8*prefix;
+        // K>=10: this eight-byte store stays inside the output chunk.
+        // The next complete group overwrites the extra bytes of the prefix.
+        memcpy(dst,&head,8);dst+=8-prefix;
+        for(unsigned j=1;j<groups;++j){memcpy(dst,digits[j]+8*lane,8);dst+=8;}
     }
 }
 bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const DigitPlan &p) noexcept {

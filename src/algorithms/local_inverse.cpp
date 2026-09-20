@@ -36,15 +36,57 @@ void local_product(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,s
     auto work=space.subframe(pq16::scratch_bytes(s,an,bn)+128,128);
     pq16::multiply(out,a,an,b,bn,*prepared,work,nullptr);
 }
+pq16::Shape residual_shape(size_t n,size_t m) noexcept {
+    const auto full=local_product_shape(n,m+1);
+    if(!full.nfull)return {};
+    const auto ring=pq16::cyclic_shape(n+2,16);
+    const size_t r=pq16::cyclic_period(ring);
+    return ring.nfull && r>=n+2 && r<n+m && ring.nfull<full.nfull &&
+           pq16::cyclic_supported(ring,n,m+1)?ring:pq16::Shape{};
+}
+size_t residual_bytes(size_t n,size_t m) noexcept {
+    const auto s=residual_shape(n,m);
+    return s.nfull?pq16::table_bytes(s)+32*size_t(s.nfull)+1536:local_product_bytes(n,m+1);
+}
+double residual_cost(size_t n,size_t m) noexcept {
+    const auto s=residual_shape(n,m);
+    return s.nfull?.27*double(pq16::table_bytes(s))+pq16::native_cost(s,n,m+1):local_product_cost(n,m+1);
+}
+bool local_residual(uint64_t *out,const uint64_t *d,size_t n,const uint64_t *u,size_t m,Frame &space) noexcept {
+    const auto s=residual_shape(n,m);
+    const size_t length=n+m+1;
+    if(s.nfull){
+        FrameMark mark(space);
+        auto table=space.subframe(pq16::table_bytes(s)+128,128);
+        auto *prepared=pq16::prepare(table,s);
+        auto work=space.subframe(32*size_t(s.nfull)+1152,128);
+        pq16::cyclic_multiply(out,d,n,u,m+1,false,nullptr,*prepared,work,nullptr);
+        const size_t r=pq16::cyclic_period(s);
+        // |D*U-B^(n+m)|<16*B^n and r>=n+2 give a unique signed lift.
+        limbs::cyclic_sub_power(out,r,n+m-r);
+        const bool negative=limbs::cyclic_absolute(out,r);
+        memset(out+r,0,(length-r)*sizeof(uint64_t));
+        return negative;
+    }
+    local_product(out,d,n,u,m+1,space);
+    const bool negative=out[n+m]==0;
+    --out[n+m];
+    if(negative){
+        for(size_t j=0;j<length;++j)out[j]=~out[j];
+        const uint64_t one=1;
+        require(!limbs::add_to(out,length,&one,1),SBN3_FATAL_MATH,"local inverse absolute residual");
+    }
+    return negative;
+}
 size_t words(size_t n) noexcept { return (8*n+63)&~size_t(63); }
 size_t approximate_bytes(size_t n) noexcept {
     if(n<=15)return 0;
     const size_t m=newton_contract::next_precision(n);
-    const size_t multiply=std::max(local_product_bytes(n,m+1),
+    const size_t multiply=std::max(residual_bytes(n,m),
                                    local_product_bytes(m+1,newton_contract::residual_words(m,n)));
     return 64+words(m+1)+std::max(approximate_bytes(m),words(n+m+1)+words(n+4)+multiply+64);
 }
-// Same recurrence/guard limbs as inverse_rung, using full local products.
+// Same recurrence/guard limbs as inverse_rung, using exact local products.
 // High cancellation is exact; the omitted low residual limbs only affect
 // the final reciprocal below its two retained guard limbs.
 void approximate(uint64_t *v,const uint64_t *d,size_t n,Frame &scratch) noexcept {
@@ -55,15 +97,8 @@ void approximate(uint64_t *v,const uint64_t *d,size_t n,Frame &scratch) noexcept
     approximate(u,d+n-m,m,scratch);
     auto *residual=scratch.alloc<uint64_t>(length),*correction=scratch.alloc<uint64_t>(n+4);
     const size_t shift=newton_contract::residual_shift(m),rn=newton_contract::residual_words(m,n);
-    auto work=scratch.subframe(std::max(local_product_bytes(n,m+1),local_product_bytes(m+1,rn)),64);
-    local_product(residual,d,n,u,m+1,work);
-    const bool negative=residual[n+m]==0;
-    --residual[n+m]; // subtract B^(n+m), wrapping iff the residual is negative
-    if(negative){
-        for(size_t j=0;j<length;++j)residual[j]=~residual[j];
-        const uint64_t one=1;
-        require(!limbs::add_to(residual,length,&one,1),SBN3_FATAL_MATH,"local inverse absolute residual");
-    }
+    auto work=scratch.subframe(std::max(residual_bytes(n,m),local_product_bytes(m+1,rn)),64);
+    const bool negative=local_residual(residual,d,n,u,m,work);
     require(residual[n]<newton_contract::inverse_residual_limit &&
             limbs::zero(residual+n+1,length-n-1),SBN3_FATAL_MATH,"local inverse residual bound");
     local_product(correction,u,m+1,residual+shift,rn,work);
@@ -90,7 +125,7 @@ double local_inverse_approximate_cost(size_t n) noexcept {
     const size_t m=newton_contract::next_precision(n),rn=newton_contract::residual_words(m,n);
     // Exact selected product recipes, plus the linear residual/correction
     // scans. Do not keep the old n^1.5 envelope after entering the FFT band.
-    return local_inverse_approximate_cost(m)+local_product_cost(n,m+1)+
+    return local_inverse_approximate_cost(m)+residual_cost(n,m)+
            local_product_cost(m+1,rn)+2.*double(n);
 }
 size_t local_inverse_bytes(size_t n) noexcept {

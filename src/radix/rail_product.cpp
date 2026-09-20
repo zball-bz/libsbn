@@ -1,19 +1,24 @@
 #include "radix/rail_product.hpp"
 #include "common/checked.hpp"
+#include "product/cost_model.hpp"
 #include <algorithm>
 namespace sbn::v3::radix {
-bool rail_product_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, RailProductPlan &out) noexcept {
+bool rail_product_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, RailProductPlan &out,
+                       uint64_t applications) noexcept {
     out = {};
     if (fresh_limbs < rail_product_min_limbs || minimum_ring > rail_product_max_ring || !common_limbs)
         return false;
-    // The shortest transform among the digit widths; equal lengths keep the narrower (better conditioned) digits.
-    pq16::Shape best{};
+    // A shorter wide-codec transform may need much more preparation than
+    // a classic 16-bit shape. Rank complete finite use, not point count.
+    pq16::Shape best{};double cost=INFINITY;
     for (unsigned bits = 16; bits <= 20; ++bits) {
         const auto s = pq16::cyclic_shape(minimum_ring, bits);
         if (!s.nfull || pq16::cyclic_period(s) < minimum_ring || !pq16::cyclic_supported(s, common_limbs, fresh_limbs))
             continue;
-        if (!best.nfull || s.nfull < best.nfull)
-            best = s;
+        const double ordinary=pq16::native_cost(s,common_limbs,fresh_limbs);
+        const double price=cost_model::cached_share(ordinary)+(applications?
+            (.27*double(pq16::table_bytes(s))+cost_model::prepare_share(ordinary))/double(applications):0.);
+        if(price<cost){best=s;cost=price;}
     }
     if (!best.nfull)
         return false;

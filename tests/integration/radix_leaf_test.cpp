@@ -1,6 +1,7 @@
 // Radix leaf gate: the vector word kernels against their scalar references for every base that uses
 // them, alphabets and invalid bytes, and the fragment extraction against exact integer arithmetic.
 #include "radix/leaf.hpp"
+#include "radix/word_base.hpp"
 #include "../oracle/oracle.h"
 #include <assert.h>
 #include <initializer_list>
@@ -16,6 +17,16 @@ int main() {
     unsigned bases = 0;
     size_t words_checked = 0, fragments_checked = 0;
     for (unsigned base = 2; base <= 64; ++base) {
+        const auto wb=word_bases[base];uint64_t b8=1,power=1;
+        for(unsigned j=0;j<8;++j)b8*=base;
+        for(unsigned j=0;j<wb.digits;++j)power*=base;
+        assert(power==wb.power && (__uint128_t)power*base>UINT64_MAX);
+        for(unsigned j=0;j<256;++j){
+            const uint64_t x=j==0?0:j==1?1:j==2?b8-1:j==3?b8:j==4?b8+1:
+                             j==5?wb.power-1:j==6?UINT64_MAX:j==7?UINT64_MAX-1:rnd();
+            uint64_t q=x;const auto r=split_radix_word(q,b8,wb.reciprocal8);
+            assert(q==x/b8 && r==x%b8);
+        }
         DigitPlan values{}, text{};
         const bool expected = base >= 3 && base <= 63 && (base & (base - 1));
         assert(digit_plan_init(values, base, nullptr) == expected);
@@ -23,6 +34,18 @@ int main() {
             continue;
         assert(digit_plan_init(text, base, reinterpret_cast<const uint8_t *>(alphabet)));
         ++bases;
+        for(unsigned count=1;count<=8;++count)for(unsigned trial=0;trial<8;++trial){
+            uint64_t wide[8];uint8_t actual[512],expected_digits[512];
+            for(unsigned j=0;j<count;++j)wide[j]=trial==0?0:trial==1?wb.power-1:rnd()%wb.power;
+            for(const auto *p:{&values,&text}){
+                memset(actual,0xcc,sizeof(actual));emit_word_chunks(actual,wide,count,*p);
+                for(unsigned j=0;j<count;++j){uint64_t q=wide[j];
+                    for(unsigned k=wb.digits;k-->0;){expected_digits[j*wb.digits+k]=p->encode[q%base];q/=base;}
+                }
+                assert(!memcmp(actual,expected_digits,count*wb.digits));
+                for(size_t j=count*wb.digits;j<sizeof(actual);++j)assert(actual[j]==0xcc);
+            }
+        }
         uint64_t words[64], back[64];
         uint8_t fast[512], slow[512];
         for (unsigned trial = 0; trial < 40; ++trial) {

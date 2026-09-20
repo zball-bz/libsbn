@@ -27,6 +27,7 @@ struct TreePolicy {
     // complete calls cross at about 40 000 limb-words in every base measured (2026-09-19, Zen 5, one worker:
     // 94 limbs in base 3, 124 in base 10, 160 in base 36), so that rule is in limb-words, not in limbs.
     size_t integer_tree_work = 40000, integer_tree_limbs_repeated = 32;
+    unsigned fraction_recipe = 0; // 0: complete-cost policy; probes may pin 1: direct or 2: tree
     bool cyclic_products = true;        // frontier splits as wrap-around products with cached rail spectra
     bool ring_products = true;          // staged splits in the NTT band as wrap-around products (product service)
     size_t ring_node_limbs = 40000;     // from this node size on

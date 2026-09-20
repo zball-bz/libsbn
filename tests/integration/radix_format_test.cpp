@@ -109,6 +109,9 @@ void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64
     options.workers = workers;
     options.memory_budget = budget;
     options.repeated = unsigned(random_word() & 1); // the integer tree from 32 limbs, or from 256
+    // Explicit fallback assertions exercise the tree recipe. The direct
+    // one-use fraction recipe is exact and has no boundary fallback.
+    if(expect_fallback>=0)options.repeated=1;
     unsigned char table[64];
     sbn3_radix_alphabet(base, table);
     if (alphabet) {

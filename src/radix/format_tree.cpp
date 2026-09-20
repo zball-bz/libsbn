@@ -75,7 +75,8 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         have_linear = true;
     }
     bool cyclic = w == 1 && policy.cyclic_products &&
-                  rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic);
+                  rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic,
+                                    repeated?0:count);
     if (cyclic && have_linear) {
         const double ordinary = pq16::native_cost(out.cyclic.shape, rail_size, c.split_limbs);
         const double cached = (repeated?0:.27 * double(out.cyclic.table_bytes) + cost_model::prepare_share(ordinary)) +

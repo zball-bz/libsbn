@@ -4,6 +4,7 @@
 #include "product/cost_model.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "product/fft_choice.hpp"
+#include "product/short_query_bounds.hpp"
 #include "sbn3/product.h"
 #include "sbn3/divrem.h"
 #include <algorithm>
@@ -49,17 +50,29 @@ sbn3_query_result finite_product(size_t an, size_t bn, const sbn3_mul_options &o
     // the prepared-execution winner and only then charging for its tables.
     // The selected shape is carried exactly by the transcript to bind.
     if(options.workers==1 && an+bn<=32768 && direct_rc==SBN3_SUPPORTED){
-        const auto shape=pq16::select(an,bn,1,0,0,false,.27/double(applications));
+        const double floor=double(applications)*query_bounds::fft_score(an,bn,1);
+        out=direct;choice=direct_choice;
+        if(direct_cost<=floor)return SBN3_SUPPORTED;
+        double best=direct_cost;
         sbn3_product_request request{};request.a_limbs=an;request.b_limbs=bn;
-        sbn3_product_info info{};
-        if(shape.nfull && short_fft_query(request,options,shape,out.plan,info)==SBN3_SUPPORTED){
-            out.info=info.mul;
-            if(product_program_describe(an,bn,out)==SBN3_SUPPORTED &&
-               preparation_cost(out)+application_cost(out,an,bn)*double(applications)<direct_cost){
-                choice=fft_shape_choice(shape);return SBN3_SUPPORTED;
+        auto consider=[&](pq16::Shape shape){
+            ProductProgramPlan candidate{};sbn3_product_info info{};
+            if(shape.nfull && short_fft_query(request,options,shape,candidate.plan,info)==SBN3_SUPPORTED){
+                candidate.info=info.mul;
+                if(product_program_describe(an,bn,candidate)==SBN3_SUPPORTED){
+                    const double price=preparation_cost(candidate)+application_cost(candidate,an,bn)*double(applications);
+                    if(price<best){best=price;out=candidate;choice=fft_shape_choice(shape);}
+                }
             }
-        }
-        out=direct;choice=direct_choice;return SBN3_SUPPORTED;
+        };
+        auto classic=pq16::query(an,bn);classic.recipe=pq16::Recipe::PfaPQ;consider(classic);
+        // The broad mixed-codec search costs microseconds. It can only
+        // save the gap to the same score lower bound; many short products
+        // in a tree do not justify rerunning that search at every class.
+        constexpr double mixed_search_ns=3500.;
+        if(best-floor>mixed_search_ns)
+            consider(pq16::select(an,bn,1,0,0,false,.27/double(applications)));
+        return SBN3_SUPPORTED;
     }
     const auto rc = product_program_choose(an, bn, options, out, choice);
     if (direct_rc == SBN3_SUPPORTED &&

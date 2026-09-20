@@ -12,6 +12,8 @@
 #include "sbn3/newton.h"
 #include "radix/format_tree.hpp"
 #include "radix/bits.hpp"
+#include "radix/word_base.hpp"
+#include "radix/short_fraction_tuning.hpp"
 #include "common/identity.hpp"
 #include "value/parallel_limbs.hpp"
 #include <algorithm>
@@ -39,6 +41,7 @@ struct Plan {
     size_t prepared_offset = 0, prepared_bytes = 0, values_offset = 0, values_bytes = 0, divide_offset = 0,
            divide_bytes = 0, work_offset = 0, work_bytes = 0;
     size_t rail_at = 0, side_at = 0, numerator_at = 0, inverse_at = 0, small_at = 0; // limbs in values
+    size_t fraction_small_at = 0, fraction_small_limbs = 0;
     int root_product = -1; // tree.extra index of numerator * reciprocal
     size_t divide_alignment = 0;   // of the Newton INVERSE storage (integer tree)
     unsigned divide_lease_peak = 0;
@@ -59,7 +62,8 @@ uint64_t seal(const Plan &p, const sbn3_newton_plan &divide, const PlanTranscrip
                                p.integer_fragments, p.fraction_fragments, p.tree_digits, p.divide_limbs, p.prepared_offset,
                                p.prepared_bytes, p.values_offset, p.values_bytes, p.divide_offset, p.divide_bytes,
                                p.work_offset, p.work_bytes, p.pool_offset, p.pool_bytes, p.rail_at, p.side_at, p.numerator_at, p.inverse_at, uint64_t(p.root_product),
-                               p.small_at, p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
+                               p.small_at, p.fraction_small_at, p.fraction_small_limbs,
+                               p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
                                p.info.fraction_digits, p.info.integer_digits, p.info.control_bytes,
                                p.divide_alignment, p.divide_lease_peak, t.count,
                                p.info.storage_alignment, p.info.lease_peak, p.info.workers, p.info.fraction_offset};
@@ -188,6 +192,17 @@ sbn3_query_result Assembly::assemble() noexcept {
     else if (base.twos) // a dyadic fraction ends after ceil(bits / twos) digits in an even base
         p.tree_digits = std::min(digits, (p.fraction_bits + base.twos - 1) / base.twos);
     p.fraction_fragments = p.shift ? 0 : (p.tree_digits + fragment_digits - 1) / fragment_digits;
+    // One-use short fractions extract maximal u64 radix powers with mul_1.
+    // Price the actual rectangular work, not just the mantissa length. A
+    // repeated binding retains the tree's lower execution-only crossover.
+    const size_t fraction_limbs=limbs_for_bits(p.fraction_bits);
+    const auto fraction_recipe=tree_policy().fraction_recipe;
+    if(!p.shift && p.fraction_fragments && !p.options.repeated &&
+       (fraction_recipe==1 || (!fraction_recipe &&
+        short_fraction_preferred(base,fraction_limbs,p.tree_digits,s.mode==SBN3_RADIX_ENCLOSED)))){
+        p.fraction_small_limbs=fraction_limbs;
+        p.fraction_fragments=0;
+    }
     info.fraction_offset = size_t(info.integer_digits);
     info.digit_bytes = info.fraction_offset + size_t(align_to(digits, fragment_digits));
     if (p.fraction_fragments > max_fragments || p.integer_fragments > max_fragments)
@@ -204,6 +219,7 @@ sbn3_query_result Assembly::assemble() noexcept {
         values += align_to(limbs, 8);
         return at;
     };
+    if(p.fraction_small_limbs)p.fraction_small_at=take(p.fraction_small_limbs);
     info.lease_peak = 1;
     const bool trees = p.fraction_fragments || p.integer_path == integer_tree;
     unsigned classes = 0;
@@ -537,6 +553,42 @@ void fraction_tree_run(Binding &b, const uint64_t *m, unsigned char *out, sbn3_f
     }
     result.fraction_digits = certified;
 }
+void fraction_schoolbook(Binding &b,const uint64_t *m,unsigned char *out,sbn3_format_result &result) noexcept {
+    const auto &p=b.plan;const auto &dp=b.tree.digits;
+    const size_t n=p.fraction_small_limbs;
+    auto *a=b.limbs(p.fraction_small_at);
+    dyadic_window(a,n,m,p.spec.limbs,p.point-int64_t(64*n),0,
+                  std::min<uint64_t>(p.fraction_bits,uint64_t(64)*p.spec.limbs));
+    size_t low=0;while(low<n && !a[low])++low;
+    const uint64_t digits=p.tree_digits,guard_count=p.spec.mode==SBN3_RADIX_ENCLOSED?word_digits:0;
+    const auto wb=word_bases[dp.base];
+    const uint64_t total=digits+guard_count;
+    uint8_t guard[word_digits]{};
+    for(uint64_t at=0;at<total;at+=8*wb.digits){
+        uint64_t words[8]{};uint8_t block[512];
+        const unsigned count=unsigned(std::min<uint64_t>(8,(total-at+wb.digits-1)/wb.digits));
+        for(unsigned j=0;j<count;++j){
+            if(low<n)words[j]=sbn3i_mul_1(a+low,a+low,long(n-low),wb.power);
+            while(low<n && !a[low])++low;
+        }
+        emit_word_chunks(block,words,count,dp);
+        const uint64_t produced=count*wb.digits;
+        if(at<digits)memcpy(out+at,block,size_t(std::min<uint64_t>(produced,digits-at)));
+        const uint64_t begin=std::max(at,digits),end=std::min(at+produced,total);
+        if(end>begin)memcpy(guard+begin-digits,block+begin-at,size_t(end-begin));
+    }
+    if(p.spec.mode==SBN3_RADIX_EXACT){
+        if(digits<p.info.fraction_digits)memset(out+digits,dp.encode[0],size_t(p.info.fraction_digits-digits));
+        result.fraction_digits=p.info.fraction_digits;return;
+    }
+    // Same conservative enclosure rule as the tree, now with exact guard
+    // digits. The admitted input interval moves less than one guard unit.
+    bool shared=false;const auto top=dp.encode[dp.base-1];
+    for(auto c:guard)shared|=c!=top;
+    uint64_t certified=p.info.fraction_digits;
+    if(!shared){while(certified && out[certified-1]==top)--certified;certified=certified?certified-1:0;}
+    result.fraction_digits=certified;
+}
 } // namespace
 } // namespace sbn::v3::radix
 using namespace sbn::v3;
@@ -708,7 +760,9 @@ extern "C" void sbn3_format_execute(sbn3_format_binding *opaque, sbn3_const_limb
             schoolbook(b, m, digits);
         else if (p.integer_path == integer_tree)
             integer_tree_run(b, m, digits);
-        if (p.fraction_fragments) {
+        if(p.fraction_small_limbs){
+            fraction_schoolbook(b,m,fraction,result);
+        }else if (p.fraction_fragments) {
             fraction_tree_run(b, m, fraction, result);
         } else {
             // no fraction bits (EXACT: zeros), or nothing certifiable

@@ -31,6 +31,9 @@ struct DigitPlan {
 bool digit_plan_init(DigitPlan &, unsigned base, const uint8_t *table) noexcept;
 // count words (each < b^8), count a multiple of 8 -> 8*count bytes, MSD first.
 void emit_words(uint8_t *out, const uint64_t *words, size_t count, const DigitPlan &) noexcept;
+// Up to eight words in the maximal u64 radix b^K. Emit count*K digit bytes;
+// each word is below b^K. Internally all eight SIMD lanes remain occupied.
+void emit_word_chunks(uint8_t *out,const uint64_t *words,unsigned count,const DigitPlan &) noexcept;
 // 8*count digit bytes (count a multiple of 8) -> count words. Returns false if
 // any byte is not a digit of the base (the words are then unspecified).
 bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const DigitPlan &) noexcept;

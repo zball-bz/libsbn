@@ -27,7 +27,8 @@ struct RailProductPlan {
     size_t episode_bytes() const noexcept { return ((output_limbs() * 8 + 63) & ~size_t(63)) + 128 + scratch_bytes; }
 };
 // False when no supported ring of at least `minimum_ring` limbs exists for these operand lengths.
-bool rail_product_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, RailProductPlan &) noexcept;
+bool rail_product_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, RailProductPlan &,
+                       uint64_t applications=0) noexcept;
 // The parse tree needs the whole product: a linear product with the same cached spectrum
 // (ring == 0, the output has common + fresh limbs). False outside the FFT kernels' single-worker band.
 bool rail_linear_plan(size_t fresh_limbs, size_t common_limbs, RailProductPlan &) noexcept;
