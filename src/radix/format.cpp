@@ -90,12 +90,16 @@ uint64_t tree_identity(const FormatTreePlan &t) noexcept {
         h = identity::word(h, t.classes[j].fragments);
         h = identity::word(h, t.classes[j].region_bytes + t.classes[j].persist_bytes);
         h = identity::word(h, t.classes[j].split.product.arithmetic_id + t.classes[j].split.cyclic.ring);
+        h = identity::word(h, t.classes[j].split.middle_words);
+        h = identity::word(h, t.classes[j].split.middle_shift);
     }
     for (unsigned k = 0; k < t.tree_count; ++k)
         for (unsigned s = 0; s < t.trees[k].stage_count; ++s) {
             const auto &stage = t.trees[k].stages[s];
             h = identity::word(h, uint64_t(stage.node_class) << 32 | stage.groups << 8 | stage.workers);
             h = identity::word(h, stage.split.product.arithmetic_id + stage.split.cyclic.ring);
+            h = identity::word(h, stage.split.middle_words);
+            h = identity::word(h, stage.split.middle_shift);
         }
     return h;
 }

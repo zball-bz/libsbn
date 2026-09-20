@@ -168,25 +168,57 @@ namespace sbn::v3::u52 {
 size_t middle_scratch_bytes(size_t an,size_t bn) noexcept {
     const size_t a=(an*64+51)/52,b=(bn*64+51)/52;
     // Conversion/result/padding <= 2*(a+b+64) words. Recursive maximum:
-    // at most 7*m+78 words per halving level, m=a/2; a<=370.
+    // at most 7*m+80 words per halving level, m=a/2. The public TMP
+    // wrapper limits a<=370; the guarded consumer permits a<=1024.
     return 16*(a+b+64)+8*(8*a+1024)+512;
 }
-void middle(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
+template<unsigned Guards>
+static void middle_impl(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
     FrameMark mark(f);const size_t na=(an*64+51)/52,nb=(bn*64+51)/52,rn=nb-na+1;
-    auto *A=f.alloc<uint64_t>(na+24),*B=f.alloc<uint64_t>(nb+56),*R=f.alloc<uint64_t>(rn+8);
-    memset(A,0,(na+24)*8);memset(B,0,(nb+56)*8);memset(R,0,(rn+8)*8);
+    if constexpr(Guards)require(na>Guards && na<=1024 && bn>=an && bn<=8192,SBN3_FATAL_ARGUMENT,"guarded middle shape");
+    auto *A=f.alloc<uint64_t>(na+24),*B=f.alloc<uint64_t>(nb+56),*R=f.alloc<uint64_t>(rn+Guards+8);
+    memset(A,0,(na+24)*8);memset(B,0,(nb+56)*8);memset(R,0,(rn+Guards+8)*8);
     // Fixed planned counts, including leading zero digits; no value-dependent
     // certificate or allocation. Front padding makes donor masked bases valid.
     A+=8;B+=8;u52_from_u64((sb_pvec)A,a,an);u52_from_u64((sb_pvec)B,b,bn);
-    mulmid_dc(R,A,B,int64_t(na),int64_t(nb),&f);
+    mulmid_dc(R+Guards,A,B,int64_t(na),int64_t(nb),&f);
+    if constexpr(Guards){
+        constexpr uint64_t mask=(uint64_t(1)<<52)-1;
+        for(unsigned g=0;g<Guards;++g){
+            const size_t diagonal=na-1-Guards+g;
+            __m512i low=_mm512_setzero_si512(),high=low;
+            const __m512i order=_mm512_setr_epi64(0,1,2,3,4,5,6,7);
+            for(size_t i=0;i<=diagonal;i+=8){
+                const unsigned count=unsigned(std::min<size_t>(8,diagonal-i+1));
+                const __mmask8 lanes=__mmask8((1u<<count)-1);
+                const __m512i x=_mm512_maskz_loadu_epi64(lanes,A+i);
+                const __m512i raw=_mm512_maskz_loadu_epi64(lanes,B+diagonal-i+1-count);
+                const __m512i indices=_mm512_sub_epi64(_mm512_set1_epi64(count-1),order);
+                const __m512i y=_mm512_permutexvar_epi64(indices,raw);
+                low=_mm512_madd52lo_epu64(low,x,y);high=_mm512_madd52hi_epu64(high,x,y);
+            }
+            const __uint128_t sum=(__uint128_t(uint64_t(_mm512_reduce_add_epi64(high)))<<52)+
+                                  uint64_t(_mm512_reduce_add_epi64(low));
+            R[g]+=uint64_t(sum)&mask;R[g+1]+=uint64_t(sum>>52);
+        }
+    }
     __int128 carry=0;uint64_t acc=0;unsigned bits=0;size_t w=0;
-    for(size_t j=0;j<rn+2;++j){
-        if(j<rn+1)carry+=(__int128)(int64_t)R[j];
+    for(size_t j=0;j<rn+Guards+2;++j){
+        if(j<rn+Guards+1)carry+=(__int128)(int64_t)R[j];
         const uint64_t d=uint64_t(carry)&((uint64_t(1)<<52)-1);carry=(carry-d)>>52;
         acc|=d<<bits;
         if(bits+52>=64){out[w++]=acc;acc=bits?d>>(64-bits):0;bits=bits+52-64;}
         else bits+=52;
     }
     if(bits)out[w++]=acc;
+}
+void middle(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
+    middle_impl<0>(out,a,an,b,bn,f);
+}
+size_t middle_guard_scratch_bytes(size_t an,size_t bn) noexcept {
+    return middle_scratch_bytes(an,bn)+128;
+}
+void middle_guard(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
+    middle_impl<4>(out,a,an,b,bn,f);
 }
 }

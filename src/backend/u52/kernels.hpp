@@ -20,6 +20,14 @@ inline bool streams(size_t an,size_t bn) noexcept {
 }
 size_t middle_scratch_bytes(size_t an,size_t bn) noexcept;
 void middle(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
+// The same exact polynomial band with four additional low diagonals.
+// Let na=ceil(64*an/52), nb=ceil(64*bn/52). Output begins at bit
+// 52*(na-5) of the full product and has ceil(52*(nb-na+7)/64) words.
+// Omitted lower coefficients contribute a nonnegative carry <2*na*2^52.
+// an<=832 (na<=1024), bn>=an, bn<=8192, na>=5;
+// output/input/scratch disjoint. This retains the donor's audited n<=1024.
+size_t middle_guard_scratch_bytes(size_t an,size_t bn) noexcept;
+void middle_guard(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
 Prepared prepare_buffers(Frame &,size_t an,size_t bn,bool allow_streaming=true) noexcept;
 void multiply_prepared(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
                        const Prepared &,Frame &) noexcept;

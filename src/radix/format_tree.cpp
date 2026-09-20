@@ -1,4 +1,5 @@
 #include "radix/format_tree.hpp"
+#include "backend/u52/kernels.hpp"
 #include "value/parallel_limbs.hpp"
 #include "product/cost_model.hpp"
 #include <algorithm>
@@ -67,12 +68,27 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
     const size_t wrapped_ring = c.split_limbs + rail_size - c.window_limbs + 1;
     const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
     ProductShape linear{};
+    ProductProgramPlan linear_plan{};
     bool have_linear = false;
     if (w == 1 || (!c.frontier && count==1)) {
-        const auto rc = product_shape(c.split_limbs, rail_size, product_workers, linear, nullptr, transcript, repeated?0:count);
+        const auto rc = product_shape(c.split_limbs, rail_size, product_workers, linear, &linear_plan, transcript, repeated?0:count);
         if (rc != SBN3_SUPPORTED)
             return rc;
         have_linear = true;
+    }
+    const bool short_middle=linear_plan.info.algorithm==SBN3_MUL_U52;
+    const bool one_use_window=!repeated && count<=2 && c.right_limbs<=rail_size;
+    if(workers==1 && w==1 && have_linear && (short_middle || one_use_window) &&
+       rail_size>=32 && rail_size<=832 && c.split_limbs>=rail_size && c.split_limbs<=8192){
+        const size_t a=(64*rail_size+51)/52,b=(64*c.split_limbs+51)/52;
+        const uint64_t start=52*(a-5),window=64*c.window_limbs;
+        if(window>=start+128 && 64*(c.window_limbs+c.right_limbs)<=52*b){
+            out.product=linear;
+            out.middle_words=(52*(b-a+7)+63)/64;
+            out.middle_shift=window-start;
+            out.middle_bytes=u52::middle_guard_scratch_bytes(rail_size,c.split_limbs);
+            return SBN3_SUPPORTED;
+        }
     }
     bool cyclic = w == 1 && policy.cyclic_products &&
                   rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic,
@@ -255,7 +271,7 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
             continue;
         if (c.split.cyclic.enabled)
             wrap(j, c.split.cyclic);
-        else
+        else if(!c.split.middle_words)
             programs.account(c.split.product);
     }
     // Stages of every tree: node counts flow from each top class to its children; classes were created
@@ -302,7 +318,7 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
             else if (s.split.ring.enabled) {
                 s.ring_stage = int(ring_stages++);
                 tree.pool_bytes = std::max(tree.pool_bytes, s.split.ring.pool_bytes(s.groups));
-            } else
+            } else if(!s.split.middle_words)
                 programs.account(s.split.product);
             tree.episode_bytes = std::max(tree.episode_bytes, size_t(s.groups) * align_to(s.split.episode_bytes(), 64));
         }
@@ -361,7 +377,7 @@ void format_tree_bind(FormatTree &t, const FormatTreePlan &plan, const uint8_t *
         ::new (&cyclic[j]) RailProduct{};
     auto prepare = [&](const NodeClass &c, const SplitPlan &split, ProductProgram &slot) {
         const unsigned index = unsigned(&c - plan.classes);
-        if (split.ring.enabled)
+        if (split.ring.enabled || split.middle_words)
             return; // replayed below, bound stage by stage at run time
         if (!split.cyclic.enabled)
             slot = builder.prepare(split.product);
@@ -444,6 +460,34 @@ void split(Run &run, int index, const SplitPlan &plan, const ProductProgram &pro
     const auto &c = t.plan->classes[index];
     auto *z = reinterpret_cast<uint64_t *>(episode);
     const size_t window = c.window_limbs;
+    if(plan.middle_words){
+        auto *work=episode+align_to(plan.middle_words*8,64);
+        {
+            auto frame=t.roots[sbn3_team_first_worker(scope)]->borrowed_view(work,plan.middle_bytes);
+            u52::middle_guard(z,t.rail[c.level],plan.product.bn,y,plan.product.an,frame);
+        } // retire/unpoison the middle workspace before reusing its bytes
+        // The omitted low coefficients add <2^64 at the guarded origin.
+        // Unless this whole intervening word is one, they cannot affect
+        // the requested window, which starts at or above bit 128.
+        if(z[1]!=UINT64_MAX){
+            take_window(right,c.right_limbs,z,plan.middle_words,plan.middle_shift);
+            return;
+        }
+        // Rare exact repair. Prepare it only here; it is otherwise dead
+        // work, especially for the one-use FFT shapes of ragged nodes.
+        ProductProgramPlan pp{};sbn3_mul_options o{};o.workers=plan.product.requested;
+        require(product_program_chosen(plan.product.an,plan.product.bn,o,plan.product.choice,pp)==SBN3_SUPPORTED,
+                SBN3_FATAL_MATH,"radix middle repair plan");
+        auto *fallback=episode+align_to(plan.product.output_limbs*8,64);
+        auto repair=t.roots[sbn3_team_first_worker(scope)]->borrowed_view(fallback,plan.product.temporary_work_bytes());
+        auto tables=repair.subframe(align_to(pp.prepared_bytes,128)+256,128);
+        const auto exact=product_program_prepare(pp,tables);
+        auto scratch=repair.subframe(pp.info.workspace_bytes,pp.info.workspace_alignment);
+        product_program_execute(exact,scratch,scope,{y,plan.product.an},{t.rail[c.level],plan.product.bn},
+                                {z,plan.product.output_limbs});
+        memcpy(right,z+window,c.right_limbs*8);
+        return;
+    }
     if (plan.wraps()) {
         // Wrap-around product with the cached rail spectrum (rail_product.hpp, ring_product.hpp): exact window.
         const size_t residue = plan.cyclic.enabled ? plan.cyclic.ring : plan.ring.output_limbs;

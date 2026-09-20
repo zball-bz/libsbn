@@ -119,7 +119,8 @@ void products() {
 }
 // 2. format and parse tree plans.
 bool same_split(const SplitPlan &a, const SplitPlan &b) {
-    return same_shape(a.product, b.product) && a.cyclic.enabled == b.cyclic.enabled && a.cyclic.ring == b.cyclic.ring &&
+    return a.middle_words==b.middle_words && a.middle_bytes==b.middle_bytes && a.middle_shift==b.middle_shift &&
+           same_shape(a.product, b.product) && a.cyclic.enabled == b.cyclic.enabled && a.cyclic.ring == b.cyclic.ring &&
            a.ring.enabled == b.ring.enabled && a.ring.np == b.ring.np && a.ring.algorithm == b.ring.algorithm &&
            a.ring.trunk_bits == b.ring.trunk_bits && a.ring.ring == b.ring.ring && a.ring.table_bytes == b.ring.table_bytes &&
            a.ring.work_bytes == b.ring.work_bytes && a.ring.spectrum_bytes == b.ring.spectrum_bytes &&

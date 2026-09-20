@@ -35,13 +35,16 @@ struct SplitPlan {
     size_t gap_limbs = 0;     // wrap-around: limbs between the wrapped part and the window (at least one)
     size_t low_limbs = 0, low_rail_limbs = 0, low_bytes = 0; // wrap-around tie-break: exact low product and its scratch
     unsigned low_workers = 1;
+    size_t middle_words = 0, middle_bytes = 0;
+    uint64_t middle_shift = 0;
     bool wraps() const noexcept { return cyclic.enabled || ring.enabled; }
     size_t episode_bytes() const noexcept {
         if (cyclic.enabled)
             return ((cyclic.ring * 8 + 63) & ~size_t(63)) + 64 + std::max(cyclic.scratch_bytes, low_bytes);
         if (ring.enabled)
             return ((ring.output_limbs * 8 + 63) & ~size_t(63)) + 64 + low_bytes;
-        return product.episode_bytes();
+        const size_t middle=((middle_words*8+63)&~size_t(63))+middle_bytes;
+        return middle_words?std::max(product.temporary_bytes(),middle):product.episode_bytes();
     }
 };
 struct NodeClass {

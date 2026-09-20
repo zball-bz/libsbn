@@ -561,7 +561,9 @@
         "sbn::v3::u52::middle_scratch_bytes",
         "sbn::v3::u52::middle",
         "sbn::v3::u52::divide_scratch_bytes",
-        "sbn::v3::u52::divide"
+        "sbn::v3::u52::divide",
+        "sbn::v3::u52::middle_guard",
+        "sbn::v3::u52::middle_guard_scratch_bytes"
       ],
       "requires_symbols": [
         "sbn3i_recip_u1024"
