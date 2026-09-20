@@ -10,7 +10,10 @@ among recursive tasks. Exhausting a correctly planned region or violating a
 mathematical invariant is a fatal diagnostic; it is not a request to silently
 switch algorithms. Resource preparation reports failure before execution.
 
-A binding holds its leases until unbind. In-place result views remain valid only
+A binding retains exclusive ownership of its declared storage until unbind.
+Internally, planned phases may release and reacquire leases over the same bytes
+after all users of the previous phase have joined. The caller must not reuse or
+trim that storage between phases. In-place result views remain valid only
 for the lifetime declared by that service. Inputs, output and workspace must obey
 the overlap rules in the public header. Cache compatibility includes arithmetic
 basis, completion state, scaling and support, not merely transform size. A

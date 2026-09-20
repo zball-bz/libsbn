@@ -217,6 +217,50 @@ std::vector<uint64_t> near_boundary(unsigned base, uint64_t t, size_t limbs, int
     return m;
 }
 } // namespace
+// Large analytic fractions exercise the ring stages and, near 1/10, the
+// subsequent exact repair. Their decimal strings are known without a large
+// quadratic reference conversion. Reuse the binding with changed input values.
+void phase_storage(Pool &pool,unsigned workers) {
+    constexpr size_t n=65537;
+    const uint64_t digits=uint64_t(floorl(64.L*n*log10l(2.L)))-256;
+    std::vector<uint64_t> m(n),saved(n);
+    for(unsigned repeated:{0u,1u}){
+        sbn3_format_spec spec{10,n,-int64_t(64*n),digits,SBN3_RADIX_EXACT};
+        sbn3_radix_options options{};options.workers=workers;options.repeated=repeated;
+        sbn3_format_plan plan{};sbn3_format_info info{};
+        assert(sbn3_format_query(&spec,&options,&plan,&info)==SBN3_SUPPORTED);
+        assert(info.storage_bytes<=pool.bytes);
+        sbn3_format_binding *binding=nullptr;
+        sbn3_format_bind(&plan,pool.f.arena,pool.offset,pool.f.team,&binding);
+        std::vector<unsigned char> out(info.digit_bytes+64,0xee);
+        sbn3_arena_stats before{},after{};
+        sbn3_arena_get_stats(pool.f.arena,&before);
+        for(unsigned pattern=0;pattern<3;++pattern){
+            if(pattern==0)std::fill(m.begin(),m.end(),~uint64_t(0));
+            else if(pattern==1){
+                uint64_t remainder=1;
+                for(size_t j=n;j-- >0;){
+                    const __uint128_t v=__uint128_t(remainder)<<64;
+                    m[j]=uint64_t(v/10);remainder=uint64_t(v%10);
+                }
+                assert(m[0]);--m[0]; // strictly below 1/10
+            }else std::fill(m.begin(),m.end(),0);
+            saved=m;std::fill(out.begin(),out.end(),0xee);
+            sbn3_format_result result{};
+            allocation_watch_start();
+            sbn3_format_execute(binding,{m.data(),n},out.data(),&result);
+            assert(allocation_watch_stop()==0);
+            assert(m==saved && result.fraction_digits==digits);
+            for(size_t j=0;j<digits;++j)
+                assert(out[info.fraction_offset+j]==(pattern==2 || (pattern==1 && j==0)?0:9));
+            for(size_t j=info.digit_bytes;j<out.size();++j)assert(out[j]==0xee);
+            sbn3_arena_get_stats(pool.f.arena,&after);
+            assert(before.active_leases==after.active_leases);
+            if(pattern==1)assert(result.exact_fallback==1);
+        }
+        sbn3_format_unbind(binding);
+    }
+}
 int main() {
     for (unsigned workers : {1u, 4u}) {
         Fixture f(workers, false);
@@ -278,6 +322,7 @@ int main() {
             check(pool, workers, base, random_limbs(3000), -int64_t(64) * 3000, 57000, SBN3_RADIX_EXACT, false);
             check(pool, workers, base, random_limbs(3000), -int64_t(64) * 2000 - 17, 38000, SBN3_RADIX_ENCLOSED, base == 10);
         }
+        phase_storage(pool,workers);
     }
     printf("radix format: %llu conversions (%llu exact fallbacks, %llu tie groups, %llu enclosed of which %llu shortened) "
            "against exact arithmetic PASS\n",

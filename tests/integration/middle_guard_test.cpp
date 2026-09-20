@@ -9,7 +9,7 @@ int main(){
     ref_int A,B,P,Q,E,difference,modulus;ref_inits(A,B,P,Q,E,difference,modulus,nullptr);
     for(size_t an:{4ul,9ul,17ul,33ul,65ul,97ul,128ul,193ul,257ul,298ul,300ul,
                    333ul,416ul,511ul,595ul,700ul,831ul,832ul})
-      for(size_t bn:{an,an+7,2*an+1,4*an+3,8192ul}){
+      for(size_t bn:{an,an+7,an+an/2,an+an/3+1,an+127,2*an+1,4*an+3,8192ul}){
         const size_t na=(64*an+51)/52,nb=(64*bn+51)/52,words=(52*(nb-na+7)+63)/64;
         const uint64_t start=52*(na-5),window=64*(an-1),shift=window-start;
         const size_t width=bn-an+1;

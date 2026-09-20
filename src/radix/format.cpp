@@ -40,6 +40,7 @@ struct Plan {
     size_t pool_offset = 0, pool_bytes = 0;
     size_t prepared_offset = 0, prepared_bytes = 0, values_offset = 0, values_bytes = 0, divide_offset = 0,
            divide_bytes = 0, work_offset = 0, work_bytes = 0;
+    size_t tree_work_bytes = 0; // live with the ring pool; setup/repair may use a larger overlapping lease
     size_t rail_at = 0, side_at = 0, numerator_at = 0, inverse_at = 0, small_at = 0; // limbs in values
     size_t fraction_small_at = 0, fraction_small_limbs = 0;
     int root_product = -1; // tree.extra index of numerator * reciprocal
@@ -61,7 +62,7 @@ uint64_t seal(const Plan &p, const sbn3_newton_plan &divide, const PlanTranscrip
                                p.shift, uint64_t(p.point), p.integer_bits, p.fraction_bits, p.integer_path, p.integer_limbs,
                                p.integer_fragments, p.fraction_fragments, p.tree_digits, p.divide_limbs, p.prepared_offset,
                                p.prepared_bytes, p.values_offset, p.values_bytes, p.divide_offset, p.divide_bytes,
-                               p.work_offset, p.work_bytes, p.pool_offset, p.pool_bytes, p.rail_at, p.side_at, p.numerator_at, p.inverse_at, uint64_t(p.root_product),
+                               p.work_offset, p.work_bytes, p.tree_work_bytes, p.pool_offset, p.pool_bytes, p.rail_at, p.side_at, p.numerator_at, p.inverse_at, uint64_t(p.root_product),
                                p.small_at, p.fraction_small_at, p.fraction_small_limbs,
                                p.tree_id, p.info.storage_bytes, p.info.digit_bytes,
                                p.info.fraction_digits, p.info.integer_digits, p.info.control_bytes,
@@ -319,7 +320,13 @@ sbn3_query_result Assembly::assemble() noexcept {
             work = std::max(work, bytes);
         }
     }
-    // Layout: [control][prepared][values][divide][work], all relative to a base aligned to storage_alignment.
+    // The ring pool is live only while the conversion tree runs. Rail setup,
+    // integer-root construction and exact fraction repair run before/after it.
+    // Reserve the maximum of those phases, not the sum of their peaks.
+    size_t tree_work = 0;
+    if(integer_root >= 0)tree_work=std::max(tree_work,tree.work_bytes(integer_root));
+    if(fraction_root >= 0)tree_work=std::max(tree_work,tree.work_bytes(fraction_root));
+    p.tree_work_bytes=trees?align_to(tree_work+64,4096):0;
     const size_t prepared_alignment = trees ? std::max<size_t>(4096, tree.prepared_alignment()) : 4096;
     const size_t divide_alignment = p.divide_limbs ? std::max<size_t>(4096, divide_info.storage_alignment) : 4096;
     const size_t pool_alignment = trees && tree.pool_bytes() ? size_t(1) << 21 : 4096;
@@ -335,12 +342,12 @@ sbn3_query_result Assembly::assemble() noexcept {
     p.divide_bytes = p.divide_limbs ? divide_info.storage_bytes : 0; // bind-time use of the work range
     // The pool of the ring stages stays unleased: the product service leases inside it stage by stage.
     p.pool_bytes = trees ? align_to(tree.pool_bytes(), 4096) : 0;
-    p.pool_offset = align_to(p.values_offset + p.values_bytes, pool_alignment);
-    p.work_offset = align_to(p.pool_offset + p.pool_bytes, divide_alignment);
+    p.work_offset = align_to(p.values_offset + p.values_bytes, divide_alignment);
+    p.pool_offset = p.pool_bytes ? align_to(p.work_offset + p.tree_work_bytes, pool_alignment) : p.work_offset;
     if (p.pool_bytes)
         info.lease_peak += 1 + 2 * ring_max_groups;
     p.work_bytes = trees ? align_to(work + 64, 4096) : 0;
-    info.storage_bytes = p.work_offset + p.work_bytes;
+    info.storage_bytes = std::max(p.work_offset + p.work_bytes, p.pool_offset + p.pool_bytes);
     info.table_bytes = p.prepared_bytes;
     info.value_bytes = p.values_bytes;
     info.workspace_bytes = p.work_bytes;
@@ -424,6 +431,25 @@ void schoolbook(Binding &b, const uint64_t *m, unsigned char *digits) noexcept {
         words[j] = 0;
     emit_words(digits, words, total, b.tree.digits);
 }
+uint64_t run_tree(Binding &b,int root,const uint64_t *y,uint8_t *out,uint64_t *first,uint64_t *overlap) noexcept {
+    const auto &p=b.plan;
+    const bool resize=p.pool_bytes && p.work_offset+p.work_bytes>p.pool_offset;
+    if(resize){
+        // There are no live scratch Frames here. The fraction prefix (which
+        // may contain y) stays at the same address; acquire does not clear it.
+        b.arena->release(b.work);
+        b.work=b.arena->acquire(b.offset+p.work_offset,p.tree_work_bytes);
+        b.tree.work=b.work;
+    }
+    const auto result=format_tree_run(b.tree,root,y,out,first,overlap);
+    if(resize){
+        // format_tree_run has joined every task and unbound its last ring.
+        b.arena->release(b.work);
+        b.work=b.arena->acquire(b.offset+p.work_offset,p.work_bytes);
+        b.tree.work=b.work;
+    }
+    return result;
+}
 void integer_tree_run(Binding &b, const uint64_t *m, unsigned char *digits) noexcept {
     const auto &p = b.plan;
     const size_t n = p.divide_limbs;
@@ -448,7 +474,7 @@ void integer_tree_run(Binding &b, const uint64_t *m, unsigned char *digits) noex
         parallel_limbs::copy(b.team, numerator, z + n, n);
     }
     uint64_t *side = b.limbs(p.side_at);
-    format_tree_run(b.tree, b.integer_root, numerator, digits, side, side + p.integer_fragments);
+    run_tree(b, b.integer_root, numerator, digits, side, side + p.integer_fragments);
 }
 // The tree left the requested prefix open: every computed digit after it is b - 1. True when the
 // prefix must be incremented.
@@ -518,7 +544,7 @@ void fraction_tree_run(Binding &b, const uint64_t *m, unsigned char *out, sbn3_f
     }
     uint64_t *side = b.limbs(p.side_at);
     const uint64_t fragments = p.fraction_fragments;
-    uint64_t overlap = format_tree_run(b.tree, b.fraction_root, y, out, side, side + fragments);
+    uint64_t overlap = run_tree(b, b.fraction_root, y, out, side, side + fragments);
     const auto &dp = b.tree.digits;
     const uint8_t top = dp.encode[dp.base - 1];
     const uint64_t computed = fragments * fragment_digits;
@@ -673,7 +699,9 @@ extern "C" void sbn3_format_bind(const sbn3_format_plan *opaque, sbn3_arena *are
     Assembly a{replay, b->tree_plan(), transcript, &p};
     a.divide = divide;
     require(a.run() == SBN3_SUPPORTED && replay.tree_id == p.tree_id && replay.info.storage_bytes == p.info.storage_bytes &&
-                replay.work_bytes == p.work_bytes && replay.prepared_bytes == p.prepared_bytes && replay.pool_bytes == p.pool_bytes &&
+                replay.work_bytes == p.work_bytes && replay.tree_work_bytes == p.tree_work_bytes &&
+                replay.work_offset == p.work_offset && replay.pool_offset == p.pool_offset &&
+                replay.prepared_bytes == p.prepared_bytes && replay.pool_bytes == p.pool_bytes &&
                 replay.values_bytes == p.values_bytes && replay.info.control_bytes == p.info.control_bytes,
             SBN3_FATAL_MATH, "format bind plan replay");
     b->integer_root = a.integer_root;

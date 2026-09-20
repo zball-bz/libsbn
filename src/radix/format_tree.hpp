@@ -133,7 +133,7 @@ struct FormatTreePlan {
     unsigned program_slots() const noexcept { return class_count + tree_count * max_stages; }
     unsigned ring_stages = 0; // replayed ring plans the binder needs
     size_t pool_bytes() const noexcept { return std::max(trees[0].pool_bytes, trees[1].pool_bytes); }
-    // Work lease: [instances][tasks][one fraction slab][stage episodes][frontier regions].
+    // Work lease: [instances][tasks][one fraction slab][max(stage episodes, frontier regions)].
     size_t work_bytes(int tree) const noexcept;
 private:
     int classify(uint64_t fragments) noexcept;

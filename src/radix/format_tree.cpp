@@ -112,7 +112,8 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         if (std::max(out.low_limbs, out.low_rail_limbs) > chain_basecase_limbs) {
             ProductShape low{};
             cyclic = product_shape(out.low_limbs, out.low_rail_limbs, 1, low, nullptr, transcript) == SBN3_SUPPORTED;
-            out.low_bytes = align_to(low.output_limbs * 8, 64) + low.temporary_bytes();
+            // temporary_bytes already includes the exact product's output.
+            out.low_bytes = low.temporary_bytes();
         }
     }
     if (cyclic) {
@@ -140,7 +141,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         if (std::max(out.low_limbs, out.low_rail_limbs) > chain_basecase_limbs) {
             ProductShape low{};
             ok = product_shape(out.low_limbs, out.low_rail_limbs, product_workers, low, nullptr, transcript) == SBN3_SUPPORTED;
-            out.low_bytes = align_to(low.output_limbs * 8, 64) + low.temporary_bytes();
+            out.low_bytes = low.temporary_bytes();
         }
         if (ok) {
             out.product.an = c.split_limbs;
@@ -329,7 +330,8 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
 size_t FormatTreePlan::work_bytes(int t) const noexcept {
     const auto &tree = trees[t];
     return align_to(size_t(tree.top_nodes) * sizeof(FormatInstance), 64) + align_to(size_t(tree.tasks) * sizeof(FormatTask), 64) +
-           align_to(root_storage_words(t)*8,64) + tree.episode_bytes + size_t(workers) * align_to(frontier_region_bytes, 64);
+           align_to(root_storage_words(t)*8,64) +
+           std::max(tree.episode_bytes,size_t(workers) * align_to(frontier_region_bytes, 64));
 }
 uint64_t *format_tree_root_buffer(FormatTree &t,int index) noexcept {
     const auto &p=*t.plan;const auto &tree=p.trees[index];const auto &c=p.classes[tree.root];
@@ -699,7 +701,10 @@ uint64_t format_tree_run(FormatTree &t, int tree_index, const uint64_t *y, uint8
             y=root;
         }
         task.episodes = base;
-        task.regions = base + tree.episode_bytes;
+        // Every staged split joins and copies its right child into the slab
+        // before the frontier loop starts. Their temporary regions are disjoint
+        // in time, including when the last stage and frontier share a team run.
+        task.regions = base;
         task.region_bytes = align_to(p.frontier_region_bytes, 64);
         Collector collect{&p, task.instances, task.tasks, {}, 0};
         for (unsigned s = 0; s < tree.stage_count; ++s)
