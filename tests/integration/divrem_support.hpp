@@ -82,11 +82,17 @@ struct Service {
         if (limited == SBN3_SUPPORTED) {
             assert(need.storage_bytes <= options.memory_budget && need.plan_id != info.plan_id);
             assert(need.algorithm == SBN3_DIVREM_BARRETT ? !block || need.block_limbs == info.block_limbs
-                                                         : need.algorithm == SBN3_DIVREM_SCHOOLBOOK && !block && !algorithm);
+                                                         : (need.algorithm == SBN3_DIVREM_SCHOOLBOOK || need.algorithm == SBN3_DIVREM_DC) && !block && !algorithm);
             plan = saved;
-        } else
+        } else {
+            if(!(limited == SBN3_QUERY_CAPACITY && need.storage_bytes > options.memory_budget &&
+                 need.storage_bytes <= info.storage_bytes && !memcmp(&saved, &plan, sizeof plan)))
+                fprintf(stderr,"division budget rejection nn=%zu dn=%zu algorithm=%u block=%zu: rc=%u need=%zu budget=%zu original=%zu plan_changed=%d\n",
+                        nn,dn,algorithm,block,unsigned(limited),need.storage_bytes,options.memory_budget,
+                        info.storage_bytes,int(bool(memcmp(&saved,&plan,sizeof plan))));
             assert(limited == SBN3_QUERY_CAPACITY && need.storage_bytes > options.memory_budget &&
                    need.storage_bytes <= info.storage_bytes && !memcmp(&saved, &plan, sizeof plan));
+        }
         offset = up(f.base + f.cursor, info.storage_alignment) - f.base;
         f.cursor = up(offset + info.storage_bytes, 4096) + 4096;
         sbn3_error e{};

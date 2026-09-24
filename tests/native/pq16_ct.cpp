@@ -46,6 +46,15 @@ template<unsigned M>static void ct_spectrum(unsigned n,unsigned digit){
     }
 }
 extern "C" void test_pq16_ct(){
+    for(unsigned M:{3u,5u,7u})for(unsigned n=8192;n<=root_bank::branch;n*=2){
+        const auto *fine=root_bank::ct_fine_twiddle(M,n);assert(fine);
+        const unsigned factor=n/4096,stride=std::max(8u,factor);
+        for(unsigned b=1;b<M;++b)for(unsigned j=0;j<stride;++j){long double re,im;
+            ct_root_ratio(re,im,uint64_t(b)*(j%factor),uint64_t(M)*n);
+            const double r=double(re),v=double(im);const size_t at=2*size_t(b-1)*stride+2*(j&~7u)+(j&7u);
+            assert(!memcmp(fine+at,&r,8)&&!memcmp(fine+at+8,&v,8));}
+    }
+    puts("published CT fine roots: bitwise runtime-builder equivalence PASS");
     for(unsigned d:{0u,1u,2u,3u,31u,511u}){ct_spectrum<3>(128,d);ct_spectrum<5>(128,d);ct_spectrum<7>(128,d);}
     ct_spectrum<5>(512,5101);
     for(size_t n:{558u,609u,664u,724u,790u,861u,1218u,1579u,2435u,2656u,3444u,4467u,4871u,5793u})for(unsigned p=0;p<4;++p)ct_one(n,n,p);

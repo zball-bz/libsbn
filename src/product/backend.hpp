@@ -75,6 +75,28 @@ struct Backend {
     // Validate/decode a private plain-product plan once and return its immutable
     // metadata together. Older backends can retain the individual callbacks.
     ProgramLayout (*program_layout)(const sbn3_mul_plan &) = nullptr;
+    // Private cached cyclic MUL: absent cached A, 0 < live B <= planned B.
+    // Omitted words are zero; geometry, scales, output and workspace stay
+    // exactly as bound. Public execute retains its exact-length contract.
+    void (*product_execute_live)(sbn3_mul_binding *, sbn3_team_scope *,
+                                 const sbn3_product_inputs &, sbn3_limbs) = nullptr;
+    // Private alternate use of a cached cyclic MUL binding: fresh A/B borrow
+    // its immutable tables but do not consume or modify its operand spectrum.
+    // Query proves support and the existing workspace bound; public execute
+    // still enforces its declared cached-input contract.
+    bool (*product_fresh_supported)(const sbn3_mul_plan &, size_t a, size_t b) = nullptr;
+    void (*product_execute_fresh)(sbn3_mul_binding *, sbn3_team_scope *,
+                                  const sbn3_product_inputs &, sbn3_limbs) = nullptr;
+    // Private live cached-MUL / supported fresh-reuse contract.
+    // program_consume_inputs permits B
+    // to overlap output: all its reads finish before the first output write.
+    // Tables, scratch and the cached spectrum remain disjoint from values.
+    unsigned (*product_live_contract)(const sbn3_mul_plan &) = nullptr;
+    // Lend dead transient storage between product executions. The callback
+    // is synchronous; the binding rejects re-entry until its Frame has died.
+    // Immutable tables and operand spectra are excluded from this loan.
+    size_t (*product_scratch_bytes)(const sbn3_mul_plan &) = nullptr;
+    void (*with_product_scratch)(sbn3_mul_binding *,void *,void (*)(void *,Frame &)) = nullptr;
 };
 const Backend *backend_lookup(uint64_t) noexcept;
 // The winning candidate of a plain product search (sbn3_mul_query, or sbn3_product_query of a plain square), in

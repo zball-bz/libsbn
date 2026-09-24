@@ -128,7 +128,7 @@ bool same_split(const SplitPlan &a, const SplitPlan &b) {
            a.low_limbs == b.low_limbs && a.low_bytes == b.low_bytes && a.episode_bytes() == b.episode_bytes();
 }
 bool same_rail(const RailPlan &a, const RailPlan &b) {
-    bool same = a.count == b.count && a.total_limbs == b.total_limbs && a.setup_bytes == b.setup_bytes;
+    bool same = a.count == b.count && a.fixed_levels == b.fixed_levels && a.total_limbs == b.total_limbs && a.setup_bytes == b.setup_bytes;
     for (unsigned k = 0; same && k < a.count; ++k)
         same = a.limbs[k] == b.limbs[k] && a.offset[k] == b.offset[k] && a.service[k] == b.service[k] &&
                a.square_choice[k] == b.square_choice[k];
@@ -138,6 +138,8 @@ void same_format(const FormatTreePlan &a, const FormatTreePlan &b) {
     assert(a.class_count == b.class_count && a.tree_count == b.tree_count && a.extra_count == b.extra_count &&
            a.prepared_bytes() == b.prepared_bytes() && a.pool_bytes() == b.pool_bytes() && a.ring_stages == b.ring_stages &&
            a.frontier_region_bytes == b.frontier_region_bytes && same_rail(a.rail, b.rail));
+    assert(a.group_u52==b.group_u52);
+    for(unsigned n=0;n<=group_fragments;++n)assert(a.group_work[n]==b.group_work[n]);
     for (unsigned j = 0; j < a.extra_count; ++j)
         assert(same_shape(a.extra[j], b.extra[j]));
     for (unsigned j = 0; j < a.class_count; ++j)
@@ -187,6 +189,11 @@ void trees() {
                 if (base != 10 && fragments > 80000)
                     continue;
                 const uint64_t second = fragments % 3 == 0 ? fragments / 2 + 1 : 0;
+                // The planner must construct every live field itself; unused
+                // fixed-capacity slots may contain arbitrary prior bytes.
+                memset(static_cast<void *>(recorded.get()),0xa5,sizeof(*recorded));
+                memset(static_cast<void *>(searched.get()),0x5a,sizeof(*searched));
+                memset(static_cast<void *>(replayed.get()),0xcc,sizeof(*replayed));
                 *transcript = {};
                 const auto rc = assemble(*recorded, base, workers, fragments, second, transcript.get());
                 assert(rc == assemble(*searched, base, workers, fragments, second, nullptr));
@@ -240,6 +247,8 @@ void trees() {
             for (uint64_t fragments : {9ul, 129ul, 1233ul, 19731ul, 315653ul}) {
                 if (base != 10 && fragments > 80000)
                     continue;
+                memset(static_cast<void *>(ps.get()),0xa5,sizeof(*ps));
+                memset(static_cast<void *>(pr.get()),0x5a,sizeof(*pr));
                 *transcript = {};
                 const auto rc = assemble(*ps, base, workers, fragments, transcript.get());
                 if (rc != SBN3_SUPPORTED)

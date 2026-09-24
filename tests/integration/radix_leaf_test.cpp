@@ -89,11 +89,8 @@ int main() {
         ref_int fraction, scaled, word, modulus;
         ref_inits(fraction, scaled, word, modulus, nullptr);
         for (unsigned limbs : {1u, 3u, 4u, 5u, 8u})
+          for(unsigned digits52=1;digits52<=max_fragment_u52 && 52*digits52<64*limbs+52;++digits52)
             for (unsigned trial = 0; trial < 6; ++trial) {
-                const unsigned most = (64 * limbs + 51) / 52;
-                const unsigned digits52 = trial % 2 ? most : (most > 1 ? most - 1 : 1);
-                if (digits52 > max_fragment_u52)
-                    continue;
                 uint64_t lanes[8][max_fragment_limbs]{};
                 const uint64_t *pointers[8]{};
                 for (unsigned u = 0; u < 8; ++u) {
@@ -104,6 +101,18 @@ int main() {
                 const unsigned rounds = 8 + trial % 2;
                 uint64_t got[8 * 9]{};
                 extract_words(got, pointers, limbs, digits52, rounds, values);
+                if(rounds==9)for(unsigned count:{1u,4u,8u})for(const DigitPlan *p:{&values,&text}){
+                    uint8_t emitted[512],reference[512];uint64_t first[8],overlap[8];
+                    memset(emitted,0xa5,sizeof emitted);memset(first,0xa5,sizeof first);memset(overlap,0xa5,sizeof overlap);
+                    emit_fragments(emitted,first,overlap,pointers,limbs,digits52,count,*p);
+                    for(unsigned u=0;u<count;++u){
+                        emit_words_reference(reference+64*u,got+9*u,8,*p);
+                        assert(first[u]==got[9*u] && overlap[u]==got[9*u+8]);
+                    }
+                    assert(!memcmp(emitted,reference,64*count));
+                    for(unsigned j=64*count;j<512;++j)assert(emitted[j]==0xa5);
+                    for(unsigned u=count;u<8;++u)assert(first[u]==0xa5a5a5a5a5a5a5a5ULL && overlap[u]==0xa5a5a5a5a5a5a5a5ULL);
+                }
                 for (unsigned u = 0; u < 8; ++u) {
                     // truncate to the top 52*digits52 bits: y' = floor(y / 2^drop) with n' = 64 limbs - drop bits
                     const int64_t keep = int64_t(52) * digits52, total = int64_t(64) * limbs;

@@ -95,7 +95,7 @@ int ParseTreePlan::classify(uint64_t n, unsigned w) noexcept {
         status = SBN3_QUERY_CAPACITY;
         return -1;
     }
-    classes[class_count] = c;
+    classes.emplace(class_count,c);
     return int(class_count++);
 }
 int ParseTreePlan::add_tree(uint64_t fragments) noexcept {

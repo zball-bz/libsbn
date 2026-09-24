@@ -7,6 +7,7 @@
 #include "radix/leaf.hpp"
 #include "radix/word_base.hpp"
 #include "common/checked.hpp"
+#include "radix_leaf_group.hpp"
 #include <immintrin.h>
 #include <cstring>
 namespace sbn::v3::radix {
@@ -207,6 +208,24 @@ void extract_words(uint64_t *words, const uint64_t *const fraction[8], unsigned 
     for (unsigned u = 0; u < 8; ++u)
         for (unsigned r = 0; r < rounds; ++r)
             words[u * (fragment_words + 1) + r] = round_words[r][u];
+}
+void emit_fragments(uint8_t *out,uint64_t *first,uint64_t *overlap,const uint64_t *const fraction[8],
+                    unsigned limbs,unsigned u52_digits,unsigned count,const DigitPlan &p) noexcept {
+    require(count && count<=8 && limbs && limbs<=max_fragment_limbs && u52_digits &&
+            u52_digits<=max_fragment_u52 && 52*u52_digits<64*limbs+52,
+            SBN3_FATAL_ARGUMENT,"radix fragment group shape");
+    // Partial groups do not pay for emitting eight inactive SIMD lanes.
+    if(count<8){
+        alignas(64) uint64_t words[8*9];
+        extract_words(words,fraction,limbs,u52_digits,9,p);
+        for(unsigned u=0;u<count;++u){
+            emit_words(out+64*u,words+9*u,8,p);first[u]=words[9*u];overlap[u]=words[9*u+8];
+        }
+        return;
+    }
+    #define CASE(N) case N:leaf_detail::emit_full_group<N>(out,first,overlap,fraction,limbs,p);break;
+    switch(u52_digits){CASE(1) CASE(2) CASE(3) CASE(4) CASE(5) CASE(6) CASE(7) CASE(8) CASE(9) CASE(10)}
+    #undef CASE
 }
 void emit_words_reference(uint8_t *out, const uint64_t *words, size_t count, const DigitPlan &p) noexcept {
     for (size_t i = 0; i < count; ++i) {

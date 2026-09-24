@@ -75,6 +75,7 @@ uint64_t tree_identity(const ParseTreePlan &t) noexcept {
     uint64_t h = identity::fnv_seed;
     h = identity::word(h, t.class_count);
     h = identity::word(h, t.rail.count);
+    h = identity::word(h, t.rail.fixed_levels);
     h = identity::word(h, t.prepared_bytes());
     for (unsigned j = 0; j < t.class_count; ++j) {
         h = identity::word(h, t.classes[j].fragments * 64 + t.classes[j].workers);

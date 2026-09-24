@@ -278,8 +278,8 @@ void rows_fn(void *c_, uint64_t lo, uint64_t hi, int w, scratch *ws){
             for(size_t s = 0; s < Lg; ++s){
                 V *rw = row + s * M2 * RW;
                 if constexpr(!MID){
-                    if(pl.full) full<false,false,RW>((uint64_t *)rw, M2, 0, P, pv);
-                    else if(RW == 1 && M2 > CR_BLK_MIN) tft_blk(rw, M2, 0, lbv, ncv, P, pv);   /* §28 blocked forward, zero input beyond ncv */
+                    if constexpr(RW==1) forward_prefix(rw,M2,0,lbv,ncv,P,pv);
+                    else if(pl.full) full<false,false,RW>((uint64_t *)rw, M2, 0, P, pv);
                     else tft<0,RW>(rw, M2, 0, lbv, P, pv);
                 }else{
                     if(pl.mrow_unnorm) full<false,true,RW>((uint64_t *)rw, M2, 0, P, pv);

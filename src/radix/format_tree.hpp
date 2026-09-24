@@ -24,12 +24,13 @@
 #include "radix/programs.hpp"
 #include "radix/rail_product.hpp"
 #include "radix/ring_product.hpp"
+#include "radix/plan_slots.hpp"
 namespace sbn::v3::radix {
 inline constexpr unsigned max_classes = 192, max_stages = 96, max_trees = 2;
 inline constexpr size_t group_product_limbs = 96, group_right_limbs = 32;
 // How the right child window of one node size is produced.
 struct SplitPlan {
-    ProductShape product{};   // exact product program, or
+    ProductShape product{};   // exact product program, or dimensions and direct-repair scratch for middle_words
     RailProductPlan cyclic{}; // wrap-around product with the cached rail spectrum, FFT kernels (single worker), or
     RingPlan ring{};          // wrap-around product through the product service (NTT band, staged nodes only)
     size_t gap_limbs = 0;     // wrap-around: limbs between the wrapped part and the window (at least one)
@@ -44,7 +45,8 @@ struct SplitPlan {
         if (ring.enabled)
             return ((ring.output_limbs * 8 + 63) & ~size_t(63)) + 64 + low_bytes;
         const size_t middle=((middle_words*8+63)&~size_t(63))+middle_bytes;
-        return middle_words?std::max(product.temporary_bytes(),middle):product.episode_bytes();
+        const size_t repair=((product.output_limbs*8+63)&~size_t(63))+product.work_bytes;
+        return middle_words?std::max(repair,middle):product.episode_bytes();
     }
 };
 struct NodeClass {
@@ -77,7 +79,7 @@ struct Stage {
 struct TreeShape {
     int root = -1;
     uint32_t stage_count = 0, top_nodes = 0, tasks = 0;
-    Stage stages[max_stages]{};
+    PlanSlots<Stage,max_stages> stages;
     size_t episode_bytes = 0; // largest stage: groups * split episode
     size_t pool_bytes = 0;    // largest ring stage: spectrum and one bound consumer per group
 };
@@ -91,16 +93,19 @@ struct FormatTask {
     uint64_t fragment;
 };
 struct FormatTreePlan {
+    FormatTreePlan() noexcept {}
     BaseInfo base{};
     unsigned workers = 1, top_workers = 1; // top_workers: the largest power of two <= workers
     unsigned class_count = 0, tree_count = 0;
     bool repeated = false; // repeated bindings price execution; one-shot plans price the whole tree
-    NodeClass classes[max_classes]{};
+    PlanSlots<NodeClass,max_classes> classes;
     TreeShape trees[max_trees]{};
     RailPlan rail{};
     ProductShape extra[2]{}; // products of the owning service, prepared with the tree's programs
     unsigned extra_count = 0;
     size_t group_limbs[group_fragments + 1]{};
+    size_t group_work[group_fragments + 1]{};
+    unsigned group_u52 = 0; // bit n: the split of n fragments uses native U52
     unsigned fragment_u52 = 0;
     ProgramSetPlan programs{}; // immutable preparation of every exact product program
     size_t cyclic_bytes = 0;   // tables and cached spectra of the wrap-around classes, after the programs

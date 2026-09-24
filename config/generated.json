@@ -72,7 +72,13 @@
         "MEMORY_TRADE_TIME_RATIO": "memory_trade_time_ratio",
         "MEMORY_TRADE_RESIDENT_RATIO": "memory_trade_resident_ratio",
         "SCALAR_RING_NS_PER_WORD": "scalar_ring_ns_per_word",
-        "SCALAR_INPUT_NS_PER_WORD": "scalar_input_ns_per_word"
+        "SCALAR_INPUT_NS_PER_WORD": "scalar_input_ns_per_word",
+        "WINDOW_INLINE_WORDS": "window_inline_words",
+        "WINDOW_FFT_MIN_WORDS": "window_fft_min_words",
+        "WINDOW_PARALLEL_FFT_BELOW": "window_parallel_fft_below",
+        "WINDOW_SERIAL_FLAT_TRUNKS": "window_serial_flat_trunks",
+        "WINDOW_PARALLEL_FLAT_WORDS": "window_parallel_flat_words",
+        "FLAT_SPECTRUM_PACK_TRUNKS": "flat_spectrum_pack_trunks"
       }
     },
     {

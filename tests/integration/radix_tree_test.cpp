@@ -3,6 +3,8 @@
 // as a 64 F digit string (seams reconciled), for random and adversarial fractions.
 #include "product_support.hpp"
 #include "radix/format_tree.hpp"
+#include "radix/power_bank.hpp"
+#include "backend/u52/kernels.hpp"
 #include <initializer_list>
 #include <memory>
 #include <deque>
@@ -76,6 +78,7 @@ struct Case {
     uint64_t fragments;
 };
 uint64_t checked = 0, equal = 0, below = 0;
+uint64_t forced_repairs = 0;
 // One prepared block per fixture; every run leases aligned pieces of it and releases them again.
 struct Pool {
     Fixture &f;
@@ -104,6 +107,40 @@ struct Pool {
         cursor = 0;
     }
 };
+void force_middle_carry(Pool &pool,const FormatTree &tree,int root,std::vector<uint64_t> &y) {
+    const auto &c=tree.plan->classes[tree.plan->trees[root].root];
+    const auto &s=c.split;
+    assert(s.middle_words && !s.product.choice && s.product.work_bytes);
+    const size_t na=(64*s.product.bn+51)/52;
+    const uint64_t origin=52*(na-5),window=64*c.window_limbs,bits=window+64;
+    ref_int a,x,t,two,expected,observed;ref_inits(a,x,t,two,expected,observed,nullptr);
+    ref_import(a,s.product.bn,-1,8,0,0,tree.rail[c.level]);
+    assert(ref_get_ui(a)&1);
+    // Odd rail inverse modulo 2^bits, using independent exact reference
+    // arithmetic. Set product residue to 2^window + (2^origin - 1): the
+    // omitted low carry must cross the guard and increment the window.
+    ref_set_ui(x,1);ref_set_ui(two,2);
+    for(uint64_t known=1;known<bits;){
+        known=std::min(2*known,bits);
+        ref_mul(t,a,x);ref_sub(t,two,t);ref_mul(x,x,t);ref_fdiv_r_2exp(x,x,known);
+    }
+    ref_set_ui(t,1);ref_mul_2exp(t,t,origin);ref_sub_ui(t,t,1);
+    ref_set_ui(expected,1);ref_mul_2exp(expected,expected,window);ref_add(t,t,expected);
+    ref_mul(x,x,t);ref_fdiv_r_2exp(x,x,bits);
+    std::fill(y.begin(),y.end(),0);size_t written=0;ref_export(y.data(),&written,-1,8,0,0,x);
+    assert(written<=s.product.an);
+    std::vector<uint64_t> middle(s.middle_words),got(c.right_limbs);
+    auto &lease=pool.take(s.middle_bytes,64);Frame scratch(*pool.f.arena,lease);
+    allocation_watch_start();
+    {ComputeLease computing(*pool.f.arena);u52::middle_guard(middle.data(),tree.rail[c.level],s.product.bn,y.data(),s.product.an,scratch);}
+    assert(!allocation_watch_stop() && middle[1]==UINT64_MAX);
+    take_window(got.data(),got.size(),middle.data(),middle.size(),s.middle_shift);
+    ref_mul(expected,a,x);ref_fdiv_q_2exp(expected,expected,window);
+    ref_fdiv_r_2exp(expected,expected,64*c.right_limbs);
+    ref_import(observed,got.size(),-1,8,0,0,got.data());
+    ref_sub(t,expected,observed);assert(ref_cmp_ui(t,1)==0);
+    ref_clears(a,x,t,two,expected,observed,nullptr);++forced_repairs;
+}
 void run(Pool &pool, unsigned base, uint64_t fragments, unsigned workers) {
     Fixture &f = pool.f;
     auto plan = std::make_unique<FormatTreePlan>();
@@ -134,11 +171,13 @@ void run(Pool &pool, unsigned base, uint64_t fragments, unsigned workers) {
     std::vector<uint64_t> y(limbs), side(2 * fragments);
     std::vector<uint8_t> out(fragments * 64 + 64, 0xee);
     Reference ref;
-    const unsigned patterns = fragments > 300 ? 3 : 14;
+    const unsigned ordinary_patterns = fragments > 300 ? 3 : 14;
+    const unsigned patterns=ordinary_patterns+(plan->classes[plan->trees[root].root].split.middle_words!=0);
     for (unsigned pattern = 0; pattern < patterns; ++pattern) {
         for (auto &w : y)
             w = random_word();
-        switch (pattern) {
+        if(pattern==ordinary_patterns)force_middle_carry(pool,tree,root,y);
+        else switch (pattern) {
         case 0: break;
         case 1: std::fill(y.begin(), y.end(), ~uint64_t(0)); break;
         case 2: std::fill(y.begin(), y.end(), 0); break;
@@ -264,7 +303,45 @@ void cross_check(Pool &pool, unsigned base, uint64_t fragments, unsigned workers
     }
 }
 } // namespace
-int main() {
+int main(int argc,char **argv) {
+    if(argc>1){
+        assert(argc==2);
+        if(!strcmp(argv[1],"--leaf-groups-only")){
+            for(unsigned workers:{1u,4u}){
+                Fixture f(workers,false);Pool pool(f,size_t(160)<<20);
+                for(unsigned base=3;base<64;++base)if(base&(base-1))
+                    for(uint64_t fragments=1;fragments<=8;++fragments)run(pool,base,fragments,workers);
+            }
+            printf("radix leaf roots: %llu conversions, all bases and widths PASS\n",(unsigned long long)checked);
+            return 0;
+        }
+        assert(!strcmp(argv[1],"--middle-repair-only"));
+        Fixture f(1,false);Pool pool(f,size_t(160)<<20);
+        for(unsigned base:{3u,10u,63u})for(uint64_t fragments:{33ull,65ull,129ull})run(pool,base,fragments,1);
+        assert(forced_repairs==9);
+        printf("radix middle repair: %llu conversions, %llu constructed carries through full tree PASS\n",
+               (unsigned long long)checked,(unsigned long long)forced_repairs);
+        return 0;
+    }
+    {
+        ref_int expected,actual;ref_inits(expected,actual,nullptr);
+        unsigned constants=0;
+        for(unsigned odd=3;odd<=63;odd+=2){
+            ref_set_ui(expected,odd);
+            for(unsigned j=0;j<6;++j)ref_mul(expected,expected,expected);
+            BaseInfo base{};assert(base_info(odd,base));
+            for(unsigned k=0;k<fixed_power_levels;++k){
+                const auto p=fixed_power(odd,k);
+                assert(p.data && !(uintptr_t(p.data)&63) && p.capacity>=rail_limbs(base,k)+7);
+                ref_import(actual,p.capacity,-1,8,0,0,p.data);assert(ref_cmp(actual,expected)==0);
+                ++constants;ref_mul(expected,expected,expected);
+            }
+            assert(!fixed_power(odd,fixed_power_levels).data);
+        }
+        assert(!fixed_power(2,0).data && !fixed_power(65,0).data);
+        printf("radix fixed powers: %u exact constants, %zu shared bytes PASS\n",constants,fixed_power_bytes());
+        ref_clears(expected,actual,nullptr);
+    }
     rlimit stack{};
     getrlimit(RLIMIT_STACK, &stack);
     for (unsigned workers : {1u, 4u}) {
@@ -287,4 +364,6 @@ int main() {
            "(%llu ring stages) identical to the exact programs PASS\n",
            (unsigned long long)checked, (unsigned long long)equal, (unsigned long long)below, (unsigned long long)cross_checked,
            (unsigned long long)ring_stage_runs);
+    assert(forced_repairs);
+    printf("radix middle repair: %llu constructed carries exercised the full tree path PASS\n",(unsigned long long)forced_repairs);
 }

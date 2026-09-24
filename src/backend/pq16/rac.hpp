@@ -18,18 +18,21 @@
 // ============================================================================
 namespace sbn::v3::pq16 {
 struct RacTables {
-    const pq16_plan *core;Shape shape;double *tw;unsigned r;
+    const pq16_plan *core;Shape shape;const double *tw;unsigned r;
     sb_vec dec_idx[4]; // vector u <- 8 consecutive digits 8u..8u+7 of one raw zmm (32 digits)
 };
 // M branches x n positions of T_b(j), [re x8 | im x8] per tile; b = 0 carries the twist too.
-static inline size_t rac_table_bytes(Shape s){return sizeof(RacTables)+256+16*size_t(s.nfull);}
+static inline size_t rac_table_bytes(Shape s){return sizeof(RacTables)+256+(root_bank::rac_twiddle(s.radix,s.branch)?0:16*size_t(s.nfull));}
 static inline RacTables *rac_prepare(Frame &f,const pq16_plan &core,Shape s){
     auto *p=new(f.allocate(sizeof(RacTables),128)) RacTables{};p->core=&core;p->shape=s;
     const unsigned M=s.radix,n=s.branch,N=s.nfull;p->r=M%4;
-    p->tw=static_cast<double *>(f.allocate(16*size_t(N),128));
-    for(unsigned b=0;b<M;++b)for(unsigned j=0;j<n;++j){
-        long double c,sn;ct_root_ratio(c,sn,uint64_t(4*b+p->r*M)*j,4*uint64_t(N));
-        const size_t at=2*size_t(b)*n+2*(j&~7u)+(j&7u);p->tw[at]=(double)c;p->tw[at+8]=(double)sn;
+    p->tw=root_bank::rac_twiddle(M,n);
+    if(!p->tw){
+        auto *tw=static_cast<double *>(f.allocate(16*size_t(N),128));p->tw=tw;
+        for(unsigned b=0;b<M;++b)for(unsigned j=0;j<n;++j){
+            long double c,sn;ct_root_ratio(c,sn,uint64_t(4*b+p->r*M)*j,4*uint64_t(N));
+            const size_t at=2*size_t(b)*n+2*(j&~7u)+(j&7u);tw[at]=(double)c;tw[at+8]=(double)sn;
+        }
     }
     for(unsigned u=0;u<4;++u){char idx[64];for(int i=0;i<64;++i)idx[i]=(char)0x40;
         for(unsigned l=0;l<8;++l){const unsigned d=8*u+l;idx[4*l]=(char)(2*d);idx[4*l+1]=(char)(2*d+1);}

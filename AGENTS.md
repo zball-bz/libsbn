@@ -18,6 +18,11 @@ research repository. Keep core functionality independent of that repository.
 The old GIMP copy is a migration backup, not the active checkout. Historical
 receipts retain old paths and hashes; do not reinterpret them as current builds.
 
+Performance completion claims require non-power-of-two scaling coverage,
+smoothness checks and full fresh-call timing, including plan generation and
+necessary preparation/cleanup. Prepared or reused execution alone is diagnostic.
+The research checkout documents the current acceptance protocol and thresholds.
+
 Original project code is LGPL-3.0-or-later unless a file carries a different
 notice. Preserve third-party copyright, licensing and attribution when importing
 or optimizing code; do not replace an upstream notice with the project default.

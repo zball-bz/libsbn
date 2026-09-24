@@ -33,6 +33,10 @@ static void approximate(sbn3_newton_kind kind,size_t n,unsigned workers){
     for(size_t j=0;j<n;++j){d[j]=random_word();a[j]=random_word();}d[n-1]|=uint64_t(1)<<63;a[n]=1;
     const sbn3_newton_inputs input{{a,n+1},{d,n},UINT64_MAX};
     allocation_watch_start();sbn3_newton_execute(p.bound,&input,{out,n+1});assert(!allocation_watch_stop());
+    if(kind==SBN3_NEWTON_DIVIDE&&workers==1&&n>=131072){
+        sbn3_newton_metrics metrics{};sbn3_newton_get_metrics(p.bound,&metrics);
+        assert(metrics.spectra_computed==p.info.spectra);
+    }
     ref_int D,A,O,P,E,T;ref_inits(D,A,O,P,E,T,nullptr);ref_import(D,n,-1,8,0,0,d);ref_import(A,n+1,-1,8,0,0,a);ref_import(O,n+1,-1,8,0,0,out);
     ref_set_ui(P,1);ref_mul_2exp(P,P,128*n);
     if(kind==SBN3_NEWTON_RSQRT){ref_sub_ui(E,O,3);ref_mul(E,E,E);ref_mul_ui(E,E,UINT64_MAX);ref_add_ui(T,O,3);ref_mul(T,T,T);ref_mul_ui(T,T,UINT64_MAX);assert(ref_cmp(E,P)<0&&ref_cmp(P,T)<0);}
@@ -49,5 +53,11 @@ static void approximate(sbn3_newton_kind kind,size_t n,unsigned workers){
 int main(){
     for(size_t n:{1u,7u,64u,1024u,8192u})sqrt2(n,1);sqrt2(65536,16);
     for(auto kind:{SBN3_NEWTON_INVERSE,SBN3_NEWTON_RSQRT,SBN3_NEWTON_DIVIDE}){approximate(kind,4,1);approximate(kind,17,1);approximate(kind,8192,16);approximate(kind,524288,16);approximate(kind,524289,16);}
+    for(auto kind:{SBN3_NEWTON_INVERSE,SBN3_NEWTON_DIVIDE})
+        for(size_t n:{512u,1024u,2896u,6317u,12634u,15689u,16384u})approximate(kind,n,1);
+    for(auto kind:{SBN3_NEWTON_INVERSE,SBN3_NEWTON_DIVIDE})
+        for(size_t n:{230195u,262144u,286720u,524288u,1048576u})approximate(kind,n,1);
+    for(auto kind:{SBN3_NEWTON_INVERSE,SBN3_NEWTON_DIVIDE})
+        for(size_t n:{131073u,285870u,387141u})approximate(kind,n,16);
     puts("Newton library service gates PASS");
 }

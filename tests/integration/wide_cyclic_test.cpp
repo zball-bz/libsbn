@@ -1,8 +1,8 @@
 #include "product_support.hpp"
 #include "backend/pq16/kernels.hpp"
 using namespace sbn::v3;
-static void scenario(unsigned bits,size_t minimum,bool square,bool cached){
-    const auto shape=pq16::cyclic_shape(minimum,bits);if(!shape.nfull)return;const size_t ring=pq16::cyclic_period(shape),an=ring/2-1,bn=ring-1;
+static void scenario(unsigned bits,size_t minimum,bool square,bool cached,unsigned parts=8){
+    const auto shape=pq16::cyclic_shape(minimum,bits,1,true);if(!shape.nfull)return;const size_t ring=pq16::cyclic_period(shape),an=ring*parts/16-1,bn=ring;
     Fixture f(1);sbn3_product_request req{};req.kind=square?SBN3_PRODUCT_SQR:SBN3_PRODUCT_MUL;req.a_limbs=an;req.b_limbs=square?0:bn;req.cyclic_limbs=ring;
     sbn3_mul_options o{};o.workers=1;o.algorithm=SBN3_MUL_PQ16;o.trunk_bits=int(bits);sbn3_product_info i{};sbn3_mul_plan p{};auto *binding=f.product(req,o,i,p);
     auto *a=f.guarded(an),*b=f.guarded(bn),*out=f.guarded(ring);for(size_t j=0;j<an;++j)a[j]=UINT64_MAX;
@@ -17,6 +17,6 @@ static void scenario(unsigned bits,size_t minimum,bool square,bool cached){
         sbn3_product_metrics m{};sbn3_product_get_metrics(binding,&m);assert(m.mul.worker_peak_bytes<=i.mul.per_worker_bytes&&m.row_forward==(cached?(square?0:1u):(square?1:2u))&&m.row_inverse==1);
     }
     if(cache)sbn3_spectrum_release(cache);ref_clears(A,B,P,R,M,nullptr);
-    printf("wide cyclic B%u ring=%zu N%u M%u balanced=%u square=%u cache=%u PASS\n",bits,ring,shape.nfull,shape.radix,shape.balanced,square,cached);fflush(stdout);
+    printf("wide cyclic B%u ring=%zu N%u M%u balanced=%u square=%u cache=%u PASS\n",bits,ring,shape.nfull,shape.radix,bool(i.mul.codec_mode&8),square,cached);fflush(stdout);
 }
-int main(){for(unsigned bits=17;bits<=20;++bits)for(size_t min:{64u,128u,256u,512u,1024u,2048u,4096u,8192u})for(bool square:{false,true})for(bool cached:{false,true})scenario(bits,min,square,cached);puts("wide cyclic integer/carry/cache gates PASS");}
+int main(){for(unsigned bits=16;bits<=20;++bits)for(size_t min:{64u,128u,256u,512u,1024u,2048u,4096u,8192u,16384u,24576u,32768u,65536u,85000u})for(bool square:{false,true})for(bool cached:{false,true})for(unsigned parts:{8u,9u})scenario(bits,min,square,cached,parts);puts("wide cyclic integer/carry/cache gates PASS");}

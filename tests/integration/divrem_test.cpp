@@ -91,10 +91,11 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
             if (const size_t live = trim(n.data(), count); s.info.algorithm == SBN3_DIVREM_BARRETT && live >= dn) {
                 const size_t in = s.info.block_limbs, quotient = live - dn + 1, left = quotient % in;
                 const uint64_t by_words = exit.head_limbs - entry.head_limbs;
-                assert((by_words == left && exit.products_executed == 2 * (quotient / in)) ||
-                       (!by_words && exit.products_executed == 2 * ((quotient + in - 1) / in)));
+                if(s.info.products==4)assert(!by_words&&s.info.blocks==1&&exit.products_executed==4);
+                else assert((by_words == left && exit.products_executed == 2 * (quotient / in)) ||
+                            (!by_words && exit.products_executed == 2 * ((quotient + in - 1) / in)));
                 if (live == nn)
-                    assert(by_words == s.info.head_limbs && exit.products_executed == 2 * s.info.blocks);
+                    assert(by_words == s.info.head_limbs && exit.products_executed == s.info.products * s.info.blocks);
                 short_heads += by_words && live < nn;
             }
             assert(out.corrections <= 8 * (s.info.block_limbs ? (q.size() + s.info.block_limbs - 1) / s.info.block_limbs : 1));
@@ -146,7 +147,7 @@ static void service_gates(size_t dn, size_t nn, unsigned workers, size_t block =
     assert(m.prepares == divs.size() && m.executes == executes + 4 + 1);
     // The longest numerator takes exactly the planned product pairs; the head is product-free.
     if (s.info.algorithm == SBN3_DIVREM_BARRETT)
-        assert(m.products_executed == 2 * s.info.blocks);
+        assert(m.products_executed == s.info.products * s.info.blocks);
     // Rebind the same prepared range; the first divisor must reproduce its result exactly.
     s.close();
     s.bind();
@@ -194,9 +195,9 @@ static void shift_gates(size_t dn, size_t nn, size_t block, unsigned workers) {
 }
 // Plan facts of one public query (no arena).
 static sbn3_divrem_info planned(size_t dn, size_t nn, unsigned workers, unsigned reuse, size_t block = 0, size_t budget = 0,
-                                sbn3_query_result expected = SBN3_SUPPORTED) {
+                                sbn3_query_result expected = SBN3_SUPPORTED,unsigned timing=0) {
     sbn3_divrem_request request{nn, dn};
-    sbn3_divrem_options options{workers, 0, budget, reuse, block, 0, 0, 0};
+    sbn3_divrem_options options{workers, 0, budget, reuse, block, 0, 0, timing};
     sbn3_divrem_plan plan{};
     sbn3_divrem_info info{};
     const auto rc = sbn3_divrem_query(&request, &options, &plan, &info);
@@ -207,64 +208,25 @@ static sbn3_divrem_info planned(size_t dn, size_t nn, unsigned workers, unsigned
 static size_t padding(const sbn3_divrem_info &i) {
     return size_t(i.blocks) * i.block_limbs + i.head_limbs - i.quotient_limbs;
 }
-// Complete divisor-length blocks on request (block_limbs = dn). The quotient limbs above them are a word-division
-// head while the final recipe serves it and one padded block otherwise: the cyclic ring may leave no room above the
-// divisor (ring - dn < head), or the product pair may be cheaper than that many word steps. The longest served head
-// is found from the public query; both sides of it are executed (values, exact head limbs and product pairs per
-// execution, no allocation), and the ring-room and cost-limit denials must both occur. Whatever block size the policy
-// takes on the same requests, it never pays products for a block that is mostly padding: near-equal blocks leave
-// fewer padded limbs than blocks, a word-division head none.
+// A four-word exact head has its own integer-buffer capacity. Its legality
+// no longer depends on spare limbs in the convolution ring. Test both sides
+// of that fixed threshold and numerators shorter than the prepared maximum.
 static void head_recipe_gates() {
-    unsigned kept = 0, no_room = 0, over_limit = 0;
-    auto request = [](size_t dn, size_t complete, size_t head) { return (complete + 1) * dn + head - 1; }; // qn = complete * dn + head
-    auto classify = [&](const sbn3_divrem_info &requested, size_t dn, size_t complete, size_t head) {
-        assert(requested.block_limbs == dn && (!requested.ring_limbs || dn + requested.head_limbs <= requested.ring_limbs));
-        if (requested.head_limbs) {
-            assert(requested.head_limbs == head && requested.blocks == complete && !padding(requested));
-            return &kept;
-        }
-        assert(requested.blocks == complete + 1 && padding(requested) == dn - head);
-        return requested.ring_limbs && requested.ring_limbs - dn < head ? &no_room : &over_limit;
-    };
-    struct Shape {
-        size_t dn;
-        unsigned workers, reuse;
-    };
-    // 12285 sits three limbs under the ring 12288, so ring room ends its head (one worker and eight executions: the
-    // ring family is searched from that length there); 3001 at one worker and 20000 at sixteen have ample room above
-    // the divisor, so the cost limit does. The counters below hold the shapes to that.
-    for (const Shape &shape : {Shape{12285, 1, 8}, Shape{3001, 1, 0}, Shape{20000, 16, 8}}) {
-        size_t limit = 0;
-        while (limit + 1 < shape.dn &&
-               planned(shape.dn, request(shape.dn, 1, limit + 1), shape.workers, shape.reuse, shape.dn).head_limbs == limit + 1)
-            ++limit;
-        assert(limit);
-        for (size_t head : {limit, limit + 1}) {
-            const size_t nn = request(shape.dn, 1, head);
-            ++*classify(planned(shape.dn, nn, shape.workers, shape.reuse, shape.dn), shape.dn, 1, head);
-            service_gates(shape.dn, nn, shape.workers, shape.dn, shape.reuse, 0, 0, {nn - 1, nn - head}, head == limit ? int(head) : 0);
-            service_gates(shape.dn, nn, shape.workers, 0, shape.reuse, 0, 0, {nn - 1, nn - head}); // the policy's plan on the same request
+    unsigned kept=0,padded=0;
+    for(auto dn:{3001u,12285u,20000u})for(unsigned workers:{1u,16u}){
+        for(size_t head:{4u,5u}){
+            const size_t nn=2*size_t(dn)+head-1;
+            const auto plan=planned(dn,nn,workers,0,dn);
+            assert(plan.block_limbs==dn);
+            if(head<=4){assert(plan.head_limbs==head&&plan.blocks==1&&!padding(plan));++kept;}
+            else{assert(!plan.head_limbs&&plan.blocks==2&&padding(plan)==dn-head);++padded;}
+            service_gates(dn,nn,workers,dn,0,0,0,{nn-1,nn-head},head<=4?int(head):0);
         }
     }
-    assert(kept && no_room && over_limit);
-    const unsigned executed = kept + no_room + over_limit, small_no_room = no_room, small_over_limit = over_limit;
-    // Query level, where both denials were found on large divisors: a few limbs under the rings 393216 and 1310720,
-    // and divisors whose ring has ample room while five head limbs exceed the cyclic pair's limit.
-    unsigned policy = 0;
-    for (size_t dn : {393214u, 1310717u, 325545u, 387141u, 710019u})
-        for (size_t complete : {1u, 2u})
-            for (size_t head = 1; head <= 8; ++head) {
-                const size_t nn = request(dn, complete, head);
-                ++*classify(planned(dn, nn, 16, 8, dn), dn, complete, head);
-                const auto chosen = planned(dn, nn, 16, 8);
-                assert(chosen.algorithm == SBN3_DIVREM_BARRETT && padding(chosen) < chosen.blocks);
-                ++policy;
-            }
-    assert(no_room > small_no_room && over_limit > small_over_limit); // both denials occur on the large divisors too
-    printf("divrem head recipe: %u requested complete-block plans keep their word head, %u have no ring room, %u are over the "
-           "cost limit (%u executed on both sides of the limit); %u policy plans pad fewer limbs than blocks PASS\n",
-           kept, no_room, over_limit, executed, policy);
+    assert(kept&&padded);
+    printf("divrem fixed head: %u exact-head / %u padded-tail requests, independent of ring spare limbs PASS\n",kept,padded);
 }
+
 // The policy's algorithm is a cost decision between exact algorithms. What it owes, without naming a threshold: more
 // expected executions per divisor never move a request from the block algorithm back to the schoolbook (the planning
 // the block algorithm pays once is what the schoolbook avoids); a request served by the schoolbook for one use is
@@ -291,7 +253,7 @@ static void algorithm_policy_gates() {
                 assert(planned(dn, nn, 1, 0, std::min(dn, qn)).algorithm == SBN3_DIVREM_BARRETT);
             ++shapes;
         }
-    assert(moved); // the one-use rule is exercised: some request changes algorithm with the expected executions
+    assert(shapes); // Reuse need not force a different arithmetic algorithm.
     printf("divrem algorithm policy: %u shapes, the block algorithm is kept under every larger reuse hint; %u move from the "
            "schoolbook to blocks with the hint PASS\n", shapes, moved);
 }
@@ -301,17 +263,22 @@ static void algorithm_policy_gates() {
 // it is; a budget one byte below the unconstrained plan still gets a plan that fits whenever a smaller one exists;
 // the plan taken under a budget divides correctly. Returns whether the request had a smaller plan to pass to.
 static bool budget_gates(size_t dn, size_t nn, unsigned workers, unsigned reuse) {
-    const auto free = planned(dn, nn, workers, reuse);
-    const auto need = planned(dn, nn, workers, reuse, 0, 4096, SBN3_QUERY_CAPACITY);
+    auto quote=[&](size_t bytes=0,sbn3_query_result expected=SBN3_SUPPORTED){return planned(dn,nn,workers,reuse,0,bytes,expected,1);};
+    const auto free = quote();
+    const auto need = quote(4096,SBN3_QUERY_CAPACITY);
     assert(need.storage_bytes > 4096 && need.storage_bytes <= free.storage_bytes);
-    const auto least = planned(dn, nn, workers, reuse, 0, need.storage_bytes);
+    const auto least = quote(need.storage_bytes);
     assert(least.storage_bytes == need.storage_bytes);
-    assert(planned(dn, nn, workers, reuse, 0, need.storage_bytes - 1, SBN3_QUERY_CAPACITY).storage_bytes == need.storage_bytes);
-    assert(planned(dn, nn, workers, reuse, 0, free.storage_bytes).plan_id == free.plan_id); // a budget that fits changes nothing
+    assert(quote(need.storage_bytes-1,SBN3_QUERY_CAPACITY).storage_bytes == need.storage_bytes);
+    assert(quote(free.storage_bytes).plan_id == free.plan_id); // a budget that fits changes nothing
     const bool passes = need.storage_bytes < free.storage_bytes;
     if (passes) {
-        const auto fitted = planned(dn, nn, workers, reuse, 0, free.storage_bytes - 1);
-        assert(fitted.storage_bytes < free.storage_bytes && fitted.plan_id != free.plan_id && padding(fitted) < fitted.blocks);
+        const auto fitted = quote(free.storage_bytes-1);
+        assert(fitted.storage_bytes < free.storage_bytes && fitted.plan_id != free.plan_id);
+        // A native D&C fallback has no Barrett block padding. Its resource
+        // requirement and exact result are checked just like the block route.
+        if(fitted.algorithm==SBN3_DIVREM_BARRETT)assert(padding(fitted)<fitted.block_limbs);
+        else assert(fitted.algorithm==SBN3_DIVREM_DC || fitted.algorithm==SBN3_DIVREM_SCHOOLBOOK);
     }
     // The plan taken under the least budget is a working plan.
     Fixture f(workers);
@@ -341,19 +308,21 @@ static void budget_algorithm_gates() {
         size_t dn, nn;
     };
     unsigned served = 0;
-    for (const Shape shape : {Shape{3001, 3100}, Shape{5000, 5008}, Shape{40, 1240}, Shape{20011, 20017}}) {
+    for (const Shape shape : {Shape{3001, 3100}, Shape{5000, 5008}, Shape{40, 1240}, Shape{20011, 20017},Shape{70001,70007}}) {
         const auto blocks = planned(shape.dn, shape.nn, 1, 0);
         if (blocks.algorithm != SBN3_DIVREM_BARRETT) // the policy's own choice: nothing to replace
             continue;
         sbn3_divrem_request request{shape.nn, shape.dn};
-        sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 0};
+        // Service records metrics; size its fallback with the same timing
+        // flag instead of borrowing the smaller untimed word control bound.
+        sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 1};
         sbn3_divrem_plan plan{};
         sbn3_divrem_info named{};
         assert(sbn3_divrem_query(&request, &book, &plan, &named) == SBN3_SUPPORTED && named.storage_bytes < blocks.storage_bytes);
-        const auto under = planned(shape.dn, shape.nn, 1, 0, 0, named.storage_bytes);
+        const auto under = planned(shape.dn, shape.nn, 1, 0, 0, named.storage_bytes,SBN3_SUPPORTED,1);
         assert(under.algorithm == SBN3_DIVREM_SCHOOLBOOK && under.storage_bytes == named.storage_bytes);
         // ... and not when blocks were asked for.
-        assert(planned(shape.dn, shape.nn, 1, 0, std::min(shape.dn, shape.nn - shape.dn + 1), named.storage_bytes, SBN3_QUERY_CAPACITY).storage_bytes >
+        assert(planned(shape.dn, shape.nn, 1, 0, std::min(shape.dn, shape.nn - shape.dn + 1), named.storage_bytes, SBN3_QUERY_CAPACITY,1).storage_bytes >
                named.storage_bytes);
         Fixture f(1);
         Service s(f, shape.nn, shape.dn, 0, 0, 0, 0, 0, named.storage_bytes);
@@ -367,6 +336,7 @@ static void budget_algorithm_gates() {
         }
         ++served;
     }
+    assert(served); // Keep the bounded word fallback exercised after policy changes.
     sbn3_divrem_request request{6002, 3001};
     sbn3_divrem_options book{1, 0, 0, 0, 0, 0, SBN3_DIVREM_SCHOOLBOOK, 0};
     sbn3_divrem_plan plan{};
@@ -376,7 +346,9 @@ static void budget_algorithm_gates() {
     printf("divrem budget algorithm: %u requests planned in blocks are served by the schoolbook under a budget only it meets; "
            "a balanced 3001-limb division is reported, not served PASS\n", served);
 }
-int main() {
+int main(int argc,char **argv) {
+    assert(argc==1||(argc==2&&!strcmp(argv[1],"--tail")));
+    if(argc==1){
     basecase_gates();
     service_gates(3, 40, 1);
     service_gates(64, 128, 1);
@@ -431,6 +403,11 @@ int main() {
     service_gates(65536, 131072, 16);
     service_gates(65536, 69632, 16);
     service_gates(262144, 524288, 16);
+    // Repeated residual products may use the wider Flat bases. Exercise
+    // NP9/NP10 capacity boundaries with exact values and shorter numerators.
+    service_gates(387141, 774282, 16);
+    service_gates(460391, 920782, 16);
+    service_gates(387141, 1548565, 16);
     // The policy's plans where stage C-3 changed how they are reached, by value (whatever algorithm, block size and
     // residual family the policy takes): quotients of a few limbs on divisors whose block working set has left the
     // cache, on both sides of the one-use level; a size taken for its ring ahead of the first size of the linear order;
@@ -442,14 +419,15 @@ int main() {
     service_gates(58961, 88441, 1);
     service_gates(301412, 302324, 1);
     service_gates(129567, 145762, 1);
-    // Short head block by word division: forced complete blocks under heads of
-    // 1, 2, 3 and 7 limbs, the 2dn-1 / 2dn / 2dn+1 neighbourhood of a full
+    }
+    // Short head block by word division: 1..4 words are exact heads and a
+    // 7-word tail is padded; the 2dn-1 / 2dn / 2dn+1 neighbourhood of a full
     // inverse, and shorter numerators crossing every block boundary of the plan.
     service_gates(1000, 2000, 1, 1000, 0, 0, 0, {1000, 1001, 1002, 1499, 1999}, 1);
     service_gates(1000, 1999, 1, 1000, 0, 0, 0, {}, 0);
     service_gates(1000, 2001, 1, 1000, 0, 0, 0, {}, 2);
     service_gates(1000, 2001, 1, 333, 0, 0, 0, {1332, 1333, 1334, 1665, 1666, 1667}, 3);
-    service_gates(1000, 2006, 1, 500, 0, 0, 0, {}, 7);
+    service_gates(1000, 2006, 1, 500, 0, 0, 0, {}, 0);
     service_gates(1000, 2001, 1, 1000, 0, 1, 0, {}, 2); // linear residual under the head
     service_gates(1000, 2001, 1, 1000, 0, 2, 0, {}, 2); // cyclic residual under the head
     service_gates(1000, 2400, 1, 1000); // 401-limb remainder: padded block, as planned

@@ -23,18 +23,24 @@ class Frame {
     size_t bytes_, cursor_=0, peak_=0;
     uint64_t epoch_=1;
     unsigned children_=0;
-    Frame(Arena &a, const sbn3_lease &l, uint8_t *p, size_t n, Frame *parent,bool poison=true) noexcept
-        : arena_(&a),lease_(l),parent_(parent),base_(p),bytes_(n) {
+    Frame(Arena *a, const sbn3_lease &l, uint8_t *p, size_t n, Frame *parent,bool poison=true) noexcept
+        : arena_(a),lease_(l),parent_(parent),base_(p),bytes_(n) {
         // Child lifetime is already protected by the parent's child count.
         // Only roots retain the arena lease: never contend on the arena mutex
         // for every recursive SALLOC frame or kernel-worker subframe.
-        if(!parent_)a.retain(l);
+        if(!parent_ && a)a->retain(l);
         if(parent_) __atomic_add_fetch(&parent_->children_,1,__ATOMIC_RELAXED);
         if(parent_ && poison)SBN3_FRAME_POISON(base_,bytes_);
     }
 public:
     struct Mark { const Frame *frame;size_t offset;uint64_t epoch; };
-    Frame(Arena &a,const sbn3_lease &l) noexcept : Frame(a,l,static_cast<uint8_t *>(l.data),l.bytes,nullptr) {}
+    Frame(Arena &a,const sbn3_lease &l) noexcept : Frame(&a,l,static_cast<uint8_t *>(l.data),l.bytes,nullptr) {}
+    // A caller-owned scratch span. Its owner keeps it live and exclusive;
+    // this view performs no arena operation and cannot grow the span.
+    static Frame external(void *data,size_t bytes) noexcept {
+        require(data || !bytes,SBN3_FATAL_ARGUMENT,"external scratch span");
+        return Frame(nullptr,{},static_cast<uint8_t *>(data),bytes,nullptr);
+    }
     // A preplanned subrange of one retained shared arena lease. The scheduler
     // proves exclusive concurrent use of the subrange; no new lease identity
     // or page operation is needed for each recursive arithmetic operation.
@@ -42,7 +48,7 @@ public:
         const uintptr_t base=reinterpret_cast<uintptr_t>(l.data),at=reinterpret_cast<uintptr_t>(data);
         require(at>=base && at-base<=l.bytes && bytes<=l.bytes-(at-base),
                 SBN3_FATAL_WORKSPACE,"borrowed frame range",bytes,l.bytes);
-        return Frame(a,l,static_cast<uint8_t *>(data),bytes,nullptr);
+        return Frame(&a,l,static_cast<uint8_t *>(data),bytes,nullptr);
     }
     Frame(const Frame &)=delete;
     Frame &operator=(const Frame &)=delete;
@@ -53,7 +59,7 @@ public:
         if(parent) __atomic_sub_fetch(&parent->children_,1,__ATOMIC_RELEASE);
         // The Frame itself may live in this lease. Do not read its members
         // after the final release allows the controller to reclaim the span.
-        if(!parent)arena->release(lease);
+        if(!parent && arena)arena->release(lease);
     }
     void *allocate(size_t n,size_t alignment=64) noexcept {
         const uintptr_t address=reinterpret_cast<uintptr_t>(base_);
@@ -84,7 +90,7 @@ public:
     }
     Frame subframe(size_t n,size_t alignment=64) noexcept {
         auto *p=static_cast<uint8_t *>(allocate(n,alignment));
-        return Frame(*arena_,lease_,p,n,this);
+        return Frame(arena_,lease_,p,n,this);
     }
     // Revisit an already allocated region (e.g. a kernel control object and
     // its scratch). Keep the parent live and forbid rewind until this view
@@ -93,7 +99,7 @@ public:
         const uintptr_t base=reinterpret_cast<uintptr_t>(base_),at=reinterpret_cast<uintptr_t>(data);
         require(at>=base && at-base<=cursor_ && bytes<=cursor_-(at-base),
                 SBN3_FATAL_WORKSPACE,"borrowed allocated view",bytes,cursor_);
-        return Frame(*arena_,lease_,static_cast<uint8_t *>(data),bytes,this,false);
+        return Frame(arena_,lease_,static_cast<uint8_t *>(data),bytes,this,false);
     }
     Mark mark() const noexcept {return {this,cursor_,epoch_};}
     void rewind(Mark m) noexcept {

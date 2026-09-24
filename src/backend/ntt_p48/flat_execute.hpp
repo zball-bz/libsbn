@@ -6,11 +6,12 @@ void flat_prepare_bound(Binding &b,Spectrum &s,sbn3_team_scope *scope,sbn3_const
     const auto &i=b.plan.execution.info;const auto &g=b.plan.arithmetic.transform;
     sbn3_team_scope sub{scope->team,scope->first,i.workers,false,scope->epoch};
     p::FlatCtx c{};c.pl=&g;c.counts=counts;c.primes=&s.primes;c.constants=b.run.flat_constants;c.a[0]=a.data;c.an[0]=a.count;
+    c.packed_output=s.desc.format_version==spectrum_contract::flat_packed48_format;
     for(unsigned q=0;q<PN;++q)c.output[q]=s.planes[q];
     kernel_for(&sub,0,PN,1,SBN3_STATIC,p::flat_prepare_fn,&c,b.run.workers);
 }
 void execute_flat(Binding &b,sbn3_team_scope *scope,const sbn3_product_inputs &in,sbn3_limbs out,bool counters,
-                  uint8_t *const *program_cache=nullptr){
+                  uint8_t *const *program_cache=nullptr,bool fresh_inputs=false){
     require_scope_leader(scope);const auto &i=b.plan.execution.info;const auto &r=b.plan.recipe;const auto &g=b.plan.arithmetic.transform;
     require(scope->team==b.run.team && scope->width>=i.workers,SBN3_FATAL_TEAM,"flat scope width");
     sbn3_team_scope sub{scope->team,scope->first,i.workers,false,scope->epoch};scope=&sub;
@@ -23,11 +24,22 @@ void execute_flat(Binding &b,sbn3_team_scope *scope,const sbn3_product_inputs &i
     c.a[0]=in.a.data;c.a[1]=in.a1.data;c.b[0]=in.b.data;c.b[1]=in.b1.data;
     c.an[0]=in.a.count;c.an[1]=in.a1.count;c.bn[0]=in.b.count;c.bn[1]=in.b1.count;
     for(unsigned term=0;term<2;++term){c.k[term]=r.k[term];c.rec[term]=r.kr[term];
-        if(b.run.cached[term])for(unsigned q=0;q<PN;++q)c.cached[term][q]=reinterpret_cast<const p::V *>(spectrum(b.run.cached[term]).planes[q]);}
+        if(!fresh_inputs&&b.run.cached[term]){const auto &saved=spectrum(b.run.cached[term]);
+            c.packed_cache[term]=saved.desc.format_version==spectrum_contract::flat_packed48_format;
+            for(unsigned q=0;q<PN;++q)c.cached[term][q]=reinterpret_cast<const p::V *>(saved.planes[q]);}}
     if(program_cache)for(unsigned q=0;q<PN;++q)c.cached[0][q]=reinterpret_cast<const p::V *>(program_cache[q]);
     for(unsigned q=0;q<PN;++q)c.output[q]=b.run.b_planes[q];
     KernelForFn fn=nullptr;
-    if(program_cache){
+    if(fresh_inputs){
+        require(!program_cache&&r.kind==SBN3_PRODUCT_MUL&&r.cached_mask==1,
+                SBN3_FATAL_ARGUMENT,"fresh cyclic use of cached binding");
+        // A temporarily occupies the already-owned packed output planes.
+        // Decode applies this plan's scale, so cached-scale compensation
+        // must not be applied to these fresh operands.
+        fn=[](void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
+            p::flat_product_packed_a<false>(*static_cast<p::FlatCtx *>(arg),lo,hi,w,space);
+        };
+    }else if(program_cache){
         require(r.kind==SBN3_PRODUCT_MUL && !r.cached_mask && !r.scaled,SBN3_FATAL_MATH,"private packed flat pair");
         fn=p::flat_program_apply48;
     } else switch(r.kind){

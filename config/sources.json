@@ -581,6 +581,55 @@
       ]
     },
     {
+      "path": "src/kernels/x86v4ifma/division_high.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::u52::high_prefix_scratch_bytes",
+        "sbn::v3::u52::high_prefix"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/backend/pq16/root_bank.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::pq16::root_bank::pq"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-fconstexpr-steps=32000000"
+      ]
+    },
+    {
       "path": "src/instances/x86v4ifma/pq16.cpp",
       "language": "cxx",
       "group": "native",
@@ -594,7 +643,8 @@
       ],
       "depends_on": [
         "src/runtime/linux/arena.cpp",
-        "src/runtime/team.cpp"
+        "src/runtime/team.cpp",
+        "src/backend/pq16/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::pq16::query",
@@ -623,7 +673,8 @@
         "-Wno-unused-variable",
         "-Wno-vla-cxx-extension",
         "-Wno-deprecated-anon-enum-enum-conversion",
-        "-Wno-constant-logical-operand"
+        "-Wno-constant-logical-operand",
+        "-O3"
       ]
     },
     {
@@ -859,7 +910,8 @@
         "src/value/divrem_basecase.cpp",
         "src/runtime/team.cpp",
         "src/common/base.cpp",
-        "src/algorithms/local_inverse.cpp"
+        "src/algorithms/local_inverse.cpp",
+        "src/algorithms/local_divrem.cpp"
       ],
       "provides_symbols": [
         "sbn3_divrem_query",
@@ -868,7 +920,8 @@
         "sbn3_divrem_execute",
         "sbn3_int_divrem_execute",
         "sbn3_divrem_get_metrics",
-        "sbn3_divrem_unbind"
+        "sbn3_divrem_unbind",
+        "sbn3_divrem_prepare_into"
       ],
       "requires_symbols": [],
       "donor_ids": []
@@ -942,6 +995,43 @@
       "donor_ids": [
         "word_asm"
       ]
+    },
+    {
+      "path": "src/algorithms/local_divrem.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/local_inverse.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/instances/x86v4ifma/pq16.cpp",
+        "src/value/divrem_basecase.cpp",
+        "src/kernels/x86v4ifma/division_high.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::local_division_plan",
+        "sbn::v3::local_division_execute"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/algorithms/divrem_small.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/value/divrem_basecase.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/common/base.cpp",
+        "src/algorithms/local_divrem.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_divrem_small_scratch_bytes",
+        "sbn3_divrem_small"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
     },
     {
       "path": "src/series/schedule.cpp",
@@ -1327,7 +1417,8 @@
         "src/product/api.cpp",
         "src/runtime/team.cpp",
         "src/value/divrem_basecase.cpp",
-        "src/algorithms/local_inverse.cpp"
+        "src/algorithms/local_inverse.cpp",
+        "src/radix/power_bank.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],
@@ -1383,6 +1474,16 @@
         "src/product/api.cpp",
         "src/radix/programs.cpp"
       ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/radix/power_bank.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
       "provides_symbols": [],
       "requires_symbols": [],
       "donor_ids": []

@@ -16,18 +16,33 @@ inline double native_cost(Shape s,size_t an,size_t bn) noexcept {
     // Balanced digits (2026-09-08): signed decode adds ~0.05 ns per point and forward (provisional, refit pending).
     const double bal=s.balanced?SBN3_CFG_BALANCED_DECODE_NS_PER_POINT:0.;
     const double N=s.nfull;const unsigned M=s.radix;const bool ct=s.recipe==Recipe::CooleyTukeyPQ,wide=s.bits>16;
-    const double f[]={std::log2(s.branch),1.,double(M==3),double(M==5),double(M==7),double(wide),
-        double(!ct&&M==3),double(!ct&&M==5),double(!ct&&M==7),std::fmax(0.,std::log2(N/8192.)),
-        wide?0.:std::fmax(0.,1.-2.*double(an+bn)/N),double(ct&&M==3&&s.branch>=4096),
-        double(ct&&M==5&&s.branch>=4096),double(ct&&M==7&&s.branch>=4096),
-        double(!ct&&M==5&&s.branch>=4096),double(ct&&M==3&&s.branch>=8192),double(wide&&M==1),
-        double(wide&&M==5&&s.branch<=512)};
+    // Supported branches are powers of two; keep the generic expression for
+    // malformed/research shapes so zero never reaches ctz. Below 8192 points
+    // the clamped cache term is exactly zero and needs no logarithm call.
+    const double lg=s.branch && !(s.branch&(s.branch-1))?double(__builtin_ctz(s.branch)):std::log2(s.branch);
+    const double cache=N>8192.?std::log2(N/8192.):0.;
     // 2026-09-08 calibration (results/wide_kernels_2026-09-08/calib-*, fit.json): the M7 tower penalty applies at
     // branch 4096 only (17b M7 14336 CT beat 16-bit pow2 16384 by 3-5% in interleaved probes); wide M5 at branch 512
     // (N=2560) costs ~0.06 ns/point more than the linear model (16-bit M3 3072 right-angle is 4-5% faster).
     constexpr double c[]={SBN3_CFG_COEFFICIENTS};
     // Centered 16-bit band (N > 2^17, W1 forced ladders 2026-09-09): measured/model pow2 1.17, M3 1.20, M5 1.25, M7 1.35.
     const double cen=s.centered?(M==1?SBN3_CFG_CENTERED_POW2:M==3?SBN3_CFG_CENTERED_M3:M==5?SBN3_CFG_CENTERED_M5:SBN3_CFG_CENTERED_M7):1.;
-    double v=0;for(unsigned k=0;k<18;++k)v+=f[k]*c[k];return N*(v+bal)*rac*cen;
+    // Same ordered sum as the 18-element feature dot product. Boolean
+    // features are exactly zero or one; skip their zero multiplies/adds
+    // without reassociating the nonzero terms or changing the model.
+    double v=lg*c[0];v+=c[1];
+    if(M==3)v+=c[2];if(M==5)v+=c[3];if(M==7)v+=c[4];
+    if(wide)v+=c[5];
+    if(!ct&&M==3)v+=c[6];if(!ct&&M==5)v+=c[7];if(!ct&&M==7)v+=c[8];
+    if(cache)v+=cache*c[9];
+    if(!wide && 2.*double(an+bn)<N)v+=(1.-2.*double(an+bn)/N)*c[10];
+    if(ct&&M==3&&s.branch>=4096)v+=c[11];
+    if(ct&&M==5&&s.branch>=4096)v+=c[12];
+    if(ct&&M==7&&s.branch>=4096)v+=c[13];
+    if(!ct&&M==5&&s.branch>=4096)v+=c[14];
+    if(ct&&M==3&&s.branch>=8192)v+=c[15];
+    if(wide&&M==1)v+=c[16];
+    if(wide&&M==5&&s.branch<=512)v+=c[17];
+    return N*(v+bal)*rac*cen;
 }
 }

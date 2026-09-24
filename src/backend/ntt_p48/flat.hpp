@@ -18,6 +18,7 @@ struct FlatCtx {
     const Plan *pl=nullptr;const Primes *primes=nullptr;const FlatConstants *constants=nullptr;
     const uint64_t *a[2]{},*b[2]{};size_t an[2]{},bn[2]{};
     const V *cached[2][NP]{};
+    bool packed_cache[2]{},packed_output=false;
     uint8_t *output[NP]{};
     const uint64_t *k[2]{},*rec[2]{};
     PassCounts *counts=nullptr;
@@ -42,8 +43,7 @@ inline void flat_decode(V *dst,const uint64_t *src,size_t limbs,const Dec &d,con
     for(size_t v=nv;v<zero_end;++v)dst[v]=_mm512_setzero_si512();
 }
 inline void flat_forward(V *x,const Plan &g,size_t live,const Prime &p,const PrimeV &pv){
-    if(g.full)full<false,false,1>((uint64_t *)x,g.M2,0,p,pv,nullptr);
-    else tft_blk(x,g.M2,0,g.lbv,live,p,pv);
+    forward_prefix(x,g.M2,0,g.lbv,live,p,pv);
 }
 inline void flat_inverse(V *x,const Plan &g,const Prime &p,const PrimeV &pv){
     if constexpr(!CR_FLAT_TRIM_ZERO)for(size_t v=g.lbv;v<g.M2;++v)x[v]=_mm512_setzero_si512();
@@ -55,7 +55,8 @@ inline void flat_pad_frequency(V *x,const Plan &g){for(size_t v=g.lbv;v<g.lbw;++
 inline void flat_prepare_fn(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
     auto &c=*static_cast<FlatCtx *>(arg);const auto &g=*c.pl;auto *x=space->alloc<V>(g.M2+16);
     for(unsigned q=lo;q<hi;++q){flat_decode(x,c.a[0],c.an[0],c.constants->a,g,q);flat_forward(x,g,flat_input_vectors(c.an[0],g.T),c.primes->P[q],c.primes->V[q]);flat_pad_frequency(x,g);
-        memcpy(c.output[q],x,g.lbw*64);if(c.counts)++c.counts[w].row_forward;}
+        if(c.packed_output){const auto pack=pk52_mk();for(size_t v=0;v<g.lbw;++v)stslot<48>(c.output[q]+48*v,x[v],pack,c.primes->V[q]);}
+        else memcpy(c.output[q],x,g.lbw*64);if(c.counts)++c.counts[w].row_forward;}
 }
 // Private two-product cache. Public flat spectra remain lazy64.
 inline void flat_program_prepare48(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
@@ -142,11 +143,17 @@ void flat_product_fn(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
         const V kc=Scaled?vset(c.k[0][q]):V{},kr=Scaled?vset(c.rec[0][q]):V{};
         FLAT_STAMP(5);
         for(size_t v=0;v<g.lbw;v+=8){
-            if constexpr(Kind==1)if(cached0)for(unsigned j=0;j<8;++j)y[v+j]=v+j<g.lbv?ap[v+j]:_mm512_setzero_si512();
+            V decoded[8],decoded1[8];const V *block=c.packed_cache[0]?decoded:ap+v,
+                *block1=c.packed_cache[1]?decoded1:ap1?ap1+v:nullptr;
+            if(c.packed_cache[0]){const auto *bytes=reinterpret_cast<const uint8_t *>(ap);
+                for(unsigned j=0;j<8;++j)decoded[j]=ldslot<48>(bytes+48*(v+j),pack);block=decoded;}
+            if constexpr(Kind==3)if(c.packed_cache[1]){const auto *bytes=reinterpret_cast<const uint8_t *>(ap1);
+                for(unsigned j=0;j<8;++j)decoded1[j]=ldslot<48>(bytes+48*(v+j),pack);block1=decoded1;}
+            if constexpr(Kind==1)if(cached0)for(unsigned j=0;j<8;++j)y[v+j]=v+j<g.lbv?block[j]:_mm512_setzero_si512();
             const V roots=tower8<false>(p,v);
-            if constexpr(Kind==2)conv8x8T<Scaled>(y+v,ap+v,roots,tower8<true>(p,v),pv,kc,kr);
-            else conv8x8<Scaled>(y+v,ap+v,roots,pv,kc,kr);
-            if constexpr(Kind==3){conv8x8<Scaled>(y1+v,ap1+v,roots,pv,Scaled?vset(c.k[1][q]):V{},Scaled?vset(c.rec[1][q]):V{});
+            if constexpr(Kind==2)conv8x8T<Scaled>(y+v,block,roots,tower8<true>(p,v),pv,kc,kr);
+            else conv8x8<Scaled>(y+v,block,roots,pv,kc,kr);
+            if constexpr(Kind==3){conv8x8<Scaled>(y1+v,block1,roots,pv,Scaled?vset(c.k[1][q]):V{},Scaled?vset(c.rec[1][q]):V{});
                 for(unsigned j=0;j<8;++j)y[v+j]=_mm512_add_epi64(y[v+j],y1[v+j]);}
         }
         if(c.counts)c.counts[w].leaf_products+=(g.lbw/8)*(Kind==3?2:1);

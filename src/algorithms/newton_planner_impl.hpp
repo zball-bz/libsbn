@@ -4,28 +4,29 @@
 // regressed short Newton calls. See docs/code-cleanup-results-2026-09-10.md.
 #include "algorithms/newton_planner.hpp"
 #include "algorithms/newton_contract.hpp"
+#include "algorithms/refinement.hpp"
 #include "algorithms/newton_tuning.hpp"
 #include "product/cost_model.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "product/backend.hpp"
+#include "product/fixed_geometry.hpp"
+#include "backend/pq16/kernels.hpp"
 #include "product/native_capabilities.hpp"
 #include "common/checked.hpp"
 #include <algorithm>
 #include <cmath>
 namespace sbn::v3::newton_detail {
 // Every cold cycle includes the producer's forward share and roots. An
-// inverse additionally applies its one cached product twice, with exactly
-// the producer's cyclic geometry and input lengths. Bailey's cost fields
-// therefore agree. Flat's one-buffer factor may fall to .79 (small_tuning),
-// so use that lower bound before constructing the consumer. Other cycle
-// kinds have different second-product shapes and retain the weaker bound.
+// inverse reuses U, but its correction may have a smaller live input span;
+// only the first application contributes to this lower bound. The bound is
+// retained for the remaining candidate-based rsqrt policy and its audit.
 double producer_lower_bound(Cycle kind, size_t m, size_t n, const sbn3_mul_info &i) {
     const bool deep = (kind == Cycle::Inverse ? n : kind == Cycle::Rsqrt ? m + 1 : n + 1) >
                       native_policy::small_model_max_words;
     const double product = cost_model::cyclic_product(i, deep).nanoseconds;
     double bound = cost_model::prepare_share(product);
     if (kind == Cycle::Inverse && i.np)
-        bound += cost_model::cached_share(product * (i.algorithm == SBN3_MUL_FLAT ? .79 : 1.), 2);
+        bound += cost_model::cached_share(product * (i.algorithm == SBN3_MUL_FLAT ? .79 : 1.));
     return bound + root_prepare_cost(i);
 }
 void producer_request(Cycle kind, size_t m, size_t n, size_t ring, const Choice &c,
@@ -66,12 +67,14 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
         out.plans[0] = out.producer;
         out.infos[0] = out.producer_info;
         out.count = 1;
-        if (kind != Cycle::Inverse) {
+        {
             if (kind == Cycle::Rsqrt) {
                 r.kind = SBN3_PRODUCT_MUL;
                 r.b_limbs = m + 1;
                 r.window_limbs = 0;
-            } else
+            } else if(kind==Cycle::Inverse)
+                r.b_limbs=newton_contract::residual_words(m,n);
+            else
                 r.b_limbs = n;
             if (sbn3_product_query(&r, &o, &out.plans[1], &out.infos[1]) != SBN3_SUPPORTED)
                 return false;
@@ -85,6 +88,7 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
     if (sbn3_product_query(&r, &o, &out.plans[0], &out.infos[0]) != SBN3_SUPPORTED)
         return false;
     out.count = 1;
+    if(kind==Cycle::Inverse&&c.workers>1)return true;
     if (kind == Cycle::Rsqrt) {
         r.kind = SBN3_PRODUCT_MUL;
         r.b_limbs = m + 1;
@@ -94,7 +98,8 @@ bool cycle_candidate(Cycle kind, size_t m, size_t n, size_t ring, const Choice &
         r.cached_a[0] = nullptr;
         r.b_limbs = n;
     }
-    if (kind != Cycle::Inverse) {
+    if(kind==Cycle::Inverse)r.b_limbs=newton_contract::residual_words(m,n);
+    {
         if (sbn3_product_query(&r, &o, &out.plans[1], &out.infos[1]) != SBN3_SUPPORTED)
             return false;
         out.count = 2;
@@ -111,25 +116,27 @@ double cycle_cost(Cycle kind, const Bundle &b, bool deep) {
                    native_policy::scalar_input_ns_per_word * i.mul.nyt;
         };
         const double first = word_cost(b.infos[0]);
-        return kind == Cycle::Inverse ? 2 * first
+        return kind == Cycle::Inverse ? first + word_cost(b.infos[1])
                : kind == Cycle::Rsqrt ? first + word_cost(b.infos[1])
                                       : 2 * first + word_cost(b.infos[1]);
     }
     auto cost = [deep](const sbn3_mul_info &i) { return cost_model::cyclic_product(i, deep).nanoseconds; };
     const double producer = cost(b.producer_info.mul);
     if (kind == Cycle::Inverse)
-        return cost_model::prepare_share(producer) + cost_model::cached_share(cost(b.infos[0].mul), 2);
+        return cost_model::prepare_share(producer) + cost_model::cached_share(cost(b.infos[0].mul)) +
+               cost_model::cached_share(cost(b.infos[b.count==2?1:0].mul));
     if (kind == Cycle::Rsqrt)
         return cost_model::prepare_share(producer) + cost_model::inverse_share(cost(b.infos[0].mul)) +
                cost_model::cached_share(cost(b.infos[1].mul));
     return cost_model::prepare_share(producer) + cost_model::cached_share(cost(b.infos[0].mul), 2) +
-           cost(b.infos[1].mul);
+           cost(b.infos[b.count==1?0:1].mul);
 }
 double cold_cycle_cost(Cycle kind,const Bundle &b,bool deep,bool compact) {
     const double arithmetic=cycle_cost(kind,b,deep);
     if(!b.producer_info.mul.np)return arithmetic;
     const double root=root_prepare_cost(b.producer_info.mul);
     if(kind!=Cycle::Division)return arithmetic+root;
+    if(b.count==1)return arithmetic+root;
     const double extra_forward=compact?cost_model::prepare_share(cost_model::cyclic_product(b.producer_info.mul,deep).nanoseconds):0;
     return arithmetic+(compact?2:1)*root+root_prepare_cost(b.infos[1].mul)+extra_forward;
 }
@@ -157,9 +164,19 @@ bool cycle_bound_probe(Cycle kind, size_t m, size_t n, const Choice &c, bool com
 }
 
 bool choose_cycle(Plan &p, Cycle kind, size_t m, size_t n, unsigned index, bool replay, Bundle &out) {
-    const size_t minimum = kind == Cycle::Inverse ? newton_contract::inverse_ring_min(n)
+    if(kind==Cycle::Inverse||kind==Cycle::Division){
+        if(index>=newton_limits::stages)return false;
+        if(replay)require(index<p.choice_count,SBN3_FATAL_ARGUMENT,"Newton choice count");
+        const auto shape=kind==Cycle::Inverse?refinement_products<RefinementKind::Inverse>(m,n):
+                                             refinement_products<RefinementKind::Quotient>(m,n);
+        auto &choice=p.choices[index];
+        if(!product::compile_window_group(shape,{p.options.workers,p.options.prime_count},
+                                           choice,out,replay))return false;
+        p.choice_count=std::max(p.choice_count,index+1);return true;
+    }
+    const size_t minimum = kind == Cycle::Inverse ? n
                            : kind == Cycle::Rsqrt ? newton_contract::rsqrt_ring_min(m)
-                                                  : newton_contract::division_ring_min(m);
+                                                  : n;
     auto period = [&](int T) {
         size_t r = 2 * size_t(T);
         while (r < minimum)

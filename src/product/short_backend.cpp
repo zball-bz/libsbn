@@ -172,6 +172,17 @@ sbn3_query_result query_product_impl(const sbn3_product_request &r, const sbn3_m
                                o.workspace_budget > control ? o.workspace_budget - control : 0, square);
         if (!q.shape.nfull && o.workspace_budget)
             q.shape = pq16::select(q.an, q.bn, o.workers, unsigned(o.trunk_bits), 0, square);
+        // An unpinned product includes its own root construction. The
+        // prepared-cost winner may require a full right-angle twist plane
+        // built by the scalar extended-precision root evaluator. Use the same legal CT
+        // geometry when its roots are already published; pinned/cached
+        // recipes keep their declared representation.
+        if(q.shape.recipe==pq16::Recipe::RightAngle&&!pq16::tables_published(q.shape)){
+            auto compact=q.shape;compact.recipe=pq16::Recipe::CooleyTukeyPQ;
+            const bool fits=!o.workspace_budget||(o.workspace_budget>control&&
+                pq16::scratch_bytes(compact,q.an,q.bn,o.workers,square)<=o.workspace_budget-control);
+            if(fits&&pq16::supported(compact,q.an,q.bn,o.workers)&&pq16::compact_table_setup(compact))q.shape=compact;
+        }
         }
         if (!q.shape.nfull)
             return SBN3_UNSUPPORTED;

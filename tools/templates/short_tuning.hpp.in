@@ -8,6 +8,9 @@ namespace sbn::v3 {
 // Alternating fine-grid lengths held out; model only ranks legal candidates.
 // Calibration SHA-256: SBN3_CFG_BASE_HASH
 template<size_t N> inline double short_dot(const double (&f)[N],const double (&c)[N]){double v=0;for(size_t k=0;k<N;++k)v+=f[k]*c[k];return v;}
+// Below capacity the clamped cache term is exactly zero; no logarithm is
+// needed. This preserves the model while keeping small plan quotes cheap.
+inline double short_log_pressure(double ratio){return ratio>1.?std::log2(ratio):0.;}
 inline double scalar_product_cost(size_t an,size_t bn,unsigned workers){
     const double size=an+bn,work=double(an)*bn,w=workers,pressure=std::max(0.,std::log2(16/w));
     const double f[]={1,work,work*pressure,size,size*std::max(0.,std::log2(16*size/(768*1024))),size*std::max(0.,std::log2((16/w)*16*size/(48*1024*1024))),size*pressure};
@@ -17,7 +20,7 @@ inline double u52_product_cost(size_t an,size_t bn,unsigned workers){
     const double x=(64*std::max(an,bn)+51)/52,y=(64*std::min(an,bn)+51)/52,w=workers;
     constexpr double a=1.584962500721156,b=1.464973520717927;
     double work=y<96?y*y:y<618?std::pow(96.,2-a)*std::pow(y,a):std::pow(96.,2-a)*std::pow(618.,a-b)*std::pow(y,b);
-    work*=y?x/y:0;const double f[]={1,std::log2(w)+1,x+y,work,work*std::max(0.,std::log2(16/w)),(an+bn)*std::max(0.,std::log2(36.*std::max(an,bn)/(768*1024))),(an+bn)*std::max(0.,std::log2((16/w)*36.*std::max(an,bn)/(48*1024*1024)))};
+    work*=y?x/y:0;const double f[]={1,std::log2(w)+1,x+y,work,work*short_log_pressure(16/w),(an+bn)*short_log_pressure(36.*std::max(an,bn)/(768*1024)),(an+bn)*short_log_pressure((16/w)*36.*std::max(an,bn)/(48*1024*1024))};
     // 2026-09-09: the W1 terms refit on the measured u52 ladder (8..724 limbs, the original fit file is unavailable; provenance is recorded in config/tuning/native-short.json):
     // the old fit overestimated u52 by 1.35-1.7x, pushing the u52/pq16 crossover down to 128 limbs (u52 is 39 % faster there).
     // constant 20.94 ns + 0.03388 ns per work unit at W1 (the W1 pressure term keeps its coefficient); the length term dropped.

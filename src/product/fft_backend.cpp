@@ -229,9 +229,14 @@ sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_op
             return SBN3_UNSUPPORTED;
         p.shape = p.plus ? pq16::plus_shape(p.ring)
                          : pq16::cyclic_shape(mid ? std::max(p.bn + 1, 2 * p.an) : p.ring,
-                                              o.trunk_bits ? unsigned(o.trunk_bits) : 16);
+                                              o.trunk_bits ? unsigned(o.trunk_bits) : 16,o.workers,o.trunk_bits==16);
         if (mid)
             p.ring = pq16::cyclic_period(p.shape);
+    }
+    if(p.ring&&!p.plus&&!p.has_cache&&o.workers==1&&o.trunk_bits==16&&p.shape.bits==16&&!p.shape.balanced&&
+       !pq16::cyclic_supported(p.shape,p.an,p.bn)){
+        auto signed_shape=p.shape;signed_shape.recipe=pq16::Recipe::CooleyTukeyPQ;signed_shape.balanced=true;
+        if(pq16::cyclic_supported(signed_shape,p.an,p.bn))p.shape=signed_shape;
     }
     if (p.ring) {
         if (p.ring != pq16::cyclic_period(p.shape) ||
@@ -241,7 +246,7 @@ sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_op
             return SBN3_UNSUPPORTED;
     } else if (!pq16::supported(p.shape, p.an, p.bn, o.workers))
         return SBN3_UNSUPPORTED;
-    if (p.shape.bits > 16 && o.workers != 1)
+    if ((p.shape.bits > 16 || p.shape.recipe==pq16::Recipe::CooleyTukeyPQ) && o.workers != 1)
         return SBN3_UNSUPPORTED;
     auto &i = p.info.mul;
     i.algorithm = SBN3_MUL_PQ16;
@@ -585,6 +590,16 @@ void compute_square(sbn3_mul_binding *p, sbn3_spectrum *handle, sbn3_const_limbs
     sbn3_team_run(b.team, action, &c);
     __atomic_store_n(&s.state, spectrum_contract::ready, __ATOMIC_RELEASE);
 }
+void compute_multiply(sbn3_mul_binding *p,sbn3_spectrum *handle,sbn3_const_limbs a,
+                      sbn3_const_limbs fresh,sbn3_limbs out) {
+    auto &b=binding(p);idle(b);auto &s=spectrum(handle);
+    require(b.plan.kind==SBN3_PRODUCT_MUL&&b.cache==&s,SBN3_FATAL_ARGUMENT,"FFT build/apply cache");
+    product_values(b,{a,fresh,{},{}},out,true);
+    begin_fft_spectrum(b.plan.shape,s,a,*b.team,b.plan.info.mul.workers);
+    Call call{&b,{s.original?s.original:a.data,a.count},fresh,out,&s};
+    sbn3_team_run(b.team,action,&call);
+    __atomic_store_n(&s.state,spectrum_contract::ready,__ATOMIC_RELEASE);
+}
 } // namespace
 void fft_compute_spectrum(pq16::Shape shape, sbn3_spectrum *p, sbn3_const_limbs a, sbn3_team &team,
                           unsigned workers) {
@@ -628,6 +643,7 @@ const Backend &fft_backend() noexcept {
         .spectrum_compute = compute_spectrum,
         .spectrum_reserve_plan = reserve_plan,
         .spectrum_square = compute_square,
+        .spectrum_multiply = compute_multiply,
     };
     return b;
 }

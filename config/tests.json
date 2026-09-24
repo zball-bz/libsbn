@@ -328,7 +328,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -341,7 +342,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -354,7 +356,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -367,7 +370,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -380,7 +384,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -943,7 +948,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -1091,7 +1097,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -1204,7 +1211,8 @@
             "-Wno-unused-variable",
             "-Wno-vla-cxx-extension",
             "-Wno-deprecated-anon-enum-enum-conversion",
-            "-Wno-constant-logical-operand"
+            "-Wno-constant-logical-operand",
+            "-O3"
           ]
         },
         {
@@ -2481,6 +2489,645 @@
       "sources": [
         {
           "path": "tests/integration/middle_guard_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "name": "divrem_small_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/divrem_small_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "name": "local_divrem_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/local_divrem_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "name": "divrem_prepared_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/divrem_prepared_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "local_divide_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/local_divide_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "local_fused_divrem_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/local_fused_divrem_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "cyclic_reconstruct_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/cyclic_reconstruct_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "fused_divrem_service_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/fused_divrem_service_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "refinement_window_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/refinement_window_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "product_difference_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/product_difference_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "fft_build_apply_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/fft_build_apply_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "refinement_parallel_alias_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/refinement_parallel_alias_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "compact_windows_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/compact_windows_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "local_program_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/local_program_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "flat_packed_spectrum_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/flat_packed_spectrum_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "flat_binding_reuse_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/flat_binding_reuse_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "rac_window_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/native/rac_window_test.cpp",
+          "language": "cxx",
+          "group": "native",
+          "extra_flags": [
+            "-Wno-unused-function",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+            "-Wno-vla-cxx-extension",
+            "-Wno-deprecated-anon-enum-enum-conversion",
+            "-Wno-constant-logical-operand",
+            "-O3"
+          ]
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "name": "fft_tail_window_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/fft_tail_window_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "small_approx_divide_test",
+      "tier": "extended",
+      "sources": [
+        {
+          "path": "tests/integration/small_approx_divide_test.cpp",
           "language": "cxx",
           "group": "reference"
         },

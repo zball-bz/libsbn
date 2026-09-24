@@ -86,6 +86,8 @@ uint64_t tree_identity(const FormatTreePlan &t) noexcept {
     uint64_t h = identity::fnv_seed;
     h = identity::word(h, t.class_count);
     h = identity::word(h, t.rail.count);
+    h = identity::word(h, t.rail.fixed_levels);
+    h = identity::word(h, t.group_u52);
     h = identity::word(h, t.prepared_bytes());
     for (unsigned j = 0; j < t.class_count; ++j) {
         h = identity::word(h, t.classes[j].fragments);
@@ -93,6 +95,7 @@ uint64_t tree_identity(const FormatTreePlan &t) noexcept {
         h = identity::word(h, t.classes[j].split.product.arithmetic_id + t.classes[j].split.cyclic.ring);
         h = identity::word(h, t.classes[j].split.middle_words);
         h = identity::word(h, t.classes[j].split.middle_shift);
+        if(t.classes[j].split.middle_words)h=identity::word(h,t.classes[j].split.product.work_bytes);
     }
     for (unsigned k = 0; k < t.tree_count; ++k)
         for (unsigned s = 0; s < t.trees[k].stage_count; ++s) {
@@ -101,6 +104,7 @@ uint64_t tree_identity(const FormatTreePlan &t) noexcept {
             h = identity::word(h, stage.split.product.arithmetic_id + stage.split.cyclic.ring);
             h = identity::word(h, stage.split.middle_words);
             h = identity::word(h, stage.split.middle_shift);
+            if(stage.split.middle_words)h=identity::word(h,stage.split.product.work_bytes);
         }
     return h;
 }

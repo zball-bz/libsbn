@@ -1,5 +1,6 @@
 // Imported from libsbn v2 detail/div/dc_div.h; caller-owned Frame replaces TLS scratch.
 #pragma once
+#include "backend/u52/division_geometry.hpp"
 namespace sbn::v3::u52 {
 // Divide-and-conquer block division (u52, beta = 2^416 = 8 digits/block),
 // modelled on GMP's mpn_dcpi1_div_qr / _qr_n.  The bulk work is full
@@ -13,7 +14,7 @@ namespace sbn::v3::u52 {
 
 // Flat leaf below 12 blocks; inherited v2 crossover, measured again through
 // the complete native service before promoting an automatic policy.
-inline constexpr uint64_t dc_leaf_blocks = 12;
+inline constexpr uint64_t dc_leaf_blocks = division_leaf_blocks;
 
 // ---- block multi-precision helpers (carry/borrow threaded across blocks) ----
 
@@ -27,16 +28,18 @@ INLINE unsigned block_sub_1(sb_limb* qp, uint64_t len){
     }
     return b;
 }
-// tp[0..an+bn) = a[0..an) * b[0..bn)  (blocks), canonical.  Uses the arena.
-INLINE void blk_mul(sb_limb* tp, const sb_limb* a, uint64_t an, const sb_limb* b, uint64_t bn,Frame &space){
+// Subtract the cross product while folding its redundant signed digits.
+// No consumer needs a separately canonical product, so its fold and the
+// remainder subtraction share a single pass.
+INLINE unsigned blk_mul_sub(sb_limb* out,sb_limb* tp, const sb_limb* a, uint64_t an, const sb_limb* b, uint64_t bn,Frame &space){
     scratch* sc = &space;
     SCRATCH(sc);
-    if(an >= bn) mul_u52_dispatch_canon((sb_pvec)tp, (sb_cpvec)a, (sb_cpvec)b, an*8, bn*8, sc);
-    else         mul_u52_dispatch_canon((sb_pvec)tp, (sb_cpvec)b, (sb_cpvec)a, bn*8, an*8, sc);
-    // dispatch_canon only folds class-1; a class-0 result may still be
-    // non-negative-redundant (lanes >= 2^52).  The block sub/add chains need
-    // canonical digits, so force a positive canonicalize.
-    u52_canon_pos((sb_pvec)tp, (sb_cpvec)tp, (an+bn)*8);
+    if(an >= bn) mul_u52_dispatch((sb_pvec)tp, (sb_cpvec)a, (sb_cpvec)b, an*8, bn*8, sc);
+    else         mul_u52_dispatch((sb_pvec)tp, (sb_cpvec)b, (sb_cpvec)a, bn*8, an*8, sc);
+    const auto tail=u52_sub_canon((sb_pvec)out,(sb_cpvec)out,(sb_cpvec)tp,(an+bn)*8,sb_zero());
+    alignas(64) int64_t carry[8];sb_store((sb_pvec)carry,tail);
+    if constexpr(SBN3_CHECK_SMALL)require(carry[7]==0 || carry[7]==-1,SBN3_FATAL_MATH,"DC product borrow");
+    return unsigned(-carry[7]);
 }
 
 // ---- 2n/n recursive division (mpn_dcpi1_div_qr_n analogue), returns qh ----
@@ -48,15 +51,13 @@ static int blk_dcpi1_div_qr_n(sb_limb* qp, sb_limb* np, const sb_limb* dp, uint6
     // high half quotient: divide top 2hi blocks by top hi blocks of d
     if(hi < dc_leaf_blocks) qh = div2b_core(qp + 8*lo, np + 8*(2*lo), 2*hi, dp + 8*lo, hi, V18, 3);
     else                  qh = blk_dcpi1_div_qr_n(qp + 8*lo, np + 8*(2*lo), dp + 8*lo, hi, V18, tp,space);
-    blk_mul(tp, qp + 8*lo, hi, dp, lo,space);             // Qhi * Dlo  (n blocks)
-    cy = block_sub_n(np + 8*lo, tp, n);
+    cy = blk_mul_sub(np + 8*lo,tp, qp + 8*lo, hi, dp, lo,space);
     if(qh) cy += block_sub_n(np + 8*n, dp, lo);
     while(cy){ qh -= block_sub_1(qp + 8*lo, hi); cy -= block_add_n(np + 8*lo, dp, n); }
     // low half quotient: divide np[hi..hi+2lo) by top lo blocks of d
     if(lo < dc_leaf_blocks) ql = div2b_core(qp, np + 8*hi, 2*lo, dp + 8*hi, lo, V18, 3);
     else                  ql = blk_dcpi1_div_qr_n(qp, np + 8*hi, dp + 8*hi, lo, V18, tp,space);
-    blk_mul(tp, dp, hi, qp, lo,space);                    // Dhi(low hi) * Qlo  (n blocks)
-    cy = block_sub_n(np, tp, n);
+    cy = blk_mul_sub(np,tp, dp, hi, qp, lo,space);
     if(ql) cy += block_sub_n(np + 8*lo, dp, hi);
     while(cy){ block_sub_1(qp, lo); cy -= block_add_n(np, dp, n); }
     return qh;
@@ -71,8 +72,7 @@ static int blk_chunk_divide(sb_limb* qp, sb_limb* np, uint64_t c, const sb_limb*
     const uint64_t k = dn - c;
     int qh = blk_dcpi1_div_qr_n(qp, np + 8*k, dp + 8*k, c, V18, tp,space);   // top 2c / top c of d
     if(c != dn){
-        blk_mul(tp, qp, c, dp, k,space);                       // Q * Dlow  (dn blocks)
-        unsigned cy = block_sub_n(np, tp, dn);
+        unsigned cy = blk_mul_sub(np,tp, qp, c, dp, k,space);
         if(qh) cy += block_sub_n(np + 8*c, dp, k);
         while(cy){ qh -= block_sub_1(qp, c); cy -= block_add_n(np, dp, dn); }
     }

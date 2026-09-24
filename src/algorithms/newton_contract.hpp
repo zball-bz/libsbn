@@ -35,10 +35,10 @@ constexpr size_t rsqrt_ring_min(size_t m) noexcept {
 constexpr size_t division_ring_min(size_t m) noexcept {
     return 2 * m + guard_words + 2;
 }
-// Mathematical minimum, not the currently reserved physical layout.
-// Standalone services write the last rung directly into caller output.
-// Earlier rungs need only predecessor precision; seed-only programs use
-// stack-local seed storage and need no value ping-pong arrays.
+// Mathematical predecessor support, independently of its placement.
+// Reciprocal ladders keep it in caller output; algorithms still using
+// separate predecessor buffers can use this bound. Seed-only programs
+// need no separate value arrays.
 constexpr size_t minimum_approximation_words(size_t target, size_t seed_limit) noexcept {
     return target <= seed_limit ? 0 : next_precision(target) + 1;
 }

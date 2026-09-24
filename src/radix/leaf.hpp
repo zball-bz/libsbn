@@ -44,6 +44,11 @@ bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const Dig
 // 52 * u52_digits bits of each fraction are used (truncation toward zero).
 void extract_words(uint64_t *words, const uint64_t *const fraction[8], unsigned limbs, unsigned u52_digits,
                    unsigned rounds, const DigitPlan &) noexcept;
+// Up to eight fragments: write 64 digit bytes plus first/overlap words per
+// active lane. All input reads finish before output, which is disjoint from
+// the two side arrays. Inactive input lanes are nullptr, as for extract_words.
+void emit_fragments(uint8_t *out,uint64_t *first,uint64_t *overlap,const uint64_t *const fraction[8],
+                    unsigned limbs,unsigned u52_digits,unsigned count,const DigitPlan &) noexcept;
 // Scalar references (the authority of the leaf gate).
 void emit_words_reference(uint8_t *out, const uint64_t *words, size_t count, const DigitPlan &) noexcept;
 bool parse_words_reference(uint64_t *words, const uint8_t *digits, size_t count, const DigitPlan &) noexcept;

@@ -1,30 +1,32 @@
 #pragma once
 #include "sbn3/newton.h"
 #include "algorithms/newton_limits.hpp"
+#include "product/window_group.hpp"
 namespace sbn::v3::newton_detail {
 inline constexpr uint64_t plan_magic = 0x53424e334e575431ULL;
-struct Choice {
-    unsigned np, algorithm, workers;
-    int T;
-    size_t ring;
+inline constexpr uint64_t dyadic_plan_magic = 0x53424e3344595131ULL;
+struct DyadicPlan {
+    uint64_t marker=dyadic_plan_magic;
+    size_t n=0,bytes=0;
+    unsigned recipe=0,timing=0; // 0 word quotient, 1 u52 quotient, 2 local refinement
 };
+using Choice=product::WindowGroupChoice;
 struct Plan {
     uint64_t marker = plan_magic, seal = 0;
     sbn3_newton_options options{};
     sbn3_newton_info info{};
     Choice choices[newton_limits::stages]{};
-    unsigned choice_count = 0;
+    // For local plans, choices' object bytes hold packed product records;
+    // choice_count remains zero. These records are copied/decoded, never
+    // interpreted as WindowGroupChoice objects.
+    unsigned choice_count = 0,local_steps = 0;
     size_t shared_offset = 0, work1_offset = 0;
     size_t product_pool_offset = 0, product_pool_bytes = 0;
     bool compact = false;
+    bool local = false;
 };
 static_assert(sizeof(Plan) <= sizeof(sbn3_newton_plan));
-struct Bundle {
-    sbn3_mul_plan producer{}, plans[2]{};
-    sbn3_product_info producer_info{}, infos[2]{};
-    sbn3_spectrum_desc future{};
-    unsigned count = 0;
-};
+using Bundle=product::WindowGroupPlans;
 enum class Cycle { Inverse, Rsqrt, Division };
 bool choose_cycle(Plan &, Cycle, size_t m, size_t n, unsigned index, bool replay, Bundle &);
 double cycle_cost(Cycle, const Bundle &, bool deep);

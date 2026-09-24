@@ -47,6 +47,13 @@ sbn3_query_result format_tree_begin(unsigned base, unsigned workers, uint64_t la
     if(workers==1)p.frontier_limbs=std::max(p.frontier_limbs,policy.ring_node_limbs);
     for (uint64_t n = 1; n <= group_fragments; ++n)
         p.group_limbs[n] = node_limbs(p.base, n);
+    for(unsigned n=2;n<=group_fragments;++n){
+        const unsigned k=split_level(n),left=1u<<k,right=n-left;
+        const size_t a=p.group_limbs[n]-(size_t(p.base.twos)<<k),b=rail_limbs(p.base,k);
+        if(a*b>=policy.group_u52_work)p.group_u52|=1u<<n;
+        p.group_work[n]=std::max({p.group_work[left],p.group_work[right],
+                                  p.group_u52>>n&1?u52::scratch_bytes(a,b):size_t(0)});
+    }
     const uint64_t leaf_bits = power_bits(p.base.base_bound, fragment_digits + word_digits) + guard_bits;
     p.fragment_u52 = unsigned((leaf_bits + 51) / 52);
     // The leaf kernel reads whole u52 digits from the top of the fragment fraction.
@@ -67,6 +74,25 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
     // Everything above the window wraps at least one limb below it when the ring holds the rest of the product.
     const size_t wrapped_ring = c.split_limbs + rail_size - c.window_limbs + 1;
     const unsigned product_workers = c.limbs < policy.wide_product_limbs ? std::min(w, 8u) : w;
+    auto middle = [&]() {
+        if(workers!=1 || w!=1 || rail_size<32 || rail_size>832 ||
+           c.split_limbs<rail_size || c.split_limbs>8192)return false;
+        const size_t a=(64*rail_size+51)/52,b=(64*c.split_limbs+51)/52;
+        const uint64_t start=52*(a-5),window=64*c.window_limbs;
+        if(window<start+128 || 64*(c.window_limbs+c.right_limbs)>52*b)return false;
+        // The normal operation is already fixed. Its rare exact repair is
+        // a direct U52 product with planned scratch, not an ordinary product
+        // search whose FFT tables would never be used on the normal path.
+        out.product.an=c.split_limbs;out.product.bn=rail_size;
+        out.product.output_limbs=c.split_limbs+rail_size;
+        out.middle_words=(52*(b-a+7)+63)/64;
+        out.middle_shift=window-start;
+        out.middle_bytes=u52::middle_guard_scratch_bytes(rail_size,c.split_limbs);
+        out.product.work_bytes=u52::scratch_bytes(c.split_limbs,rail_size);
+        return true;
+    };
+    const bool one_use_window=!repeated && count<=2 && c.right_limbs<=rail_size;
+    if(one_use_window && middle())return SBN3_SUPPORTED;
     ProductShape linear{};
     ProductProgramPlan linear_plan{};
     bool have_linear = false;
@@ -77,19 +103,7 @@ sbn3_query_result FormatTreePlan::split_plan(const NodeClass &c, unsigned w, uin
         have_linear = true;
     }
     const bool short_middle=linear_plan.info.algorithm==SBN3_MUL_U52;
-    const bool one_use_window=!repeated && count<=2 && c.right_limbs<=rail_size;
-    if(workers==1 && w==1 && have_linear && (short_middle || one_use_window) &&
-       rail_size>=32 && rail_size<=832 && c.split_limbs>=rail_size && c.split_limbs<=8192){
-        const size_t a=(64*rail_size+51)/52,b=(64*c.split_limbs+51)/52;
-        const uint64_t start=52*(a-5),window=64*c.window_limbs;
-        if(window>=start+128 && 64*(c.window_limbs+c.right_limbs)<=52*b){
-            out.product=linear;
-            out.middle_words=(52*(b-a+7)+63)/64;
-            out.middle_shift=window-start;
-            out.middle_bytes=u52::middle_guard_scratch_bytes(rail_size,c.split_limbs);
-            return SBN3_SUPPORTED;
-        }
-    }
+    if(have_linear && short_middle && middle())return SBN3_SUPPORTED;
     bool cyclic = w == 1 && policy.cyclic_products &&
                   rail_product_plan(c.split_limbs, rail_size, std::max(c.split_limbs, wrapped_ring), out.cyclic,
                                     repeated?0:count);
@@ -166,6 +180,7 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
     c.frontier = n <= group_fragments || c.limbs < frontier_limbs;
     if (n <= group_fragments) {
         c.group = true;
+        c.region_bytes=group_work[n];
     } else {
         c.level = split_level(n);
         const uint64_t left = uint64_t(1) << c.level, right = n - left;
@@ -200,7 +215,7 @@ int FormatTreePlan::classify(uint64_t n) noexcept {
         status = SBN3_QUERY_CAPACITY;
         return -1;
     }
-    classes[class_count] = c;
+    classes.emplace(class_count,c);
     return int(class_count++);
 }
 int FormatTreePlan::add_tree(uint64_t fragments) noexcept {
@@ -213,7 +228,7 @@ int FormatTreePlan::add_tree(uint64_t fragments) noexcept {
     const int root = classify(fragments);
     if (root < 0)
         return -1;
-    trees[tree_count] = {};
+    ::new (&trees[tree_count]) TreeShape{};
     trees[tree_count].root = root;
     return int(tree_count++);
 }
@@ -245,13 +260,14 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
     frontier_region_bytes = 0;
     for (unsigned j = 0; j < class_count; ++j) {
         auto &c = classes[j];
-        if (!c.frontier || c.group)
+        if (!c.frontier)
             continue;
-        const auto rc = split_plan(c, 1, uses[j], c.split);
-        if (rc != SBN3_SUPPORTED)
-            return status = rc;
-        c.region_bytes = c.rest_offset + align_to(std::max({c.split.episode_bytes(), classes[c.left].region_bytes,
+        if(!c.group){
+            const auto rc = split_plan(c, 1, uses[j], c.split);
+            if (rc != SBN3_SUPPORTED)return status = rc;
+            c.region_bytes = c.rest_offset + align_to(std::max({c.split.episode_bytes(), classes[c.left].region_bytes,
                                                            classes[c.right].region_bytes}), 64);
+        }
         frontier_region_bytes = std::max(frontier_region_bytes, c.region_bytes);
     }
     programs = {};
@@ -301,7 +317,7 @@ sbn3_query_result FormatTreePlan::finish() noexcept {
             count[c.right] += count[j];
             if (tree.stage_count == max_stages)
                 return status = SBN3_QUERY_CAPACITY;
-            auto &s = tree.stages[tree.stage_count++];
+            auto &s = tree.stages.emplace(tree.stage_count++);
             s.node_class = j;
             s.count = uint32_t(count[j]);
             s.first = first;
@@ -331,7 +347,7 @@ size_t FormatTreePlan::work_bytes(int t) const noexcept {
     const auto &tree = trees[t];
     return align_to(size_t(tree.top_nodes) * sizeof(FormatInstance), 64) + align_to(size_t(tree.tasks) * sizeof(FormatTask), 64) +
            align_to(root_storage_words(t)*8,64) +
-           std::max(tree.episode_bytes,size_t(workers) * align_to(frontier_region_bytes, 64));
+           std::max(tree.episode_bytes,size_t(classes[tree.root].group?1:workers) * align_to(frontier_region_bytes, 64));
 }
 uint64_t *format_tree_root_buffer(FormatTree &t,int index) noexcept {
     const auto &p=*t.plan;const auto &tree=p.trees[index];const auto &c=p.classes[tree.root];
@@ -378,7 +394,7 @@ void format_tree_bind(FormatTree &t, const FormatTreePlan &plan, const uint8_t *
     for (unsigned j = 0; j < plan.class_count; ++j)
         ::new (&cyclic[j]) RailProduct{};
     auto prepare = [&](const NodeClass &c, const SplitPlan &split, ProductProgram &slot) {
-        const unsigned index = unsigned(&c - plan.classes);
+        const unsigned index = unsigned(plan.classes.index_of(&c));
         if (split.ring.enabled || split.middle_words)
             return; // replayed below, bound stage by stage at run time
         if (!split.cyclic.enabled)
@@ -410,12 +426,12 @@ struct Run {
     uint8_t *out;
     uint64_t *first, *overlap;
 };
-void leaf_group(Run &run, const NodeClass &c, const uint64_t *y, uint64_t fragment) noexcept {
+void leaf_group(Run &run, const NodeClass &c, const uint64_t *y, uint64_t fragment,Frame *scratch) noexcept {
     auto &t = *run.tree;
 #ifdef SBN3_RADIX_TRACE
-    trace_add(trace_rows[&c - t.plan->classes].count, 1);
+    trace_add(trace_rows[t.plan->classes.index_of(&c)].count, 1);
 #endif
-    SBN3_RADIX_SPAN(span, trace_rows[&c - t.plan->classes].leaf_ns);
+    SBN3_RADIX_SPAN(span, trace_rows[t.plan->classes.index_of(&c)].leaf_ns);
     const auto &p = *t.plan;
     const uint64_t *lane[8]{};
     uint64_t pool[group_fragments - 1][group_right_limbs];
@@ -435,7 +451,10 @@ void leaf_group(Run &run, const NodeClass &c, const uint64_t *y, uint64_t fragme
             const size_t qn = p.rail.limbs[k];
             // the top twos * 2^k limbs only reach limbs above the window
             const size_t used_limbs = it.limbs - (size_t(p.base.twos) << k);
-            sbn3_mul_basecase(z, used_limbs + qn, it.y, used_limbs, t.rail[k], qn);
+            if(p.group_u52>>it.n&1){
+                require(scratch,SBN3_FATAL_WORKSPACE,"radix leaf scratch");
+                u52::multiply(z,it.y,used_limbs,t.rail[k],qn,*scratch);
+            }else sbn3_mul_basecase(z, used_limbs + qn, it.y, used_limbs, t.rail[k], qn);
             uint64_t *r = pool[used++];
             take_window(r, right_limbs, z, used_limbs + qn, window_bit(p.base, it.limbs, right_limbs, k));
             stack[depth++] = {r, right_limbs, right, it.slot + left};
@@ -446,14 +465,8 @@ void leaf_group(Run &run, const NodeClass &c, const uint64_t *y, uint64_t fragme
             break;
         it = stack[--depth];
     }
-    alignas(64) uint64_t words[8 * (fragment_words + 1)];
-    extract_words(words, lane, unsigned(p.group_limbs[1]), p.fragment_u52, fragment_words + 1, t.digits);
-    for (unsigned u = 0; u < c.fragments; ++u) {
-        const uint64_t *w = words + u * (fragment_words + 1);
-        emit_words(run.out + (fragment + u) * fragment_digits, w, fragment_words, t.digits);
-        run.first[fragment + u] = w[0];
-        run.overlap[fragment + u] = w[fragment_words];
-    }
+    emit_fragments(run.out+fragment*fragment_digits,run.first+fragment,run.overlap+fragment,lane,
+                   unsigned(p.group_limbs[1]),p.fragment_u52,unsigned(c.fragments),t.digits);
 }
 // The right child of a node: the window of y * rail[level].
 void split(Run &run, int index, const SplitPlan &plan, const ProductProgram &program, sbn3_mul_binding *consumer,
@@ -475,18 +488,11 @@ void split(Run &run, int index, const SplitPlan &plan, const ProductProgram &pro
             take_window(right,c.right_limbs,z,plan.middle_words,plan.middle_shift);
             return;
         }
-        // Rare exact repair. Prepare it only here; it is otherwise dead
-        // work, especially for the one-use FFT shapes of ragged nodes.
-        ProductProgramPlan pp{};sbn3_mul_options o{};o.workers=plan.product.requested;
-        require(product_program_chosen(plan.product.an,plan.product.bn,o,plan.product.choice,pp)==SBN3_SUPPORTED,
-                SBN3_FATAL_MATH,"radix middle repair plan");
+        // The exact repair has no tables or runtime plan. Its scratch was
+        // included in the episode maximum at query time.
         auto *fallback=episode+align_to(plan.product.output_limbs*8,64);
-        auto repair=t.roots[sbn3_team_first_worker(scope)]->borrowed_view(fallback,plan.product.temporary_work_bytes());
-        auto tables=repair.subframe(align_to(pp.prepared_bytes,128)+256,128);
-        const auto exact=product_program_prepare(pp,tables);
-        auto scratch=repair.subframe(pp.info.workspace_bytes,pp.info.workspace_alignment);
-        product_program_execute(exact,scratch,scope,{y,plan.product.an},{t.rail[c.level],plan.product.bn},
-                                {z,plan.product.output_limbs});
+        auto repair=t.roots[sbn3_team_first_worker(scope)]->borrowed_view(fallback,plan.product.work_bytes);
+        u52::multiply(z,y,plan.product.an,t.rail[c.level],plan.product.bn,repair);
         memcpy(right,z+window,c.right_limbs*8);
         return;
     }
@@ -573,7 +579,10 @@ void serial_node(Run &run, int index, const uint64_t *y, uint8_t *region, uint64
     const auto &p = *t.plan;
     const auto &c = p.classes[index];
     if (c.group) {
-        leaf_group(run, c, y, fragment);
+        if(c.region_bytes){
+            auto scratch=t.roots[sbn3_team_first_worker(scope)]->borrowed_view(region,c.region_bytes);
+            leaf_group(run,c,y,fragment,&scratch);
+        }else leaf_group(run,c,y,fragment,nullptr);
         return;
     }
     auto *right = reinterpret_cast<uint64_t *>(region);
@@ -673,7 +682,12 @@ uint64_t format_tree_run(FormatTree &t, int tree_index, const uint64_t *y, uint8
             t.work.bytes);
     Run run{&t, out, first, overlap};
     if (c.group) {
-        leaf_group(run, c, y, 0);
+        if(c.region_bytes){
+            auto *region=static_cast<uint8_t *>(t.work.data)+align_to(size_t(tree.tasks)*sizeof(FormatTask),64)+
+                         align_to(p.root_storage_words(tree_index)*8,64);
+            auto scratch=Frame::borrow(*t.arena,t.work,region,c.region_bytes);
+            leaf_group(run,c,y,0,&scratch);
+        }else leaf_group(run,c,y,0,nullptr);
     } else {
         struct alignas(64) RootStorage {
             unsigned char bytes[(sizeof(Frame) + 63) & ~size_t(63)];

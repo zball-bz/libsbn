@@ -20,11 +20,11 @@ bool can_apply(const sbn3_mul_plan &opaque,const sbn3_spectrum *cache,unsigned t
 sbn3_spectrum_desc planned_spectrum(const ProductPlan &q,unsigned frontier,uint64_t generation){
     const auto &g=q.arithmetic.transform;const auto &i=q.execution.info;sbn3_spectrum_desc d{};
     d.basis_id=i.basis_id;d.backend_id=PN;d.generation=generation;d.np=PN;d.trunk_bits=g.T;d.frontier=frontier;
-    d.format_version=i.algorithm==SBN3_MUL_FLAT?spectrum_contract::flat_lazy64_format:spectrum_contract::blocked48_format;d.C=g.C;d.M2=g.M2;d.transform_trunks=g.N;
+    d.format_version=spectrum_format(q);d.C=g.C;d.M2=g.M2;d.transform_trunks=g.N;
     d.live_slots=g.lbv;d.written_slots=g.lbw;d.source_limbs=q.recipe.lengths[0];d.source_trunks=(d.source_limbs*64+g.T-1)/g.T;
-    d.block_stride=i.algorithm==SBN3_MUL_FLAT?64:g.bstride;
+    d.block_stride=i.algorithm==SBN3_MUL_FLAT?(d.format_version==spectrum_contract::flat_packed48_format?48:64):g.bstride;
     for(unsigned k=0;k<PN;++k)d.scale[k]=q.arithmetic.scale_a[k];
-    d.storage_bytes=q.recipe.spectrum_bytes;d.table_bytes=owned_table_bytes(i.table_entries,i.factor_levels,g.M2,i.algorithm==SBN3_MUL_FLAT);d.plane_bytes=i.algorithm==SBN3_MUL_FLAT?g.lbw*64+128:g.plane_bytes;
+    d.storage_bytes=q.recipe.spectrum_bytes;d.table_bytes=owned_table_bytes(i.table_entries,i.factor_levels,g.M2,i.algorithm==SBN3_MUL_FLAT);d.plane_bytes=i.algorithm==SBN3_MUL_FLAT?g.lbw*d.block_stride+128:g.plane_bytes;
     d.seal=descriptor_seal(d);return d;
 }
 sbn3_query_result query_spectrum(const sbn3_mul_plan &opaque,unsigned frontier,uint64_t generation,sbn3_spectrum_desc &out){
@@ -64,7 +64,7 @@ void reserve_plan_spectrum(const sbn3_mul_plan &opaque,unsigned frontier,uint64_
         sp=::new(mem.allocate(sizeof(Spectrum)))Spectrum{};sp->owner=&arena;sp->storage=storage;
         sp->primes.init(mem,p::clog2(i.table_entries));
         if(i.algorithm!=SBN3_MUL_FLAT)sp->primes.factors_for(mem,g.M2,g.lgC);
-        for(unsigned k=0;k<PN;++k)sp->planes[k]=static_cast<uint8_t *>(mem.allocate(i.algorithm==SBN3_MUL_FLAT?g.lbw*64+128:g.plane_bytes+128));
+        for(unsigned k=0;k<PN;++k)sp->planes[k]=static_cast<uint8_t *>(mem.allocate(i.algorithm==SBN3_MUL_FLAT?g.lbw*(spectrum_format(plan)==spectrum_contract::flat_packed48_format?48:64)+128:g.plane_bytes+128));
         static uint64_t sequence=0;auto &d=sp->desc;d=planned_spectrum(plan,frontier,generation);
         d.instance_id=__atomic_add_fetch(&sequence,1,__ATOMIC_RELAXED);
         require(d.instance_id,SBN3_FATAL_LIFETIME,"spectrum sequence exhausted");
@@ -79,7 +79,7 @@ void reserve_spectrum(sbn3_mul_binding *opaque,unsigned frontier,uint64_t genera
 }
 void begin_spectrum(Binding &b,Spectrum &sp,sbn3_const_limbs a){
     idle_owner(b);const auto &g=b.plan.arithmetic.transform;
-    require(sp.owner==b.run.arena && compatible(sp.desc,g,a.count) && sp.desc.live_slots==g.lbv && sp.desc.written_slots==g.lbw &&
+    require(sp.owner==b.run.arena && compatible(sp.desc,g,a.count) && sp.desc.format_version==spectrum_format(b.plan) && sp.desc.live_slots==g.lbv && sp.desc.written_slots==g.lbw &&
         !memcmp(sp.desc.scale,b.plan.arithmetic.scale_a,sizeof b.plan.arithmetic.scale_a),SBN3_FATAL_ARGUMENT,"spectrum producer representation");
     valid_span(a.data,bytes_for(a.count,8),"spectrum input");require(!(reinterpret_cast<uintptr_t>(a.data)&7),SBN3_FATAL_ARGUMENT,"spectrum input alignment");
     for(const auto &l:{b.run.work_memory,b.run.table_memory,b.run.team->storage,sp.storage})
@@ -96,7 +96,7 @@ void prepare(sbn3_mul_binding *opaque,sbn3_const_limbs a,unsigned frontier,uint6
              sbn3_arena &arena,const sbn3_lease &storage,sbn3_spectrum **out){
     reserve_spectrum(opaque,frontier,generation,arena,storage,out);compute_spectrum(opaque,*out,a);
 }
-struct ProductCall {Binding *b;sbn3_product_inputs inputs;sbn3_limbs output;};
+struct ProductCall {Binding *b;sbn3_product_inputs inputs;sbn3_limbs output;bool fresh_inputs=false;};
 void product_rows(Binding &b,sbn3_team_scope *s,sbn3_const_limbs value,uint8_t *const *dest,
                   const uint64_t *scale,uint64_t *output,bool mid=false){
     auto &c=b.context;const auto &g=b.plan.arithmetic.transform;
@@ -109,7 +109,7 @@ void product_rows(Binding &b,sbn3_team_scope *s,sbn3_const_limbs value,uint8_t *
 void product_action(void *argument,sbn3_team_scope *scope){
     auto &x=*static_cast<ProductCall *>(argument);auto &b=*x.b;auto &c=b.context;
     const auto &e=b.plan.execution;const auto &i=e.info;const auto &g=b.plan.arithmetic.transform;const auto &r=b.plan.recipe;
-    if(i.algorithm==SBN3_MUL_FLAT){execute_flat(b,scope,x.inputs,x.output,true);return;}
+    if(i.algorithm==SBN3_MUL_FLAT){execute_flat(b,scope,x.inputs,x.output,true,nullptr,x.fresh_inputs);return;}
     require_scope_leader(scope);require(scope->team==b.run.team && scope->width>=i.workers,SBN3_FATAL_TEAM,"product scope width");
     sbn3_team_scope sub{scope->team,scope->first,i.workers,false,scope->epoch};scope=&sub;
     uint32_t expected=0;require(__atomic_compare_exchange_n(&b.active,&expected,1,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED),SBN3_FATAL_LIFETIME,"concurrent binding execution");
@@ -163,23 +163,69 @@ void product_action(void *argument,sbn3_team_scope *scope){
     const uint64_t t4=tick_ns();b.last_stage_ns[0]=t1-t0;b.last_stage_ns[1]=t2-t1;b.last_stage_ns[2]=t3-t2;b.last_stage_ns[3]=t4-t3;
     ++b.executions;__atomic_store_n(&b.active,0,__ATOMIC_RELEASE);
 }
-void product_execute(sbn3_mul_binding *opaque,sbn3_team_scope *scope,const sbn3_product_inputs &in,sbn3_limbs out){
+bool fresh_supported(const ProductPlan &q,size_t an,size_t bn){
+    const auto &r=q.recipe;const auto &g=q.arithmetic.transform;const auto &i=q.execution.info;
+    return LEAF==8&&i.algorithm==SBN3_MUL_FLAT&&i.workers==1&&g.ring_rn&&
+        r.kind==SBN3_PRODUCT_MUL&&r.cached_mask==1&&!r.window.width_bits&&
+        an==r.lengths[0]&&bn&&bn<=g.ring_rn&&
+        p::plan_T_ok(g.T,(an*64+g.T-1)/g.T,(bn*64+g.T-1)/g.T)&&
+        i.per_worker_bytes>=(g.M2+16)*64;
+}
+bool product_fresh_supported(const sbn3_mul_plan &opaque,size_t an,size_t bn){
+    return fresh_supported(load_plan(opaque),an,bn);
+}
+unsigned live_contract(const ProductPlan &q){
+    return LEAF==8&&q.recipe.kind==SBN3_PRODUCT_MUL&&q.recipe.cached_mask==1&&
+        q.arithmetic.transform.ring_rn&&!q.execution.info.borrow_output?program_consume_inputs:0u;
+}
+unsigned product_live_contract(const sbn3_mul_plan &opaque){return live_contract(load_plan(opaque));}
+size_t scratch_bytes(const ProductPlan &q){
+    return live_contract(q)&&q.execution.info.algorithm==SBN3_MUL_FLAT&&q.execution.info.workers==1?
+        q.execution.info.pool_bytes:0;
+}
+size_t product_scratch_bytes(const sbn3_mul_plan &opaque){return scratch_bytes(load_plan(opaque));}
+void with_product_scratch(sbn3_mul_binding *opaque,void *arg,void (*fn)(void *,Frame &)){
+    auto &b=binding(opaque);idle_owner(b);const size_t bytes=scratch_bytes(b.plan);
+    require(bytes&&fn,SBN3_FATAL_ARGUMENT,"idle product scratch support");
+    uint32_t expected=0;
+    require(__atomic_compare_exchange_n(&b.active,&expected,1,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED),
+            SBN3_FATAL_LIFETIME,"idle product scratch ownership");
+    {auto frame=b.root.borrowed_view(b.run.pool,bytes);fn(arg,frame);}
+    __atomic_store_n(&b.active,0,__ATOMIC_RELEASE);
+}
+template<bool Live=false,bool Fresh=false>void product_execute_impl(sbn3_mul_binding *opaque,sbn3_team_scope *scope,const sbn3_product_inputs &in,sbn3_limbs out){
     auto &b=binding(opaque);if(!scope)idle_owner(b);else require_scope_leader(scope);
     const auto &r=b.plan.recipe;const size_t capacity=sbn3_mul_output_capacity(&b.plan.execution.info),rb=bytes_for(capacity,8);
+    if constexpr(Live)require(r.kind==SBN3_PRODUCT_MUL&&r.cached_mask==1&&b.plan.arithmetic.transform.ring_rn,
+                              SBN3_FATAL_ARGUMENT,"live cached cyclic product");
+    if constexpr(Fresh)require(fresh_supported(b.plan,in.a.count,in.b.count),
+                              SBN3_FATAL_ARGUMENT,"fresh cached-binding support");
     require(out.capacity>=capacity && !(reinterpret_cast<uintptr_t>(out.data)&63),SBN3_FATAL_ARGUMENT,"product output span");valid_span(out.data,rb,"product output");
     const sbn3_const_limbs values[4]{in.a,in.b,in.a1,in.b1};
-    for(unsigned k=0;k<4;++k){const bool absent=(k==0 && (r.cached_mask&1)) || (k==2 && (r.cached_mask&2)) ||
+    for(unsigned k=0;k<4;++k){const bool absent=(k==0 && (r.cached_mask&1) && !Fresh) || (k==2 && (r.cached_mask&2)) ||
             (k==1 && r.kind==SBN3_PRODUCT_SQR) || (k>=2 && r.kind!=SBN3_PRODUCT_MAC2);
-        require(values[k].count==(absent?0:r.lengths[k]) && (!absent || !values[k].data),SBN3_FATAL_ARGUMENT,"product input lengths");
+        const bool fits=Fresh&&k==1?values[k].count&&values[k].count<=b.plan.arithmetic.transform.ring_rn:
+            Live&&k==1?values[k].count&&values[k].count<=r.lengths[k]:values[k].count==(absent?0:r.lengths[k]);
+        require(fits && (!absent || !values[k].data),SBN3_FATAL_ARGUMENT,"product input lengths");
         if(!absent){const size_t nb=bytes_for(values[k].count,8);valid_span(values[k].data,nb,"product input");
-            require(!(reinterpret_cast<uintptr_t>(values[k].data)&7) && !overlaps(values[k].data,nb,out.data,rb),SBN3_FATAL_ARGUMENT,"product input alias");}}
+            const bool consumed=(Live||Fresh)&&k==1&&(live_contract(b.plan)&program_consume_inputs);
+            require(!(reinterpret_cast<uintptr_t>(values[k].data)&7) && (consumed||!overlaps(values[k].data,nb,out.data,rb)),SBN3_FATAL_ARGUMENT,"product input alias");}}
     auto no_alias=[&](const sbn3_lease &l){require(!overlaps(l.data,l.bytes,out.data,rb),SBN3_FATAL_ARGUMENT,"product output/resource alias");
         for(const auto &v:values)if(v.count)require(!overlaps(l.data,l.bytes,v.data,v.count*8),SBN3_FATAL_ARGUMENT,"product input/resource alias");};
     for(const auto &l:{b.run.table_memory,b.run.work_memory,b.run.team->storage})no_alias(l);
     for(unsigned k=1;k<b.run.team->width;++k)no_alias(b.run.team->stacks[k]);
     for(auto *s:b.run.cached)if(s){require(__atomic_load_n(&spectrum(s).state,__ATOMIC_ACQUIRE)==spectrum_contract::ready,SBN3_FATAL_LIFETIME,"spectrum not completed");no_alias(spectrum(s).storage);}
     if constexpr(LEAF!=8){Execute call{&b,in.a,in.b,out};if(scope)execute_action(&call,scope);else sbn3_team_run(b.run.team,execute_action,&call);return;}
-    ProductCall call{&b,in,out};if(scope)product_action(&call,scope);else sbn3_team_run(b.run.team,product_action,&call);
+    ProductCall call{&b,in,out,Fresh};if(scope)product_action(&call,scope);else sbn3_team_run(b.run.team,product_action,&call);
+}
+void product_execute(sbn3_mul_binding *b,sbn3_team_scope *s,const sbn3_product_inputs &in,sbn3_limbs out){
+    product_execute_impl(b,s,in,out);
+}
+void product_execute_live(sbn3_mul_binding *b,sbn3_team_scope *s,const sbn3_product_inputs &in,sbn3_limbs out){
+    product_execute_impl<true>(b,s,in,out);
+}
+void product_execute_fresh(sbn3_mul_binding *b,sbn3_team_scope *s,const sbn3_product_inputs &in,sbn3_limbs out){
+    product_execute_impl<false,true>(b,s,in,out);
 }
 void compute_square(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_limbs a,sbn3_limbs out){
     auto &b=binding(opaque);idle_owner(b);const auto &r=b.plan.recipe;
@@ -206,7 +252,7 @@ void compute_multiply(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_
     require(out.capacity>=capacity && !(uintptr_t(out.data)&63),SBN3_FATAL_ARGUMENT,"build/apply output");
     valid_span(out.data,bytes,"build/apply output");valid_span(y.data,bytes_for(y.count,8),"build/apply B");
     require(!(uintptr_t(y.data)&7) && !overlaps(a.data,a.count*8,out.data,bytes) &&
-            !overlaps(y.data,y.count*8,out.data,bytes),SBN3_FATAL_ARGUMENT,"build/apply input/output alias");
+            ((live_contract(b.plan)&program_consume_inputs)||!overlaps(y.data,y.count*8,out.data,bytes)),SBN3_FATAL_ARGUMENT,"build/apply input/output alias");
     auto &sp=const_cast<Spectrum &>(spectrum(handle));
     auto disjoint=[&](const sbn3_lease &l){
         require(!overlaps(l.data,l.bytes,out.data,bytes) && !overlaps(l.data,l.bytes,y.data,y.count*8),

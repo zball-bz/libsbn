@@ -1,4 +1,5 @@
 #include "radix/programs.hpp"
+#include "radix/power_bank.hpp"
 #include "value/parallel_limbs.hpp"
 #include "common/identity.hpp"
 #include "product/cost_model.hpp"
@@ -303,14 +304,16 @@ sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &
         return SBN3_QUERY_CAPACITY;
     rail.total_limbs = 0;
     rail.setup_bytes = 0;
+    rail.fixed_levels=fixed_power(base.odd,0).data?std::min(rail.count,fixed_power_levels):0;
     for (unsigned k = 0; k < rail.count; ++k) {
         rail.limbs[k] = rail_limbs(base, k);
         rail.offset[k] = rail.total_limbs;
-        rail.total_limbs += align_to(rail.limbs[k], 8);
+        if(k>=rail.fixed_levels)rail.total_limbs += align_to(rail.limbs[k], 8);
         rail.service[k] = false;
         rail.square_choice[k] = 0;
     }
     for (unsigned k = 0; k + 1 < rail.count; ++k) {
+        if(k+1<rail.fixed_levels)continue;
         if (rail.limbs[k] <= rail_basecase_limbs)
             continue;
         const unsigned w = square_workers(workers, rail.limbs[k]);
@@ -349,27 +352,30 @@ sbn3_query_result rail_finish(const BaseInfo &base, unsigned workers, RailPlan &
 }
 void rail_build(const BaseInfo &base, const RailPlan &rail, unsigned workers, Arena &arena, sbn3_team &team,
                 sbn3_lease &scratch_lease, uint64_t *storage, const uint64_t **entries) noexcept {
-    for (unsigned k = 0; k < rail.count; ++k)
-        entries[k] = storage + rail.offset[k];
+    for (unsigned k = 0; k < rail.count; ++k){
+        if(k<rail.fixed_levels){
+            const auto power=fixed_power(base.odd,k);
+            require(power.data && power.capacity>=rail.limbs[k]+7,SBN3_FATAL_MATH,"radix fixed power capacity");
+            entries[k]=power.data;
+        }else entries[k] = storage + rail.offset[k];
+    }
     if (!rail.count)
         return;
     // odd^64 by six squarings of a value below 2^6.
-    uint64_t a[8]{}, b[16]{};
-    a[0] = base.odd;
-    size_t n = 1;
-    for (unsigned j = 0; j < 6; ++j) {
-        sbn3_mul_basecase(b, 2 * n, a, n, a, n);
-        n = std::min<size_t>(2 * n, 8);
-        memcpy(a, b, n * 8);
+    if(!rail.fixed_levels){
+        uint64_t a[8]{}, b[16]{};a[0]=base.odd;size_t n=1;
+        for(unsigned j=0;j<6;++j){
+            sbn3_mul_basecase(b,2*n,a,n,a,n);n=std::min<size_t>(2*n,8);memcpy(a,b,n*8);
+        }
+        require(rail.limbs[0]<=8,SBN3_FATAL_MATH,"radix rail seed");
+        memcpy(storage+rail.offset[0],a,rail.limbs[0]*8);
     }
-    require(rail.limbs[0] <= 8, SBN3_FATAL_MATH, "radix rail seed");
-    memcpy(storage + rail.offset[0], a, rail.limbs[0] * 8);
     auto pad = [&](unsigned k, size_t written) { // zero padding up to the capacity
         for (size_t j = written; j < rail.limbs[k]; ++j)
             storage[rail.offset[k] + j] = 0;
     };
-    pad(0, rail.limbs[0]);
     for (unsigned k = 0; k + 1 < rail.count; ++k) {
+        if(k+1<rail.fixed_levels)continue;
         const size_t m = rail.limbs[k], next = rail.limbs[k + 1];
         const uint64_t *q = entries[k];
         uint64_t *out = storage + rail.offset[k + 1];

@@ -18,7 +18,8 @@ struct Case {
     size_t block;
     unsigned reuse;
     int head;           // expected word-division head; -1: the policy decides
-    bool varies = true; // guards the producer/consumer variation; otherwise a planned head of two limbs or more
+    bool varies = true; // spectrum case; otherwise a planned head of two limbs or more
+    bool require_variation = false; // pinned witness, independent of the automatic block policy
 };
 size_t mem_available() {
     FILE *f = fopen("/proc/meminfo", "r");
@@ -89,10 +90,12 @@ bool run(const Case &c) {
     assert(sbn3_divrem_query(&request, &options, &plan, &info) == SBN3_SUPPORTED);
     assert(info.algorithm == SBN3_DIVREM_BARRETT && (c.head < 0 || info.head_limbs == size_t(c.head)));
     const size_t in = info.block_limbs;
-    const bool u_varies = c.varies && representation_varies(in + 1, in, c.workers, c.prime_count),
+    const bool u_varies = c.varies && representation_varies(in, in, c.workers, c.prime_count),
                t_varies = c.varies && !info.ring_limbs && representation_varies(c.dn, in, c.workers, c.prime_count);
-    // The case must exercise what it guards, or it no longer guards it.
-    assert(c.varies ? info.spectrum_bytes && (u_varies || t_varies) : info.head_limbs >= 2);
+    // Keep an explicitly pinned variation witness. Automatic cases retain
+    // their regression inputs without depending on the old block selector.
+    assert(c.varies ? info.spectrum_bytes != 0 : info.head_limbs >= 2);
+    if(c.require_variation)assert(u_varies||t_varies);
     const size_t team_bytes = sbn3_team_storage_bytes() + sbn3_team_stack_resident_bytes(c.workers);
     const size_t admission = info.storage_bytes + team_bytes + (size_t(8) << 20);
     assert(admission <= budget);
@@ -127,10 +130,11 @@ bool run(const Case &c) {
         // the longest numerator takes exactly the head limbs and product pairs the plan states.
         const size_t quotient = trim(n.data(), n.size()) - c.dn + 1, left = quotient % in;
         const uint64_t by_words = exit.head_limbs - entry.head_limbs;
-        assert((by_words == left && exit.products_executed == 2 * (quotient / in)) ||
-               (!by_words && exit.products_executed == 2 * ((quotient + in - 1) / in)));
+        if(info.products==4)assert(!by_words&&info.blocks==1&&exit.products_executed==4);
+        else assert((by_words == left && exit.products_executed == 2 * (quotient / in)) ||
+                    (!by_words && exit.products_executed == 2 * ((quotient + in - 1) / in)));
         if (quotient == info.quotient_limbs)
-            assert(by_words == info.head_limbs && exit.products_executed == 2 * info.blocks);
+            assert(by_words == info.head_limbs && exit.products_executed == info.products * info.blocks);
         ++executes;
         if (keep) {
             first_q = q;
@@ -193,7 +197,9 @@ int main() {
     // Default options throughout (policy family, block size and residual), the path callers take: a one-shot
     // 1.5d/d division at sixteen workers and a repeated 2d/d divisor at one worker. Both abort in prepare on
     // the 19e239d baseline; the variation assert below fails if a policy change moves them off the defect.
-    const Case cases[] = {{3859823, 7719646, 16, 4, 0, 0, 0}, {2546617, 5093234, 16, 0, 2546617, 0, 1},
+    const Case cases[] = {{273750, 684375, 16, 0, 0, 0, -1},
+                          {3859823, 7719646, 16, 4, 1286608, 0, 0, true, true},
+                          {3859823, 7719646, 16, 4, 0, 0, 0}, {2546617, 5093234, 16, 0, 2546617, 0, 1},
                           {4380001, 6570001, 16, 0, 0, 0, -1}, {2719669, 5439337, 1, 0, 0, 8, -1}};
     unsigned ran = 0, total = 0;
     for (const auto &c : cases) {

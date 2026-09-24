@@ -2,6 +2,7 @@
 #include "algorithms/inverse_rung.hpp"
 #include "algorithms/inverse_program.hpp"
 #include "algorithms/inverse_seed.hpp"
+#include "product/backend.hpp"
 using namespace sbn::v3;
 
 static void seed(uint64_t *D,uint64_t *U,size_t n,size_t m,unsigned pattern,int delta){
@@ -100,14 +101,44 @@ static void program_gate(size_t target,unsigned workers,unsigned pattern){
         handles.push_back(cache);steps.push_back({m,n,req.cyclic_limbs,product,cache,f.guarded(req.cyclic_limbs),f.guarded(req.cyclic_limbs)});
         m=n;
     }
-    auto *d=f.guarded(target),*out=f.guarded(target+1),*v0=f.guarded(target+1),*v1=f.guarded(target+1);
+    auto *d=f.guarded(target),*out=f.guarded(target+1);
     for(size_t j=0;j<target;++j)d[j]=pattern==0?UINT64_MAX:pattern==1?0:random_word();d[target-1]|=uint64_t(1)<<63;
-    std::vector<uint64_t> before(d,d+target);const InverseProgram program{target,seed_size,steps.size(),steps.data(),{v0,v1}};
+    std::vector<uint64_t> before(d,d+target);const InverseProgram program{target,seed_size,steps.size(),steps.data()};
     allocation_watch_start();inverse_program(program,d,out);assert(!allocation_watch_stop());check(d,out,target);
     assert(!memcmp(d,before.data(),target*8));for(auto *h:handles)sbn3_spectrum_release(h);
     printf("inverse program n=%zu W%u steps=%zu pattern%u: allocation-free execution/<3 ulps/all tables prebuilt PASS\n",target,workers,steps.size(),pattern);fflush(stdout);
 }
+static void live_support_gate(size_t ring,unsigned workers){
+    Fixture f(workers);sbn3_mul_options o{};o.workers=workers;o.prime_count=6;o.trunk_bits=128;
+    o.algorithm=ring<=4096?SBN3_MUL_FLAT:SBN3_MUL_BAILEY;
+    sbn3_product_request req{};req.kind=SBN3_PRODUCT_MUL;req.a_limbs=ring/2;req.b_limbs=ring;req.cyclic_limbs=ring;
+    auto *a=f.guarded(req.a_limbs);for(size_t j=0;j<req.a_limbs;++j)a[j]=random_word();
+    sbn3_mul_plan plan{};sbn3_product_info info{};auto *binding=f.product(req,o,info,plan);
+    sbn3_spectrum_desc desc{};auto *cache=f.cache(binding,{a,req.a_limbs},1,info,desc);
+    f.unbind(binding);req.cached_a[0]=&desc;binding=f.product(req,o,info,plan,cache);
+    assert(binding->backend->product_execute_live);
+    auto *out=f.guarded(sbn3_mul_output_capacity(&info.mul));
+    auto *padded=f.guarded(ring);
+    ref_int A,B,P,R,M;ref_inits(A,B,P,R,M,nullptr);ref_import(A,req.a_limbs,-1,8,0,0,a);
+    ref_set_ui(M,1);ref_mul_2exp(M,M,64*ring);ref_sub_ui(M,M,1);
+    // Each fresh input ends immediately at a protected page: the shorter
+    // support is a memory contract, not a zero-filled full-size buffer.
+    for(size_t live:{size_t(1),size_t(3),ring/2-1,ring/2+3,ring}){
+        auto *b=f.guarded(live);for(size_t j=0;j<live;++j)b[j]=live&1?UINT64_MAX:random_word();
+        memcpy(padded,b,live*8);memset(padded+live,0,(ring-live)*8);
+        const sbn3_product_inputs full{{},{padded,ring},{},{}};sbn3_product_metrics full_metrics{};
+        sbn3_product_execute(binding,&full,{out,sbn3_mul_output_capacity(&info.mul)});sbn3_product_get_metrics(binding,&full_metrics);
+        const sbn3_product_inputs in{{},{b,live},{},{}};
+        allocation_watch_start();binding->backend->product_execute_live(binding,nullptr,in,{out,sbn3_mul_output_capacity(&info.mul)});
+        assert(!allocation_watch_stop());ref_import(B,live,-1,8,0,0,b);ref_mul(P,A,B);ref_mod(P,P,M);ref_import(R,ring,-1,8,0,0,out);
+        assert(ref_cmp(P,R)==0);sbn3_product_metrics metrics{};sbn3_product_get_metrics(binding,&metrics);
+        assert(metrics.row_forward<=full_metrics.row_forward&&metrics.row_inverse==full_metrics.row_inverse);
+    }
+    sbn3_spectrum_release(cache);ref_clears(A,B,P,R,M,nullptr);
+    printf("cached cyclic live support ring=%zu W%u: short guarded inputs, unchanged basis, exact modular result PASS\n",ring,workers);
+}
 int main(){
+    for(unsigned w:{1u,16u})for(size_t ring:{256u,4096u,32768u})live_support_gate(ring,w);
     incomplete_gate();seed_gate();
     for(unsigned pattern=0;pattern<6;++pattern)for(int delta:{-7,0,7}){
         run(6,128,SBN3_MUL_FLAT,1,pattern,delta);

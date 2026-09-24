@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <new>
 #include <initializer_list>
 using namespace sbn::v3;
@@ -125,6 +126,12 @@ int main() {
             }
             Ranges ranges{};sbn3_team_run(team,ranges_action,&ranges);
             Serial serial{};sbn3_team_run(team,serial_action,&serial);
+            // Exercise both immediate publication and a parked worker. Every
+            // new episode must observe the two preceding full-width writes.
+            for(unsigned gap:{0u,10u,200u})for(unsigned j=0;j<20;++j){
+                if(gap)usleep(gap);
+                Serial wake{};sbn3_team_run(team,serial_action,&wake);
+            }
             Kernels kernels{};kernels.width=w;
             alignas(Frame) unsigned char objects[32*sizeof(Frame)];
             for(unsigned i=0;i<w;++i)kernels.frames[i]=::new(objects+i*sizeof(Frame))Frame(f.subframe(2048));

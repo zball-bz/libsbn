@@ -13,7 +13,7 @@ typedef enum sbn3_spectrum_frontier { SBN3_SPECTRUM_ROWS=0, SBN3_SPECTRUM_COLUMN
 typedef struct sbn3_spectrum sbn3_spectrum;
 typedef struct sbn3_spectrum_desc {
     uint64_t basis_id,instance_id,generation,seal;
-    unsigned np,trunk_bits,frontier,format_version; /* 1 blocked48 Bailey; 2 flat lazy64; 3 FFT AoSoA */
+    unsigned np,trunk_bits,frontier,format_version; /* 1 blocked48 Bailey; 2 flat lazy64; 3 FFT AoSoA; 4 flat packed48 */
     size_t C,M2,transform_trunks,live_slots,written_slots,source_limbs,source_trunks,block_stride;
     uint64_t scale[10]; /* NTT: per-prime scale; FFT: scale[0]=1, others zero */
     size_t storage_bytes,table_bytes,plane_bytes;

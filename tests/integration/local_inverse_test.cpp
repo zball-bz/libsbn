@@ -6,6 +6,15 @@
 #include <cmath>
 #include <set>
 using namespace sbn::v3;
+// Keep the independent full-width certificate affordable in the extended
+// FFT band. Reference multiplication remains outside allocation/timing gates.
+void certificate_product(uint64_t *z,const uint64_t *u,const uint64_t *d,size_t n){
+    if(n<=8192){sbn3_mul_basecase(z,2*n+1,u,n+1,d,n);return;}
+    ref_int a,b,p;ref_inits(a,b,p,nullptr);
+    ref_import(a,n+1,-1,8,0,0,u);ref_import(b,n,-1,8,0,0,d);ref_mul(p,a,b);
+    memset(z,0,(2*n+1)*8);ref_export(z,nullptr,-1,8,0,0,p);
+    ref_clears(a,b,p,nullptr);
+}
 void cyclic_lift_gate(){
     ref_int modulus,power,value,residue,actual;
     ref_inits(modulus,power,value,residue,actual,nullptr);
@@ -45,12 +54,14 @@ int main(){
     cyclic_lift_gate();
     std::set<size_t> sizes;
     for(size_t n=1;n<=64;++n)sizes.insert(n);
-    for(unsigned j=24;j<=52;++j)sizes.insert(size_t(std::llround(std::exp2(j/4.))));
+    for(unsigned j=24;j<=56;++j)sizes.insert(size_t(std::llround(std::exp2(j/4.))));
+    for(size_t n:{767u,768u,769u,790u,825u,832u,1020u,1021u,1022u,1023u,1024u,
+                  1277u,1278u,1279u,1533u,1534u,1535u,1660u,1661u,1662u,8193u,12289u})sizes.insert(n);
     unsigned checked=0;
     for(size_t n:sizes){
         Fixture f(1,false);
-        const auto bytes=local_inverse_bytes(n);
-        auto lease=f.allocate(bytes,64);
+        const auto bytes=local_inverse_bytes(n),approximate_bytes=local_inverse_approximate_bytes(n);
+        auto lease=f.allocate(std::max(bytes,approximate_bytes),64);
         Frame scratch(*f.arena,lease);
         auto *d=f.guarded(n),*u=f.guarded(n+1),*z=f.guarded(2*n+1),*limit=f.guarded(n+1);
         for(unsigned pattern=0;pattern<5;++pattern){
@@ -63,7 +74,7 @@ int main(){
             assert(!allocation_watch_stop() && !scratch.used() && scratch.peak()<=bytes && u[n]==1);
             // Independent u64 schoolbook product: U*D <= all-ones numerator,
             // whose remainder must be strictly smaller than D.
-            sbn3_mul_basecase(z,2*n+1,u,n+1,d,n);
+            certificate_product(z,u,d,n);
             assert(!z[2*n]);
             bool below=false;
             for(size_t j=2*n;j-->0 && !below;){
@@ -71,15 +82,13 @@ int main(){
                 if(r!=dv){assert(r<dv);below=true;}
             }
             assert(below);++checked;
-            const auto approximate_bytes=local_inverse_approximate_bytes(n);
-            assert(approximate_bytes<=bytes);
             auto approximate_work=Frame::borrow(*f.arena,lease,lease.data,approximate_bytes);
             allocation_watch_start();
             {ComputeLease computing(*f.arena);local_inverse_approximate(u,d,n,approximate_work);}
             assert(!allocation_watch_stop() && !approximate_work.used() && approximate_work.peak()<=approximate_bytes && u[n]==1);
             // Independent full-width certificate, avoiding division or the
             // implementation's recurrence: |U*D-B^(2n)| < 3*D.
-            sbn3_mul_basecase(z,2*n+1,u,n+1,d,n);
+            certificate_product(z,u,d,n);
             if(z[2*n]){assert(z[2*n]==1);--z[2*n];}
             else{
                 for(size_t j=0;j<2*n;++j)z[j]=~z[j];

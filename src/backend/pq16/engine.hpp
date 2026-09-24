@@ -491,7 +491,7 @@ static inline void pq16_leaf_init(pq16_plan *pl){
 // {w1a, w1b} (squares derived)
 static inline void pq16_build_tw22(pq16_plan *pl, unsigned lg){
     if(pl->tw22[lg]) return;
-    if(lg<PQ16_TWC_MIN_LG && (pl->tw22[lg]=root_bank::twiddle<false>(lg)))return;
+    if((pl->tw22[lg]=root_bank::twiddle<false>(lg,lg>=PQ16_TWC_MIN_LG)))return;
     uint32_t len = 1u << lg;
     if(lg >= PQ16_TWC_MIN_LG){
         double *tab = (double *)pq16_alloc(pl,(size_t)len * 4);
@@ -517,7 +517,7 @@ static inline void pq16_build_tw22(pq16_plan *pl, unsigned lg){
 // {W1, W2} (W1o = rot8(W1), W4 = W2^2 derived)
 static inline void pq16_build_tw8(pq16_plan *pl, unsigned lg){
     if(pl->tw8[lg]) return;
-    if(lg<PQ16_TWC_MIN_LG && (pl->tw8[lg]=root_bank::twiddle<true>(lg)))return;
+    if((pl->tw8[lg]=root_bank::twiddle<true>(lg,lg>=PQ16_TWC_MIN_LG)))return;
     uint32_t len = 1u << lg;
     if(lg >= PQ16_TWC_MIN_LG){
         double *tab = (double *)pq16_alloc(pl,(size_t)len * 4);
@@ -590,11 +590,11 @@ static inline pq16_odd_plan pq16_odd_plan_of(uint32_t n);
 static inline void pq16_plan_ensure(pq16_plan *pl,uint32_t branch,int odd_plan){ // odd_plan: also the odd-radix branch plan tables
     require(pl->builder && !pl->ready_mask,SBN3_FATAL_LIFETIME,"pq16 immutable table build");
     const unsigned lgc=(unsigned)__builtin_ctz(branch);pq16_leaf_init(pl);
-    if(branch<=root_bank::branch)pl->pq=root_bank::pq.data();
+    if(branch<=root_bank::pq_branch)pl->pq=root_bank::pq.data();
     else{
         auto *pq=(double *)pq16_alloc(pl,(size_t)branch*4);
         memcpy(pq,root_bank::pq.data(),sizeof(root_bank::pq));
-        for(uint32_t g=root_bank::branch/64;g<branch/64;++g)for(uint32_t k=0;k<16;++k)
+        for(uint32_t g=root_bank::pq_branch/64;g<branch/64;++g)for(uint32_t k=0;k<16;++k)
             pq16_root(pq+32*g+k,pq+32*g+16+k,pq16_bitrev(g*16+k,lgc-2),branch);
         pl->pq=pq;
     }
@@ -615,8 +615,9 @@ static inline void pq16_plan_ensure(pq16_plan *pl,uint32_t branch,int odd_plan){
 // a page: a fault-suppressed masked load that touches an unmapped page costs a
 // microcode assist (~70-140 ns per operand stream measured 2026-09-09 with
 // guard-page buffers, 10-25 % of a 128-limb product). The window is then
-// rebuilt from the one or two 64-byte-aligned blocks that hold its limbs (both
-// mapped, since each contains a valid limb).
+// rebuilt from the one or two 64-byte-aligned blocks that hold its limbs.
+// Mask each aligned load as well: a mapped cache line need not belong entirely
+// to the caller's operand (small heap objects have no readable padding).
 static inline sb_vec q_raw8(const uint64_t *p, int64_t rem){
     if(rem <= 0) return sb_zero(); // do not send an all-zero masked load to an unreadable page
     if(rem >= 8) return sb_load(p);
@@ -624,8 +625,9 @@ static inline sb_vec q_raw8(const uint64_t *p, int64_t rem){
     if(((addr & 4095u) + 64u) <= 4096u) return sb_load(p, 0xFFu >> (8 - rem));   // stays inside its page
     const uint64_t *block = (const uint64_t *)(addr & ~(uintptr_t)63);
     const unsigned off = (unsigned)((addr & 63u) >> 3);
-    const sb_vec lo = sb__fn(load_si512)((const void *)block);
-    const sb_vec hi = off + (unsigned)rem > 8u ? sb__fn(load_si512)((const void *)(block + 8)) : lo;
+    const unsigned lanes = (0xFFu >> (8 - rem)) << off;
+    const sb_vec lo = sb__fn(maskz_load_epi64)((__mmask8)lanes, (const void *)block);
+    const sb_vec hi = lanes >> 8 ? sb__fn(maskz_load_epi64)((__mmask8)(lanes >> 8), (const void *)(block + 8)) : lo;
     const sb_vec idx = sb_add(sb_setr_64(0, 1, 2, 3, 4, 5, 6, 7), sb_set1_64(off));
     return sb__fn(maskz_permutex2var_epi64)((__mmask8)(0xFFu >> (8 - rem)), lo, idx, hi);
 }
@@ -830,10 +832,10 @@ static inline void pq16_mem_ir22_w(double *data, uint32_t n,
 // omega_M^k = exp(-2*pi*i*k/M) tables (reference int_fft values).
 // ------------------------------------------------------------------
 // radix-3 Winograd (e^- DFT convention)
-static inline void q_pfa3(const qcv *x, qcv *y, int inv){
+template<bool Half=false>static inline void q_pfa3(const qcv *x, qcv *y, int inv){
     const sb_dvec ch = sb_set1_d(-0.5);
     const sb_dvec sh = sb_set1_d(-PQ16_W3_IM[1]);
-    qcv s = q_add(x[1], x[2]), d = q_sub(x[1], x[2]);
+    qcv s = Half?x[1]:q_add(x[1], x[2]), d = Half?x[1]:q_sub(x[1], x[2]);
     y[0] = q_add(x[0], s);
     qcv u = { fmadd(ch, s.re, x[0].re), fmadd(ch, s.im, x[0].im) };
     qcv v = { sb_mul(sh, d.re), sb_mul(sh, d.im) };
@@ -847,14 +849,14 @@ static inline void q_pfa3(const qcv *x, qcv *y, int inv){
 }
 
 // radix-5 Winograd (5 real mults, 17 adds)
-static inline void q_pfa5(const qcv *x, qcv *y, int inv){
+template<bool Half=false>static inline void q_pfa5(const qcv *x, qcv *y, int inv){
     const sb_dvec CP  = sb_set1_d(-0.25);
     const sb_dvec CM  = sb_set1_d(PQ16_W5_CM);
     const sb_dvec S1  = sb_set1_d(-PQ16_W5_IM[1]);
     const sb_dvec S1p = sb_set1_d(PQ16_W5_S1P);
     const sb_dvec S2m = sb_set1_d(PQ16_W5_S2M);
-    qcv u14 = q_add(x[1], x[4]), v14 = q_sub(x[1], x[4]);
-    qcv u25 = q_add(x[2], x[3]), v25 = q_sub(x[2], x[3]);
+    qcv u14 = Half?x[1]:q_add(x[1], x[4]), v14 = Half?x[1]:q_sub(x[1], x[4]);
+    qcv u25 = Half?x[2]:q_add(x[2], x[3]), v25 = Half?x[2]:q_sub(x[2], x[3]);
     qcv us = q_add(u14, u25), um = q_sub(u14, u25), vs = q_sub(v14, v25);
     qcv m1 = { sb_mul(us.re, CP),   sb_mul(us.im, CP) };
     qcv m2 = { sb_mul(um.re, CM),   sb_mul(um.im, CM) };
@@ -880,16 +882,16 @@ static inline void q_pfa5(const qcv *x, qcv *y, int inv){
 
 // radix-7 direct form (chained FMAs; this is the precision-critical one:
 // it fails first uncentered, see the PQ16_PFA7_MAX_N gate)
-static inline void q_pfa7(const qcv *x, qcv *y, int inv){
+template<bool Half=false>static inline void q_pfa7(const qcv *x, qcv *y, int inv){
     const sb_dvec C1 = sb_set1_d(PQ16_W7_RE[1]);
     const sb_dvec C2 = sb_set1_d(PQ16_W7_RE[2]);
     const sb_dvec C3 = sb_set1_d(PQ16_W7_RE[3]);
     const sb_dvec S1 = sb_set1_d(-PQ16_W7_IM[1]);
     const sb_dvec S2 = sb_set1_d(-PQ16_W7_IM[2]);
     const sb_dvec S3 = sb_set1_d(-PQ16_W7_IM[3]);
-    qcv u16 = q_add(x[1], x[6]), v16 = q_sub(x[1], x[6]);
-    qcv u25 = q_add(x[2], x[5]), v25 = q_sub(x[2], x[5]);
-    qcv u34 = q_add(x[3], x[4]), v34 = q_sub(x[3], x[4]);
+    qcv u16 = Half?x[1]:q_add(x[1], x[6]), v16 = Half?x[1]:q_sub(x[1], x[6]);
+    qcv u25 = Half?x[2]:q_add(x[2], x[5]), v25 = Half?x[2]:q_sub(x[2], x[5]);
+    qcv u34 = Half?x[3]:q_add(x[3], x[4]), v34 = Half?x[3]:q_sub(x[3], x[4]);
     qcv R1, R2, R3, I1, I2, I3;
 #define PQ16_R(dst, cA, cB, cC) \
     dst.re = fmadd(cC, u34.re, fmadd(cB, u25.re, fmadd(cA, u16.re, x[0].re))); \
@@ -917,10 +919,10 @@ static inline void q_pfa7(const qcv *x, qcv *y, int inv){
 #undef PQ16_P
 }
 
-static inline void q_pfa_bfly(const qcv *x, qcv *y, uint32_t M, int inv){
-    if(M == 3)      q_pfa3(x, y, inv);
-    else if(M == 5) q_pfa5(x, y, inv);
-    else            q_pfa7(x, y, inv);
+template<bool Half=false>static inline void q_pfa_bfly(const qcv *x, qcv *y, uint32_t M, int inv){
+    if(M == 3)      q_pfa3<Half>(x, y, inv);
+    else if(M == 5) q_pfa5<Half>(x, y, inv);
+    else            q_pfa7<Half>(x, y, inv);
 }
 
 // lane-residue merge masks: km[d] selects lanes l with l % M == d

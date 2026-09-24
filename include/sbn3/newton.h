@@ -41,8 +41,9 @@ typedef struct sbn3_newton_binding sbn3_newton_binding;
 
 /* B=2^64. INVERSE: normalized n-limb D -> U with B^n<=U<2B^n,
  * |U-B^(2n)/D|<3. RSQRT: positive u64 a -> R, high limb zero,
- * |R-B^n/sqrt(a)|<3. DIVIDE (n>=4): normalized n-limb D, n+1-limb A
- * with A[n]<=1 -> |Q-B^n*A/D|<3, using a half-precision inverse.
+ * |R-B^n/sqrt(a)|<3. DIVIDE (n>=1): normalized n-limb D, n+1-limb A
+ * with A[n]<=1 -> |Q-B^n*A/D|<3. Small default requests use word/native
+ * quotient kernels; larger requests use a half-precision inverse.
  * SQRT2 kinds return exactly floor(B^n*sqrt(2)), with integer square proof.
  * All outputs have n+1 limbs. Approximate entries do not promise div_qr. */
 sbn3_query_result sbn3_newton_query(sbn3_newton_kind,size_t n,const sbn3_newton_options *,
@@ -57,6 +58,10 @@ sbn3_query_result sbn3_newton_query(sbn3_newton_kind,size_t n,const sbn3_newton_
  * or plan searches during execution. Expired spectra are destroyed first.
  * Plan is reusable; a binding is single-use.
  * After unbind the same prepared range may be rebound without arena growth. */
+/* Small non-FFT DIVIDE bindings borrow the caller-granted exclusive range:
+ * ordinary builds perform no arena lease operation, while checked/sanitized
+ * builds register the lease for lifetime diagnostics. The caller keeps the
+ * entire prepared range resident and exclusive until unbind. */
 void sbn3_newton_bind(const sbn3_newton_plan *,sbn3_arena *,size_t offset,sbn3_team *,sbn3_newton_binding **);
 /* INVERSE uses denominator; RSQRT uses radicand; DIVIDE uses both views;
  * SQRT2 ignores inputs and permits NULL. Output is 64-byte aligned and all

@@ -39,6 +39,7 @@ def main():
     fcntl.flock(build_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     run(['python3', 'tools/generate_tuning.py', '--check'])
     run(['python3', 'tools/generate_radix_bounds.py', '--check'])
+    run(['python3', 'tools/generate_radix_powers.py', '--check'])
     run(['python3', 'tools/check_native_variants.py'])
     config = json.loads((V3/'config/native.json').read_text())
     sources = json.loads((V3/'config/sources.json').read_text())['entries']
@@ -74,7 +75,7 @@ def main():
     receipt = {'schema':1,'variant':variant,'compiler':versions,
                'small_checks':bool(args.checked or args.sanitize!='none'),'units':[], 'tests':[]}
 
-    def compile_one(src, language, group, prefix='', extra_flags=()):
+    def compile_one(src, language, group, prefix='', extra_flags=(), reference_gmp=False):
         obj = build/(prefix+src.replace('../','external/')+'.o')
         obj.parent.mkdir(parents=True, exist_ok=True)
         dep = Path(str(obj)+'.d')
@@ -85,7 +86,9 @@ def main():
         if language in ['c','cxx']: flags.insert(0, '-O2')
         flags += config['groups'][group]['target_flags']
         flags += list(extra_flags)
-        if prefix:flags += ['-Itests/no_gmp']
+        # Research benchmarks may explicitly use an external oracle outside
+        # timing. Production, examples and maintained tests keep the guard.
+        if prefix and not (prefix=='bench/' and reference_gmp):flags += ['-Itests/no_gmp']
         if language in ['c','cxx']:
             flags += ['-std=c++20','-fno-exceptions','-fno-rtti'] if cxx else ['-std=c11']
             flags += sanitize
@@ -130,10 +133,13 @@ def main():
         run([compiler['cc'],'-fuse-ld=lld',*sanitize,*objs,archive,'-pthread','-lm','-o',exe])
         receipt.setdefault('examples',[]).append({'name':example['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe)})
     for benchmark in benchmarks:
-        objs=[compile_one(e['path'],e['language'],e.get('group','common'),'bench/',e.get('extra_flags',[])) for e in benchmark['sources']]
+        unit_start=len(receipt['units'])
+        objs=[compile_one(e['path'],e['language'],e.get('group','common'),'bench/',e.get('extra_flags',[]),benchmark.get('reference_gmp',False)) for e in benchmark['sources']]
         exe=build/benchmark['name']
-        run([compiler['cxx'],'-fuse-ld=lld',*objs,archive,'-pthread','-lm','-o',exe])
-        receipt.setdefault('benchmarks',[]).append({'name':benchmark['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe)})
+        run([compiler['cxx'],'-fuse-ld=lld',*sanitize,*(['-shared'] if benchmark.get('shared') else []),*objs,
+             *([archive] if benchmark.get('link_library',True) else []),'-pthread','-lm',*benchmark.get('link_flags',[]),'-o',exe])
+        receipt.setdefault('benchmarks',[]).append({'name':benchmark['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe),
+                                                   'unit_indices':list(range(unit_start,len(receipt['units'])))})
     for test in tests:
         if any('gmp' in f.lower() for f in test.get('link_flags',[])):raise SystemExit('GMP is forbidden in maintained tests')
         objs=[compile_one(e['path'],e['language'],e.get('group','reference'),'tests/',e.get('extra_flags',[])) for e in test['sources']]

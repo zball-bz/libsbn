@@ -24,6 +24,11 @@ Shape query(size_t an,size_t bn,unsigned minimum_pow2=128) noexcept;
 Shape select(size_t an,size_t bn,unsigned workers=1,unsigned bits=0,size_t scratch_budget=0,bool square=false,
              double preparation_ns_per_byte_per_use=0) noexcept;
 size_t table_bytes(Shape) noexcept;
+// True when every root array comes from the immutable engine bank.
+bool tables_published(Shape) noexcept;
+// Only fixed metadata/fine rotations are prepared; no operation-sized root
+// array is constructed. All power-of-two stages are still published.
+bool compact_table_setup(Shape) noexcept;
 size_t scratch_bytes(Shape,size_t an,size_t bn,unsigned workers=1,bool square=false) noexcept;
 Tables *prepare(Frame &,Shape) noexcept;
 void multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
@@ -37,10 +42,26 @@ Shape plus_shape(size_t minimum_limbs) noexcept;
 bool plus_supported(Shape,size_t an,size_t bn) noexcept;
 void plus_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,bool,
                    const double *,const Tables &,Frame &) noexcept;
+// Private bounded plus-ring recipe: canonical r+1-word output, inputs <r,
+// unsigned 16-bit or balanced wide digits. Ordinary plus API admission stays separate.
+bool bounded_plus_supported(Shape,size_t an,size_t bn) noexcept;
+void bounded_plus_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
+                           const double *,const Tables &,Frame &) noexcept;
 constexpr size_t cyclic_period(Shape s) noexcept {return size_t(s.nfull)*s.bits/32;}
-Shape cyclic_shape(size_t minimum_limbs,unsigned bits=16) noexcept;
+// Balanced 16-bit is an explicit capability; automatic window lowering keeps
+// its measured unsigned baseline until fresh setup/storage costs justify it.
+Shape cyclic_shape(size_t minimum_limbs,unsigned bits=16,unsigned workers=1,bool allow_balanced=false) noexcept;
+// Minimum period for nonempty 17..20-bit cyclic inputs, including the
+// strict short-support bound. Numerical point caps still require admission.
+size_t wide_cyclic_minimum_words(size_t an,size_t bn) noexcept;
 bool cyclic_supported(Shape,size_t an,size_t bn) noexcept;
 void cyclic_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,bool square,
                        const double *cached,const Tables &,Frame &,sbn3_team_scope *,size_t prefix=0) noexcept;
+// Private approximate high window of the minus-ring product. CT, bits 17..20,
+// 0<origin<period; same input/cache/workspace contract as cyclic_multiply.
+// Writes [bits*floor(origin/bits),period); earlier words remain untouched.
+// At origin the signed modular error is <2^40. No canonical residue promised.
+void cyclic_tail_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
+                           const double *,const Tables &,Frame &,size_t origin) noexcept;
 }
 }

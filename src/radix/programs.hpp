@@ -28,6 +28,9 @@ struct TreePolicy {
     // 94 limbs in base 3, 124 in base 10, 160 in base 36), so that rule is in limb-words, not in limbs.
     size_t integer_tree_work = 40000, integer_tree_limbs_repeated = 32;
     unsigned fraction_recipe = 0; // 0: complete-cost policy; probes may pin 1: direct or 2: tree
+    // Bounded leaf products: pay for U52 conversion only above this many
+    // scalar limb products (Zen5 native, r12-leaf-split-volume evidence).
+    size_t group_u52_work = 128;
     bool cyclic_products = true;        // frontier splits as wrap-around products with cached rail spectra
     bool ring_products = true;          // staged splits in the NTT band as wrap-around products (product service)
     size_t ring_node_limbs = 40000;     // from this node size on
@@ -119,6 +122,7 @@ void temporary_product(sbn3_team *, unsigned workers, Frame &scratch, const uint
 // ---- rail: odd^(64 * 2^k), k < count, each zero padded to its capacity -------------------------------
 struct RailPlan {
     unsigned count = 0;
+    unsigned fixed_levels = 0;
     size_t limbs[max_rail]{}, offset[max_rail]{};
     size_t total_limbs = 0;
     // rail[k]^2: through the product service's SQR recipe (service) or as a temporary program; its search winner.

@@ -15,6 +15,30 @@ ROOT = Path(__file__).resolve().parents[1]
 NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 
 
+def render_numbers(value, key):
+    tokens = value["tokens"]
+    if not tokens or not all(NUMBER.fullmatch(t) and math.isfinite(float(t)) for t in tokens):
+        raise ValueError(f"invalid numeric tokens: {key}")
+    suffix = value.get("literal_suffix", "")
+    if suffix not in ("", "f"):
+        raise ValueError(f"unsupported numeric suffix: {key}")
+    rendered = [t + (".0" if suffix and not any(c in t for c in ".eE") else "") + suffix for t in tokens]
+    form = value.get("initializer", "flat")
+    if form == "records":
+        stride = value.get("layout", {}).get("stride", 0)
+        if not isinstance(stride, int) or stride < 1 or len(rendered) % stride:
+            raise ValueError(f"invalid initializer record stride: {key}")
+        rendered = ["{" + ",".join(rendered[j:j+stride]) + "}" for j in range(0,len(rendered),stride)]
+    elif form != "flat":
+        raise ValueError(f"unsupported initializer form: {key}")
+    width = value.get("wrap", 0)
+    if not isinstance(width, int) or width < 0 or width > 256:
+        raise ValueError(f"invalid initializer line width: {key}")
+    if width:
+        return "".join("    " + ",".join(rendered[j:j+width]) + ",\n" for j in range(0,len(rendered),width))
+    return ",".join(rendered)
+
+
 def experimental_output(path):
     """Fitting a partial model must not overwrite a production implementation."""
     path = Path(path).resolve()
@@ -34,10 +58,7 @@ def render(entry):
     for marker, key in entry["bindings"].items():
         value = profile["parameters"][key]
         if value["type"] == "numbers":
-            tokens = value["tokens"]
-            if not tokens or not all(NUMBER.fullmatch(t) and math.isfinite(float(t)) for t in tokens):
-                raise ValueError(f"invalid numeric tokens: {key}")
-            replacement = ",".join(tokens)
+            replacement = render_numbers(value, key)
         elif value["type"] == "sha256":
             replacement = value["value"]
             if not re.fullmatch(r"[0-9a-f]{64}", replacement):

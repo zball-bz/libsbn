@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "id": "zen5-clang21-selection-20260910-preserved",
+  "id": "zen5-clang21-selection-20260923-flat-cycles",
   "kind": "selection_policy",
   "target": {
     "cpu": "Zen5 Strix Halo",
@@ -9,7 +9,7 @@
   },
   "domain": {
     "mode": "in-RAM prepared native",
-    "notes": "Thread limits use actual rung precision, not public target precision. 262160 is the preserved measured upper boundary, not a theorem that all guards total 16 words."
+    "notes": "Thread limits use actual rung precision, not public target precision. 262160 is the preserved measured upper boundary, not a theorem that all guards total 16 words. Serial cyclic window layout is bounded by coefficients per prime; integer reconstruction guards do not enlarge the transform."
   },
   "evidence": [
     {
@@ -26,6 +26,31 @@
       "path": "results/code_cleanup_2026-09-10/baseline/source/src/algorithms/newton_service.cpp",
       "role": "scalar cost seed; no separate calibration claimed",
       "sha256": "d1688027577ab49abe535ccaa471bdf26e131e6a130b57be005d35882c315bae"
+    },
+    {
+      "path": "results/division_speed_2026-09-22/direct-comparisons.json",
+      "sha256": "f0329f0f9e8974b69284e01f4ac722d5a206510c52df29e37ed90551d125cea5",
+      "role": "fresh anchor evidence for one shared FFT/window crossover at 256 words; dense follow-up in the same experiment directory"
+    },
+    {
+      "path": "results/division_layout_2026-09-23/upper-inverse-comparison.json",
+      "sha256": "97b86aa5c79218180b523a86061581b0d352bddb39f1022d22e33401d029ad79",
+      "role": "fresh serial Flat versus Bailey through 2M words"
+    },
+    {
+      "path": "results/division_layout_2026-09-23/far-approx_div-comparison.json",
+      "sha256": "4348fa89c7c08dd013f27b731d57738fbaf6279f41990375b01301f99914bb0a",
+      "role": "fresh serial Flat versus Bailey through 4M words; physical coefficient cutoff"
+    },
+    {
+      "path": "results/division_layout_2026-09-23/pack-inverse-comparison.json",
+      "sha256": "f18d419649e7b729d716e20a3868abce6b484a7cf19f8686a1617b39e2c495b7",
+      "role": "packed-cache time and workspace control"
+    },
+    {
+      "path": "results/division_layout_2026-09-23/pack-approx_div-comparison.json",
+      "sha256": "83735d82697647d17c4cffe7b8029b8b39e4e8f15a39ae5d53960edeb81ca514",
+      "role": "packed-cache fresh quotient control"
     }
   ],
   "parameters": {
@@ -98,6 +123,48 @@
         "1."
       ],
       "unit": "nanoseconds per input word"
+    },
+    "window_inline_words": {
+      "type": "numbers",
+      "tokens": [
+        "16384"
+      ],
+      "unit": "largest dense input words in an inline window group"
+    },
+    "window_fft_min_words": {
+      "type": "numbers",
+      "tokens": [
+        "256"
+      ],
+      "unit": "short operand words at local FFT/window crossover"
+    },
+    "window_parallel_fft_below": {
+      "type": "numbers",
+      "tokens": [
+        "8192"
+      ],
+      "unit": "FFT-to-parallel-native window crossover; full fresh W1/W8 comparison"
+    },
+    "window_serial_flat_trunks": {
+      "type": "numbers",
+      "tokens": [
+        "2097152"
+      ],
+      "unit": "maximum transform coefficients per prime in serial dependent windows"
+    },
+    "window_parallel_flat_words": {
+      "type": "numbers",
+      "tokens": [
+        "262144"
+      ],
+      "unit": "maximum cyclic period in parallel dependent windows"
+    },
+    "flat_spectrum_pack_trunks": {
+      "type": "numbers",
+      "tokens": [
+        "262144"
+      ],
+      "unit": "minimum coefficients per prime for packed serial cyclic spectra"
     }
   }
 }

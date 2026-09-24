@@ -1,5 +1,5 @@
 #include "algorithms/rsqrt.hpp"
-#include "algorithms/product_stage.hpp"
+#include "product/stage.hpp"
 #include "common/checked.hpp"
 #include "algorithms/newton_contract.hpp"
 #include "value/limbs.hpp"

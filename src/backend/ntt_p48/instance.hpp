@@ -4,6 +4,7 @@
  * this TU supplies the pure query and the explicit resource-binding recipe. */
 #include "product/backend.hpp"
 #include "product/tuning_native.hpp"
+#include "tuning/native_policy.hpp"
 #include "runtime/team.hpp"
 #include "backend/ntt_p48/engine.hpp"
 #include "backend/ntt_p48/flat.hpp"
@@ -143,16 +144,32 @@ uint64_t descriptor_seal(const sbn3_spectrum_desc &d) {
         d.source_trunks,d.block_stride,d.storage_bytes,d.table_bytes,d.plane_bytes})h=feed(h,v);
     for(auto v:d.scale)h=feed(h,v);h=feed(h,d.backend_id);h=feed(h,d.codec_mode);return h;
 }
+bool flat_packed_spectrum(const p::Plan &g,unsigned workers) {
+    // Large serial cyclic spectra are read once per use; packing saves a
+    // quarter of their plane footprint. Small/parallel spectra keep lazy64.
+    return g.C==1&&g.ring_rn&&workers==1&&g.N>=native_policy::flat_spectrum_pack_trunks;
+}
+bool flat_spectrum_format(unsigned format) {
+    return format==spectrum_contract::flat_lazy64_format||format==spectrum_contract::flat_packed48_format;
+}
+unsigned spectrum_format(const ProductPlan &q) {
+    if(q.execution.info.algorithm!=SBN3_MUL_FLAT)return spectrum_contract::blocked48_format;
+    // A consumer that is also a cache builder keeps its reserved input
+    // representation, including when its team differs from the producer's.
+    if(q.recipe.cached_mask&1)return q.recipe.cached[0].format_version;
+    return flat_packed_spectrum(q.arithmetic.transform,q.execution.info.workers)?
+        spectrum_contract::flat_packed48_format:spectrum_contract::flat_lazy64_format;
+}
 bool compatible(const sbn3_spectrum_desc &d,const p::Plan &g,size_t limbs) {
-    if(d.seal!=descriptor_seal(d) || d.backend_id!=PN || d.codec_mode || d.np!=PN || d.format_version!=(g.C==1?spectrum_contract::flat_lazy64_format:spectrum_contract::blocked48_format) || d.frontier>1 ||
+    if(d.seal!=descriptor_seal(d) || d.backend_id!=PN || d.codec_mode || d.np!=PN || !(g.C==1?flat_spectrum_format(d.format_version):d.format_version==spectrum_contract::blocked48_format) || d.frontier>1 ||
        d.basis_id!=basis_id(g) || d.trunk_bits!=unsigned(g.T) || d.C!=g.C || d.M2!=g.M2 || d.transform_trunks!=g.N ||
-       d.source_limbs!=limbs || d.source_trunks!=(limbs*64+g.T-1)/g.T || d.block_stride!=(g.C==1?64:g.bstride) ||
+       d.source_limbs!=limbs || d.source_trunks!=(limbs*64+g.T-1)/g.T || d.block_stride!=(g.C==1?(d.format_version==spectrum_contract::flat_packed48_format?48:64):g.bstride) ||
        d.live_slots<g.lbv || d.written_slots<g.lbw || d.live_slots>d.M2 || d.written_slots>d.M2)return false;
     for(unsigned q=0;q<PN;++q)if(!d.scale[q] || d.scale[q]>=p::PR[q])return false;
     return true;
 }
 bool cache_matches(const sbn3_spectrum_desc &actual,const sbn3_spectrum_desc &expected,const p::Plan &g,size_t limbs){
-    if(!actual.instance_id || !compatible(actual,g,limbs))return false;
+    if(!actual.instance_id || !compatible(actual,g,limbs)||actual.format_version!=expected.format_version||actual.block_stride!=expected.block_stride)return false;
     if(expected.instance_id)return actual.seal==expected.seal;
     return actual.generation==expected.generation && actual.frontier==expected.frontier &&
         actual.live_slots>=expected.live_slots && actual.written_slots>=expected.written_slots &&
@@ -367,7 +384,7 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
         if((options.trunk_bits && unsigned(options.trunk_bits)!=basis->trunk_bits) ||
            (options.column_log2 && options.column_log2!=unsigned(p::clog2(basis->C))) ||
            (options.row_log2 && options.row_log2!=unsigned(p::clog2(basis->M2))))return SBN3_UNSUPPORTED;
-        const unsigned layout=basis->format_version==spectrum_contract::flat_lazy64_format?SBN3_MUL_FLAT:SBN3_MUL_BAILEY;
+        const unsigned layout=flat_spectrum_format(basis->format_version)?SBN3_MUL_FLAT:SBN3_MUL_BAILEY;
         if(options.algorithm && options.algorithm!=layout)return SBN3_UNSUPPORTED;
         q.options.algorithm=layout;q.options.trunk_bits=basis->trunk_bits;
         if(layout==SBN3_MUL_FLAT){if(basis->C!=1 || options.column_log2 || options.row_log2)return SBN3_UNSUPPORTED;q.options.column_log2=q.options.row_log2=0;}
@@ -521,7 +538,7 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
             }
         }
     }
-    Sizer cache;cache.take(sizeof(Spectrum));cache.take(owned_tables);for(unsigned k=0;k<PN;++k)cache.take(flat?g.lbw*64+128:g.plane_bytes+128,64);
+    Sizer cache;cache.take(sizeof(Spectrum));cache.take(owned_tables);for(unsigned k=0;k<PN;++k)cache.take(flat?g.lbw*(spectrum_format(q)==spectrum_contract::flat_packed48_format?48:64)+128:g.plane_bytes+128,64);
     if(!cache.ok || !align_size(cache.at,64,r.spectrum_bytes))return SBN3_QUERY_CAPACITY;
     e.tail_bytes=((request.window_limbs?std::max(g.nl-g.outcap,size_t(g.OL)):g.nl-g.outcap)+16)*8;
     e.journal_bytes=i.fused?i.workers*g.lbv+64:0;
@@ -1011,6 +1028,12 @@ const Backend &SBN3_P48_BACKEND() noexcept {
         .program_options = program_options,
         .spectrum_multiply = compute_multiply,
         .geometry_query = geometry_query,
+        .product_execute_live = product_execute_live,
+        .product_fresh_supported = product_fresh_supported,
+        .product_execute_fresh = product_execute_fresh,
+        .product_live_contract = product_live_contract,
+        .product_scratch_bytes = product_scratch_bytes,
+        .with_product_scratch = with_product_scratch,
     };
     return instance;
 }

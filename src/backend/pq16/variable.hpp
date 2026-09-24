@@ -30,17 +30,24 @@ template<unsigned B,unsigned U,unsigned Odd>static inline __m256i vx_sext(sb_vec
     return _mm256_srai_epi32(_mm256_sllv_epi32(vx_gather<B,U,Odd>(raw),_mm256_load_si256((const __m256i *)&shift)),32-B);
 }
 // top bit of the digit preceding group U (bit 64*first+16*U*B-1 of the operand), 0 before the operand start
-template<unsigned B,unsigned U>static inline uint32_t vx_tprev(const uint64_t *a,size_t count,size_t first){
-    const int64_t bit=int64_t(64*first)+int64_t(16*U*B)-1;if(bit<0)return 0;
+template<unsigned B,unsigned U>static inline uint32_t vx_tprev(const uint64_t *a,size_t count,size_t first,uint32_t wrapped=0){
+    const int64_t bit=int64_t(64*first)+int64_t(16*U*B)-1;if(bit<0)return wrapped;
     const size_t limb=size_t(bit)/64;return limb<count?uint32_t((a[limb]>>(bit%64))&1):0u;
 }
-template<unsigned B,unsigned U,bool S>static inline qcv vx_decode(const uint64_t *a,size_t count,size_t first){
-    const size_t pos=first+(16*U*B)/64;const auto raw=pos<count?q_raw8(a+pos,count-pos):sb_zero();
+template<unsigned B,unsigned U,bool S>static inline qcv vx_decode(const uint64_t *a,size_t count,size_t first,uint32_t wrapped=0){
+    const size_t pos=first+(16*U*B)/64;
+    // A short operand leaves whole decode groups empty. Avoid permuting and
+    // converting those zeros; the signed codec can still append one carry.
+    if(pos>=count){
+        if constexpr(S)return {_mm512_maskz_mov_pd(__mmask8(vx_tprev<B,U>(a,count,first,wrapped)),_mm512_set1_pd(1.)),_mm512_setzero_pd()};
+        else return {_mm512_setzero_pd(),_mm512_setzero_pd()};
+    }
+    const auto raw=q_raw8(a+pos,count-pos);
     if constexpr(!S)return {vx_dec<B,U,0>(raw),vx_dec<B,U,1>(raw)};
     else{
         const auto e=vx_sext<B,U,0>(raw),o=vx_sext<B,U,1>(raw);
         const auto te=_mm256_srli_epi32(e,31),to=_mm256_srli_epi32(o,31);
-        const auto prev=_mm256_insert_epi32(_mm256_setzero_si256(),int(vx_tprev<B,U>(a,count,first)),7);
+        const auto prev=_mm256_insert_epi32(_mm256_setzero_si256(),int(vx_tprev<B,U>(a,count,first,wrapped)),7);
         return {_mm512_cvtepi32_pd(_mm256_add_epi32(e,_mm256_alignr_epi32(to,prev,7))),_mm512_cvtepi32_pd(_mm256_add_epi32(o,te))};
     }
 }
@@ -57,9 +64,10 @@ template<unsigned B>static inline sb_vec vx_pair(qcv x,q_chain &c,sb_vec rc){
     auto sum=sb_add(sb_and(raw,mask),sb_alignr64(out,c.prev_hi,7));
     if constexpr(B==16){
         // 32-bit slots: biased coefficients up to 2^51 make the incoming carry up to 2^35, so a lane can overflow its slot
-        // twice. The one-bit ripple below then loses a carry; resolve such (rare) steps, and steps entered with a
-        // multi-bit carry-in, with an exact scalar pass.
-        const __mmask8 twice=sb_gtu(sum,sb_set1_64(2*((1ull<<32)-1)+1));
+        // twice, including sum==2*radix-1 when a preceding lane supplies one.
+        // The one-bit ripple then loses a carry; resolve these rare steps,
+        // and steps entered with a multi-bit carry-in, exactly.
+        const __mmask8 twice=sb_gtu(sum,sb_set1_64(2*((1ull<<32)-1)));
         if(__builtin_expect(twice||c.cin>1,0)){
             alignas(64) uint64_t t[8];sb_store(t,sum);uint64_t carry=c.cin;
             for(unsigned l=0;l<8;++l){const uint64_t v=t[l]+carry;t[l]=v&((1ull<<32)-1);carry=v>>32;}
@@ -84,7 +92,7 @@ static inline void vx_store(const vx_target &t,size_t off,unsigned len,sb_vec v)
     if(off<t.size)q_st_tail(t.r+off,v,int64_t(std::min<size_t>(t.size-off,len)));
     if(t.tail&&off+len>t.size&&off>=t.tail_base&&off<t.tail_end)sb_store(t.tail+(off-t.tail_base),v,q_st_mask(std::min<size_t>(t.tail_end-off,len)));
 }
-template<unsigned B>static inline void vx_emit64(const vx_target &t,size_t off,const qcv *v,q_chain &chain,sb_vec rc){
+template<unsigned B>[[gnu::always_inline]] static inline void vx_emit64(const vx_target &t,size_t off,const qcv *v,q_chain &chain,sb_vec rc){
 #ifdef VX_COEFFICIENT_OBSERVER
     for(unsigned q=0;q<4;++q){alignas(64) double tmp[16];q_st(tmp,v[q]);for(unsigned k=0;k<8;++k){VX_COEFFICIENT_OBSERVER((off/B)*64+16*q+2*k,tmp[k]);VX_COEFFICIENT_OBSERVER((off/B)*64+16*q+2*k+1,tmp[k+8]);}}
 #endif
@@ -128,22 +136,35 @@ static inline bool vx_close_signed(const vx_target &t,q_chain *ch,unsigned front
     for(unsigned f=F+2;f<fronts;++f)if(trailing(f))return false;
     return true;
 }
-template<unsigned B,unsigned U,bool S>static inline void vx_input_pair(double *data,const uint64_t *a,size_t count,unsigned n,unsigned j,const pq16_plan &pl){
+template<unsigned B,unsigned U,bool S>static inline void vx_input_pair(double *data,const uint64_t *a,size_t count,unsigned n,unsigned j,const pq16_plan &pl,uint32_t wrapped=0){
     const unsigned l=n/4;const bool compact=pq16_twc(n);qcv x[4],y[4];
-    for(unsigned s=0;s<4;++s){const size_t first=(size_t(s)*l+j)*B/32;x[s]=vx_decode<B,U,S>(a,count,first);y[s]=vx_decode<B,U+1,S>(a,count,first);}
+    for(unsigned s=0;s<4;++s){const size_t first=(size_t(s)*l+j)*B/32;x[s]=vx_decode<B,U,S>(a,count,first,wrapped);y[s]=vx_decode<B,U+1,S>(a,count,first,wrapped);}
     qcv w1,w2,w3,w4;const auto *tw=pl.tw22[__builtin_ctz(n)]+((j/16)+U/2)*pq16_tw_step(compact);
     pq16_tw22_get(tw,compact,&w1,&w2,&w3,&w4);q_bf4(x,w1,w2);q_bf4(y,w3,w4);
     for(unsigned s=0;s<4;++s){auto *p=data+2*size_t(s)*l+2*j+16*U;q_st(p,x[s]);q_st(p+16,y[s]);}
 }
 template<unsigned M,unsigned B,bool S=false>static inline void vx_forward(double *data,const uint64_t *a,size_t count,const CtTables &t){
     const unsigned n=t.shape.branch;const auto *pl=t.core;
+    // At exactly one period, the appended balanced carry is congruent to
+    // a low digit. This full operand cannot occur in a legal linear product.
+    const uint32_t wrapped=S&&count==cyclic_period(t.shape)?uint32_t(a[count-1]>>63):0;
     if constexpr(M==1){
-        for(unsigned j=0;j<n/4;j+=32){vx_input_pair<B,0,S>(data,a,count,n,j,*pl);vx_input_pair<B,2,S>(data,a,count,n,j,*pl);}
+        for(unsigned j=0;j<n/4;j+=32){vx_input_pair<B,0,S>(data,a,count,n,j,*pl,wrapped);vx_input_pair<B,2,S>(data,a,count,n,j,*pl,wrapped);}
     }else{
-        for(unsigned j=0;j<n;j+=32){qcv v[4][M],y[M];
-            for(unsigned s=0;s<M;++s){size_t first=(size_t(s)*n+j)*B/32;
-                v[0][s]=vx_decode<B,0,S>(a,count,first);v[1][s]=vx_decode<B,1,S>(a,count,first);v[2][s]=vx_decode<B,2,S>(a,count,first);v[3][s]=vx_decode<B,3,S>(a,count,first);}
-            for(unsigned u=0;u<4;++u){q_pfa_bfly(v[u],y,M,1);for(unsigned b=0;b<M;++b){if(b)y[b]=q_mul(y[b],q_ld(t.tw+2*size_t(b-1)*n+2*j+16*u));q_st(data+2*size_t(b)*n+2*j+16*u,y[b]);}}}
+        // A half-period input leaves the highest floor(M/2) stripes zero.
+        // The signed carry remains in the middle stripe, whose spare half
+        // is at least 64 complex positions. Skip only additions to known zero;
+        // preserve the original products and FMA association.
+        auto input=[&]<bool Half>(){
+            constexpr unsigned active=Half?(M+1)/2:M;
+            for(unsigned j=0;j<n;j+=32){qcv v[4][active],y[M];
+                for(unsigned s=0;s<active;++s){size_t first=(size_t(s)*n+j)*B/32;
+                    v[0][s]=vx_decode<B,0,S>(a,count,first,wrapped);v[1][s]=vx_decode<B,1,S>(a,count,first,wrapped);v[2][s]=vx_decode<B,2,S>(a,count,first,wrapped);v[3][s]=vx_decode<B,3,S>(a,count,first,wrapped);}
+                for(unsigned u=0;u<4;++u){q_pfa_bfly<Half>(v[u],y,M,1);for(unsigned b=0;b<M;++b){if(b)y[b]=q_mul(y[b],ct_cross_root(t,b,j+8*u));q_st(data+2*size_t(b)*n+2*j+16*u,y[b]);}}
+            }
+        };
+        if(count<=cyclic_period(t.shape)/2)input.template operator()<true>();
+        else input.template operator()<false>();
         for(unsigned s=0;s<M;++s)pq16_odd_fwd(data+2*size_t(s)*n,n,pl);
     }
     if constexpr(M==1)pq16_fwd_core(data,n,pl);
@@ -152,10 +173,10 @@ template<unsigned M,unsigned B,bool S=false>static inline void vx_forward(double
 // round constants, the injected bias and the tail window of front F.
 template<unsigned B,bool S>struct vx_fronts {
     vx_target target;sb_vec rc_biased,rc_plain;unsigned F=0;uint64_t m=0;
-    vx_fronts(uint64_t *r,size_t size,uint64_t *tail,unsigned fronts,size_t limbs_front,unsigned nfull){
+    vx_fronts(uint64_t *r,size_t size,uint64_t *tail,unsigned fronts,size_t limbs_front,unsigned coefficient_terms){
         target={r,size,nullptr,0,0};rc_plain=sb_set1_64(0x4338000000000000LL);rc_biased=rc_plain;
         if constexpr(S){
-            m=vx_bias_m(B,nfull);rc_biased=sb_sub(rc_plain,sb_set1_64(uint64_t(m*((1ull<<B)-1))));
+            m=vx_bias_m(B,coefficient_terms);rc_biased=sb_sub(rc_plain,sb_set1_64(uint64_t(m*((1ull<<B)-1))));
             F=unsigned((size-1)/limbs_front);if(F>=fronts)F=fronts-1;
             const size_t front_start=size_t(F)*limbs_front,base=front_start+B*((size-1-front_start)/B);
             target.tail=tail;target.tail_base=base;target.tail_end=size_t(F+1)*limbs_front+(F+1<fronts?16:0);   // + the spill window of front F+1
@@ -168,15 +189,33 @@ template<unsigned B,bool S>struct vx_fronts {
         else return q_chains_close(target.r,int64_t(target.size),ch,fronts,limbs_front)!=0;
     }
 };
-template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false>static inline bool vx_emit(uint64_t *r,size_t size,double *data,const CtTables &t,uint64_t *tail){
+template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false,bool Tail=false>static inline bool vx_emit(uint64_t *r,size_t size,double *data,const CtTables &t,uint64_t *tail,unsigned coefficient_terms=0,size_t origin=0){
+    static_assert(!Tail||(Cyclic&&!Prefix&&B>16));
     const unsigned n=t.shape.branch,fronts=M==1?4:M,len=M==1?n/4:n;const auto *pl=t.core;q_chain chains[fronts]{};
-    const size_t limbs_front=size_t(len)*B/32;vx_fronts<B,S> fr(r,size,tail,fronts,limbs_front,t.shape.nfull);if constexpr(!Cyclic||Prefix)fr.init(chains[0]);
+    const size_t limbs_front=size_t(len)*B/32;
+    // Cyclic support can exceed half the period. Bound the coefficient by
+    // its actual shorter digit support, including the appended carry digit.
+    vx_fronts<B,S> fr(r,size,tail,fronts,limbs_front,coefficient_terms?coefficient_terms:t.shape.nfull);if constexpr(!Cyclic||Prefix)fr.init(chains[0]);
     const bool compact=pq16_twc(n);const double *tw=pl->tw22[__builtin_ctz(n)];
     for(unsigned j=0;j<len;j+=32){qcv v[fronts][4];
         if constexpr(M==1){for(unsigned u=0;u<4;u+=2){qcv w1,w2,w3,w4;pq16_tw22_get(tw,compact,&w1,&w2,&w3,&w4);tw+=pq16_tw_step(compact);
             for(unsigned q=0;q<2;++q){qcv x[4];for(unsigned s=0;s<4;++s)x[s]=q_ld(data+2*size_t(s)*len+2*j+16*(u+q));q_ibf4(x,q?w3:w1,q?w4:w2);for(unsigned s=0;s<4;++s)v[s][u+q]=x[s];}}}
-        else{for(unsigned u=0;u<4;++u){qcv x[M],y[M];for(unsigned b=0;b<M;++b){x[b]=q_ld(data+2*size_t(b)*n+2*j+16*u);if(b)x[b]=q_mulc(x[b],q_ld(t.tw+2*size_t(b-1)*n+2*j+16*u));}q_pfa_bfly(x,y,M,0);for(unsigned s=0;s<M;++s)v[s][u]=y[s];}}
-        for(unsigned s=0;s<fronts;++s)if(!Prefix||(size_t(s)*len+j)*B/32<size)vx_emit64<B>(fr.target,(size_t(s)*len+j)*B/32,v[s],chains[s],fr.rc(s));
+        else{for(unsigned u=0;u<4;++u){qcv x[M],y[M];for(unsigned b=0;b<M;++b){x[b]=q_ld(data+2*size_t(b)*n+2*j+16*u);if(b)x[b]=q_mulc(x[b],ct_cross_root(t,b,j+8*u));}q_pfa_bfly(x,y,M,0);for(unsigned s=0;s<M;++s)v[s][u]=y[s];}}
+        for(unsigned s=0;s<fronts;++s){const size_t off=(size_t(s)*len+j)*B/32;
+            if constexpr(Tail)if(off+B<=origin)continue;
+            if(!Prefix||off<size)vx_emit64<B>(fr.target,off,v[s],chains[s],fr.rc(s));}
+    }
+    if constexpr(Tail){
+        // The first retained B-word block starts with zero carry. The missing
+        // pair carry is below 2^36 in this coefficient domain. Complete all
+        // subsequent front joins, but drop the final cyclic carry into word 0.
+        // For origin>0 the latter changes the high window by at most one.
+        for(unsigned s=unsigned(origin/limbs_front);s+1<fronts;++s){
+            uint64_t high;memcpy(&high,reinterpret_cast<const char*>(&chains[s].prev_hi)+56,8);
+            unsigned __int128 carry=(unsigned __int128)high+chains[s].cin;
+            for(size_t j=size_t(s+1)*limbs_front;carry&&j<size;++j){carry+=r[j];r[j]=uint64_t(carry);carry>>=64;}
+        }
+        return true;
     }
     // In a complete cyclic period the signed-digit bias sums to
     // m*(2^(64*size)-1), hence is already zero modulo the ring. Do not
@@ -187,7 +226,7 @@ template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false>
 }
 // tail staging limbs of the signed emit: one front, one 64-digit block, the next front's 16-limb spill window
 static inline size_t vx_tail_limbs(Shape s){return (size_t(s.radix==1?s.branch/4:s.branch)*s.bits)/32+s.bits+24;}
-template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false>static inline bool vx_multiply(uint64_t *r,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,const CtTables &t,Frame &f,const double *cached=nullptr,bool cached_square=false,size_t prefix=0){
+template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false,bool Tail=false>static inline bool vx_multiply(uint64_t *r,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,const CtTables &t,Frame &f,const double *cached=nullptr,bool cached_square=false,size_t prefix=0,size_t origin=0){
     const bool square=Cyclic?cached_square:cached?cached_square:a==b && an==bn;
     const unsigned n=t.shape.branch,N=t.shape.nfull;FrameMark mark(f);double *A=f.alloc<double>((cached||square?2:4)*size_t(N)+48),*D=cached?const_cast<double *>(cached):square?A:A+2*size_t(N)+32;
     uint64_t *tail=nullptr;if constexpr(S&&!Cyclic&&!Prefix)tail=f.alloc<uint64_t>(vx_tail_limbs(t.shape));
@@ -195,6 +234,7 @@ template<unsigned M,unsigned B,bool S=false,bool Cyclic=false,bool Prefix=false>
     else{if(!square)vx_forward<M,B,S>(D,b,bn,t);vx_forward<M,B,S>(A,a,an,t);}
     if constexpr(Cyclic){if(cached&&square)ct_pointwise<M,true>(A,D,t);else ct_pointwise<M>(A,D,t);}else ct_pointwise<M>(A,D,t);
     for(unsigned s=0;s<M;++s){double *p=A+2*size_t(s)*n;if constexpr(M!=1)pq16_odd_inv(p,n,t.core);else pq16_inv_r8_only(p,n,t.core);}
-    return vx_emit<M,B,S,Cyclic,Prefix>(r,Prefix?prefix:Cyclic?size_t(N)*B/32:an+bn,A,t,tail);
+    return vx_emit<M,B,S,Cyclic,Prefix,Tail>(r,Prefix?prefix:Cyclic?size_t(N)*B/32:an+bn,A,t,tail,
+        Cyclic?unsigned(std::max<size_t>(N,64*std::min(an,bn)/B+1)):N,origin);
 }
 }

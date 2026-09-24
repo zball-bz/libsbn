@@ -1,8 +1,9 @@
 #include "divrem_cases.hpp"
 int main(){
     unsigned count=0;
-    for(size_t dn:{17u,18u,26u,31u,32u,39u,52u,65u,78u,79u,80u,96u,127u,128u,257u,513u,1024u,2049u,4097u,8191u,16385u}){
-        for(size_t nn:{size_t(0),dn-1,dn,dn+1,dn+7,2*dn-1,2*dn,2*dn+1,4*dn+3}){
+    unsigned automatic_cases=0;
+    for(size_t dn:{3u,4u,5u,6u,7u,8u,9u,10u,12u,13u,14u,15u,16u,17u,18u,26u,31u,32u,39u,52u,65u,78u,79u,80u,96u,127u,128u,257u,513u,1024u,2049u,4097u,8191u,16385u}){
+        for(size_t nn:{size_t(0),dn-1,dn,dn+1,dn+7,2*dn-1,2*dn,2*dn+1,4*dn+3,dn+127,dn+512}){
             Fixture f(count%7==0?3:1,false);
             Service service(f,nn,dn,0,0,0,SBN3_DIVREM_DC);
             assert(service.info.algorithm==SBN3_DIVREM_DC && service.info.workers==1);
@@ -33,5 +34,19 @@ int main(){
             service.close();service.bind();
         }
     }
+    // The automatic one-use route must preserve the exact service contract,
+    // including budget fallbacks, for both balanced and short quotients.
+    for(size_t dn:{32u,65u,128u,257u,512u,769u,2048u,8192u})
+        for(size_t qn:{size_t(4),size_t(8),size_t(32),dn+1}){
+            const size_t nn=dn+qn-1;Fixture f(1,false);Service service(f,nn,dn);
+            for(const auto &d:divisors(dn)){
+                service.prepare(d);std::vector<uint64_t> n(nn),q(qn),r(dn);
+                for(auto &word:n)word=random_word();
+                const auto result=service.execute(n,q,r);
+                certify(n.data(),nn,d.data(),dn,q.data(),result.quotient_limbs,r.data(),result.remainder_limbs,dn<=513);
+                ++automatic_cases;
+            }
+        }
     printf("D&C division: %u cases, irregular blocks/high quotient, exact remainders, zero normalization, signed values, allocation/budget/rebind PASS\n",count);
+    printf("automatic division: %u exact cases with budget fallbacks PASS\n",automatic_cases);
 }

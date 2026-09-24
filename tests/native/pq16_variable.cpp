@@ -12,6 +12,18 @@ static void coefficient(size_t,double);
 #include <sys/mman.h>
 using namespace sbn::v3;using namespace sbn::v3::pq16;
 static std::vector<uint64_t> exact;static std::vector<unsigned char> seen;static double error;static size_t bad;
+static void sparse_butterflies(){
+    for(unsigned m:{3u,5u,7u})for(int inverse:{0,1})for(unsigned test=0;test<32;++test){
+        qcv x[7],full[7],shortened[7];
+        for(unsigned j=0;j<m;++j){alignas(64) double data[16]{};
+            if(j<(m+1)/2)for(auto &v:data)v=double(int64_t(random_word()>>20)-int64_t(uint64_t(1)<<43));
+            x[j]=q_ld(data);}
+        q_pfa_bfly(x,full,m,inverse);q_pfa_bfly<true>(x,shortened,m,inverse);
+        for(unsigned j=0;j<m;++j){alignas(64) double a[16],b[16];q_st(a,full[j]);q_st(b,shortened[j]);
+            for(unsigned k=0;k<16;++k)assert(a[k]==b[k]);}
+    }
+    puts("odd-radix half-input butterflies: full-form equivalence PASS");
+}
 static void coefficient(size_t k,double x){if(exact.empty())return;assert(k<exact.size()&&!seen[k]++&&std::isfinite(x));double e=std::abs(x-double(exact[k]));error=std::max(error,e);bad+=e>=.5;}
 template<unsigned B>static uint64_t digit(const uint64_t *a,size_t n,size_t j){size_t bit=j*B,k=bit/64;unsigned s=bit%64;if(k>=n)return 0;uint64_t v=a[k]>>s;if(s&&k+1<n)v|=a[k+1]<<(64-s);return v&((1u<<B)-1);}
 template<unsigned B>static void codec(){
@@ -20,13 +32,36 @@ template<unsigned B>static void codec(){
         qcv v[]={vx_decode<B,0,false>(a,count,base),vx_decode<B,1,false>(a,count,base),vx_decode<B,2,false>(a,count,base),vx_decode<B,3,false>(a,count,base)};
         for(unsigned u=0;u<4;++u){alignas(64) double d[16];q_st(d,v[u]);for(unsigned j=0;j<8;++j){assert(d[j]==digit<B>(a,count,(base/B)*64+u*16+2*j));assert(d[j+8]==digit<B>(a,count,(base/B)*64+u*16+2*j+1));}}
         // balanced digits: e_i = d_i - (t_i<<B) + t_{i-1}, t_i = d_i>>(B-1), t_{-1} = 0 at the operand start
-        qcv w[]={vx_decode<B,0,true>(a,count,base),vx_decode<B,1,true>(a,count,base),vx_decode<B,2,true>(a,count,base),vx_decode<B,3,true>(a,count,base)};
-        for(unsigned u=0;u<4;++u){alignas(64) double d[16];q_st(d,w[u]);for(unsigned j=0;j<16;++j){const size_t i=(base/B)*64+u*16+j;const int64_t di=int64_t(digit<B>(a,count,i)),ti=di>>(B-1),tp=i?int64_t(digit<B>(a,count,i-1)>>(B-1)):0;
-            assert(d[j%2?j/2+8:j/2]==double(di-(ti<<B)+tp));}}
+        for(unsigned wrapped:{0u,1u}){
+            qcv w[]={vx_decode<B,0,true>(a,count,base,wrapped),vx_decode<B,1,true>(a,count,base,wrapped),vx_decode<B,2,true>(a,count,base,wrapped),vx_decode<B,3,true>(a,count,base,wrapped)};
+            for(unsigned u=0;u<4;++u){alignas(64) double d[16];q_st(d,w[u]);for(unsigned j=0;j<16;++j){const size_t i=(base/B)*64+u*16+j;const int64_t di=int64_t(digit<B>(a,count,i)),ti=di>>(B-1),tp=i?int64_t(digit<B>(a,count,i-1)>>(B-1)):wrapped;
+                const double expected=double(di-(ti<<B)+tp);assert(!memcmp(&d[j%2?j/2+8:j/2],&expected,8));}}
+        }
     }
-    for(unsigned mode=0;mode<4;++mode){Fixture f(1);auto *r=f.guarded(4*B+4);memset(r,0,(4*B+4)*8);q_chain c{};ref_int gold,v,got;ref_inits(gold,v,got,nullptr);
+    alignas(4096) uint64_t pages[1536]{};
+    for(unsigned count=1;count<=64;++count)for(bool at_end:{false,true}){
+        auto *p=pages+(at_end?1024-count:512);
+        for(unsigned j=0;j<count;++j)p[j]=j%3?random_word():UINT64_MAX;
+        SBN3_FRAME_POISON(pages,sizeof pages);SBN3_FRAME_UNPOISON(p,count*8);
+        for(unsigned base=0;base<=64;base+=B)for(unsigned wrapped:{0u,1u}){
+            qcv w[]={vx_decode<B,0,true>(p,count,base,wrapped),vx_decode<B,1,true>(p,count,base,wrapped),vx_decode<B,2,true>(p,count,base,wrapped),vx_decode<B,3,true>(p,count,base,wrapped)};
+            for(unsigned u=0;u<4;++u){alignas(64) double d[16];q_st(d,w[u]);for(unsigned j=0;j<16;++j){const size_t i=(base/B)*64+u*16+j;
+                const int64_t di=digit<B>(p,count,i),prev=i?digit<B>(p,count,i-1)>>(B-1):wrapped;
+                const double expected=double(di-((di>>(B-1))<<B)+prev);assert(!memcmp(&d[j%2?j/2+8:j/2],&expected,8));}}
+        }
+        SBN3_FRAME_UNPOISON(pages,sizeof pages);
+    }
+    for(unsigned mode=0;mode<7;++mode){Fixture f(1);auto *r=f.guarded(4*B+4);memset(r,0,(4*B+4)*8);q_chain c{};ref_int gold,v,got;ref_inits(gold,v,got,nullptr);
+        // Carry across all four vectors and across complete emit blocks;
+        // also stop/restart it at vector seams. The oracle accumulates the
+        // original coefficient polynomial, independently of pair packing.
+        if(mode==4){c.cin=1;ref_set_ui(gold,1);}
         for(unsigned block=0;block<4;++block){qcv z[4];alignas(64) double d[64];
-            for(unsigned k=0;k<64;++k){uint64_t x=mode==0?0:mode==1?(1ull<<49)-1:mode==2?random_word()&((1ull<<49)-1):(k?((1u<<B)-1):(1ull<<40));d[16*(k/16)+(k%16)/2+8*(k%2)]=double(x);ref_set_ui(v,x);ref_mul_2exp(v,v,B*(64*block+k));ref_add(gold,gold,v);}
+            for(unsigned k=0;k<64;++k){uint64_t x=mode==0?0:mode==1?(1ull<<49)-1:mode==2?random_word()&((1ull<<49)-1):(k?((1u<<B)-1):(1ull<<40));
+                if(mode>=4){x=(k&1)?0:(1ull<<(2*B))-1;
+                    if(mode==5&&k%16==14)++x;
+                    if(mode==6&&!(k&1))x+=int(k/2%3)-1;}
+                d[16*(k/16)+(k%16)/2+8*(k%2)]=double(x);ref_set_ui(v,x);ref_mul_2exp(v,v,B*(64*block+k));ref_add(gold,gold,v);}
             for(unsigned k=0;k<4;++k)z[k]=q_ld(d+16*k);const vx_target t{r,4*B+4,nullptr,0,0};vx_emit64<B>(t,block*B,z,c,sb_set1_64(0x4338000000000000LL));}
         assert(q_chains_close(r,4*B+4,&c,1,4*B));ref_import(got,4*B+4,-1,8,0,0,r);assert(!ref_cmp(gold,got));ref_clears(gold,v,got,nullptr);}
     printf("{\"kind\":\"codec\",\"bits\":%u,\"success\":true}\n",B);fflush(stdout);
@@ -69,7 +104,7 @@ template<unsigned B>static void band(){
     }
     product<5,B,true>(B>=19?256:B==18?1024:2048,1,true);product<3,B,true>(B>=19?512:B==18?1024:4096,0,true);
 }
-extern "C" void test_pq16_variable(){band<17>();band<18>();band<19>();band<20>();
+extern "C" void test_pq16_variable(){sparse_butterflies();codec<16>();band<17>();band<18>();band<19>();band<20>();
     // envelope policy: right-angle wide caps are the measured ones, CT/PQ caps unchanged
     assert(variable_supported(Shape{12288,4096,3,false,Recipe::RightAngle,17},3000,3000)&&!variable_supported(Shape{24576,8192,3,false,Recipe::RightAngle,17},6000,6000));
     assert(variable_supported(Shape{24576,8192,3,false,Recipe::CooleyTukeyPQ,17},6000,6000)&&!variable_supported(Shape{3584,512,7,false,Recipe::RightAngle,19},800,800));

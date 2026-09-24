@@ -1,16 +1,20 @@
 #include "common/identity.hpp"
 #include "sbn3/newton.h"
 #include "algorithms/inverse_program.hpp"
+#include "algorithms/local_inverse.hpp"
 #include "algorithms/newton_tuning.hpp"
 #include "algorithms/newton_contract.hpp"
 #include "algorithms/newton_limits.hpp"
 #include "algorithms/newton_planner.hpp"
-#include "algorithms/product_stage.hpp"
+#include "product/stage.hpp"
+#include "product/native_capabilities.hpp"
+#include "product/local_program.hpp"
 #include "algorithms/rsqrt.hpp"
 #include "algorithms/divide_terminal.hpp"
 #include "algorithms/sqrt2_rational.hpp"
 #include "algorithms/sqrt2_finish.hpp"
 #include "runtime/team.hpp"
+#include "runtime/scratch.hpp"
 #include <algorithm>
 #include <cmath>
 #include <new>
@@ -19,6 +23,22 @@
 namespace sbn::v3 {
 namespace {
 constexpr uint64_t magic = 0x53424e334e575431ULL;
+constexpr uint64_t local_magic = 0x53424e334e574c31ULL;
+constexpr size_t local_divide_service_limbs=16384;
+struct LocalBinding {
+    uint64_t marker=local_magic;
+    sbn3_arena *arena=nullptr;
+    sbn3_team *team=nullptr;
+    sbn3_lease storage{};
+    size_t n=0,control_bytes=0;
+    sbn3_newton_kind kind=SBN3_NEWTON_INVERSE;
+    unsigned products=0;
+    product::LocalWindowReplay program{};
+    bool used=false,timed=false;
+    unsigned char dyadic=0; // compact quotient route: 1 word, 2 u52, 3 local refinement
+    sbn3_newton_metrics metrics{};
+};
+static_assert(sizeof(LocalBinding)<=256);
 constexpr unsigned max_steps = newton_limits::stages, max_products = newton_limits::products,
                    max_spectra = newton_limits::spectra, max_leases = newton_limits::leases;
 using newton_detail::Plan;
@@ -91,20 +111,23 @@ uint64_t seal(const Plan &p) {
                        p.work1_offset,
                        p.product_pool_offset,
                        p.product_pool_bytes,
-                       uint64_t(p.compact),
-                       uint64_t(p.choice_count)})
+                       uint64_t(p.compact), uint64_t(p.local),
+                       uint64_t(p.choice_count),uint64_t(p.local_steps)})
         h = feed(h, x);
     for (unsigned k = 0; k < p.choice_count; ++k)
-        for (uint64_t x :
-             {uint64_t(p.choices[k].np), uint64_t(p.choices[k].T), uint64_t(p.choices[k].algorithm),
-              uint64_t(p.choices[k].workers), p.choices[k].ring})
-            h = feed(h, x);
+        h=feed(h,product::window_choice_identity(p.choices[k]));
+    for(size_t j=0;j<p.local_steps*sizeof(product::LocalWindowStep)/8;++j){
+        uint64_t word;memcpy(&word,reinterpret_cast<const unsigned char *>(p.choices)+8*j,8);h=feed(h,word);
+    }
+
     return h;
 }
 Plan load(const sbn3_newton_plan &p) {
     Plan q{};
     memcpy(&q, p.opaque, sizeof q);
-    require(q.marker == magic && q.choice_count <= max_steps && q.seal == seal(q), SBN3_FATAL_ARGUMENT,
+    require(q.marker == magic && q.choice_count <= max_steps &&
+                q.local_steps<=product::LocalWindowProgram::capacity&&
+                (!q.local_steps||(q.local&&!q.choice_count))&&q.seal == seal(q), SBN3_FATAL_ARGUMENT,
             "Newton plan identity");
     return q;
 }
@@ -220,6 +243,7 @@ struct Assembly {
     size_t pool_bytes = 0;
     size_t max_work0 = 0, max_work1 = 0;
     size_t inverse_work0 = 0, inverse_work1 = 0;
+    size_t local_seed_bytes = 0;
     unsigned products = 0, spectra = 0, leases = 0, choices = 0, stages = 0, workers = 1;
     uint64_t hash = 1469598103934665603ULL;
     sbn3_query_result status = SBN3_SUPPORTED;
@@ -337,24 +361,33 @@ struct Assembly {
         }
         ++choices;
         ++stages;
-        max_ring = std::max(max_ring, v.producer_info.cyclic_limbs);
-        const size_t work0 = kind == Cycle::Inverse ? v.producer_info.cyclic_limbs
+        const size_t capacity=kind==Cycle::Rsqrt?v.producer_info.cyclic_limbs:
+            std::max(v.producer_info.cyclic_limbs,n)+3;
+        max_ring = std::max(max_ring, capacity);
+        const size_t work0 = kind == Cycle::Inverse ? capacity
                              : kind == Cycle::Rsqrt ? m + newton_contract::guard_words
                                                     : std::max(m + 1, newton_contract::residual_words(m, n));
         max_work0 = std::max(max_work0, work0);
-        max_work1 = std::max(max_work1, v.producer_info.cyclic_limbs);
-        for (unsigned k = 0; k < v.count; ++k)
-            max_work1 = std::max(max_work1, sbn3_mul_output_capacity(&v.infos[k].mul));
+        size_t work1=kind==Cycle::Inverse?(v.consume_residual?0:
+            v.count==2?newton_contract::residual_words(m,n):n):capacity;
+        if(kind!=Cycle::Inverse)for(unsigned k=0;k<v.count;++k)
+            work1=std::max(work1,sbn3_mul_output_capacity(&v.infos[k].mul));
+        max_work1=std::max(max_work1,work1);
         if (kind == Cycle::Inverse) {
             inverse_work0 = std::max(inverse_work0, work0);
-            inverse_work1 = std::max(inverse_work1, v.producer_info.cyclic_limbs);
+            inverse_work1 = std::max(inverse_work1, work1);
         }
         return true;
     }
     void inverse(size_t target, uint64_t *v0, uint64_t *v1) {
         size_t sizes[max_steps], m = target;
         unsigned count = 0;
-        while (m > newton_limits::inverse_seed_words) {
+        const size_t seed_limit=p.options.prime_count?newton_limits::inverse_seed_words:
+            product::window_seed_limit(p.options.workers);
+        while (m > seed_limit) {
+            // Use the same supported serial FFT prefix as the public inverse.
+            // Only the remaining larger rungs need persistent NTT bindings.
+            if(!p.options.prime_count&&p.options.workers==1&&local_refinement_supported(m,false))break;
             if (count == max_steps) {
                 status = SBN3_QUERY_CAPACITY;
                 return;
@@ -363,7 +396,11 @@ struct Assembly {
             m = newton_contract::next_precision(m);
         }
         if (b)
-            b->inv = {target, m, count, b->inv_steps, {v0, v1}};
+            b->inv = {target, m, count, b->inv_steps};
+        if(m>newton_limits::inverse_seed_words){
+            local_seed_bytes=local_inverse_approximate_bytes(m);
+            if(b)b->inv.local_seed_bytes=local_seed_bytes;
+        }
         for (unsigned j = count; j-- > 0;) {
             const size_t n = sizes[j];
             Bundle v{};
@@ -371,11 +408,16 @@ struct Assembly {
                 return;
             auto *h = cache(v.producer, v.producer_info, v.future);
             auto *mul = product(v.plans[0], v.infos[0], h);
+            auto *correction = v.count==2?product(v.plans[1], v.infos[1], h):nullptr;
             if (b)
                 b->inv_steps[count - 1 - j] = {m,       n,      v.producer_info.cyclic_limbs, mul, h, nullptr,
                                                nullptr, b->team};
             if (b && p.compact)
                 b->inv_steps[count - 1 - j].stage = b->compact->stages + choices - 1;
+            if(b&&v.count==2){auto &r=b->inv_steps[count-1-j];r.correction_product=correction;
+                r.correction_input_words=newton_contract::residual_words(m,n);}
+            if(b){b->inv_steps[count-1-j].consume_residual=v.consume_residual;
+                b->inv_steps[count-1-j].repair_bytes=v.repair_bytes;}
             m = n;
         }
         if (b)
@@ -419,7 +461,7 @@ struct Assembly {
             return;
         auto *h = cache(v.producer, v.producer_info, v.future);
         auto *mul = product(v.plans[0], v.infos[0], h);
-        auto *res = product(v.plans[1], v.infos[1]);
+        auto *res = v.count==1?mul:product(v.plans[1], v.infos[1]);
         if (b)
             b->division = {m,
                            n,
@@ -433,7 +475,10 @@ struct Assembly {
         if (b && p.compact)
             b->division.stage = b->compact->stages + choices - 1;
         if (b) {
-            b->division.output_capacity = v.producer_info.cyclic_limbs;
+            b->division.fresh_residual_in_cached=v.count==1;
+            b->division.retain_u_across_residual=v.count==1;
+            b->division.output_capacity = std::max(v.producer_info.cyclic_limbs,n)+3;
+            b->division.repair_bytes = v.repair_bytes;
             for (unsigned k = 0; k < v.count; ++k)
                 b->division.output_capacity =
                     std::max(b->division.output_capacity, sbn3_mul_output_capacity(&v.infos[k].mul));
@@ -481,13 +526,7 @@ struct Assembly {
         const auto kind = p.info.kind;
         const size_t n = p.info.precision_limbs;
         if (kind == SBN3_NEWTON_INVERSE) {
-            // The retained path preserves the short-call layout. A compact
-            // ladder sends the last output directly to caller storage.
-            const size_t capacity =
-                p.compact ? newton_contract::minimum_approximation_words(n, newton_limits::inverse_seed_words)
-                          : n + 1;
-            auto *a = words(capacity), *c = words(capacity);
-            inverse(n, a, c);
+            inverse(n, nullptr, nullptr);
         } else if (kind == SBN3_NEWTON_RSQRT || kind == SBN3_SQRT2_RSQRT) {
             const size_t precision = n + (kind == SBN3_SQRT2_RSQRT ? 2 : 0);
             // SQRT2 consumes its full intermediate internally; its final
@@ -554,7 +593,12 @@ struct Assembly {
         const size_t execute_bytes = division_union ? std::max(work1 + work1_bytes, bytes_for(max_work1, 8))
                                                      : work1 + work1_bytes;
         const size_t pool_at = aligned(cursor, max_align);
-        const size_t shared = execute_bytes, shared_at = aligned(pool_at + pool_bytes, max_align);
+        const size_t shared_at=aligned(pool_at+pool_bytes,max_align);
+        // A local seed runs before the first product is bound. Its temporary
+        // data may occupy the still-empty product pool and alignment gap.
+        const size_t seed_prefix=p.compact?shared_at-pool_at:0;
+        const size_t seed_tail=local_seed_bytes>seed_prefix?local_seed_bytes-seed_prefix:0;
+        const size_t shared=std::max(execute_bytes,seed_tail);
         const unsigned peak = leases + 1 + (shared ? 1 : 0) + (p.compact ? 3 : 0);
         if (peak > max_leases) {
             status = SBN3_QUERY_CAPACITY;
@@ -600,7 +644,17 @@ struct Assembly {
             }
             for (size_t j = 0; j < b->inv.rung_count; ++j) {
                 b->inv_steps[j].residual = b->shared[0];
-                b->inv_steps[j].correction = b->shared[1];
+                b->inv_steps[j].correction = b->inv_steps[j].consume_residual?nullptr:b->shared[1];
+            }
+            if(b->inv.local_seed_bytes){
+                if(p.compact){
+                    require(b->compact->guard.data&&local_seed_bytes<=p.info.storage_bytes-pool_at,
+                            SBN3_FATAL_WORKSPACE,"seed/product phase union");
+                    // The binding exclusively owns the whole reserved range,
+                    // including this contiguous span across its pool/shared
+                    // leases. Both remain owned until the seed has returned.
+                    b->inv.local_seed_workspace=b->compact->guard.data;
+                }else b->inv.local_seed_workspace=b->shared[0];
             }
             for (size_t j = 0; j < b->rs.rung_count; ++j) {
                 b->rs_steps[j].residual = b->shared[0];
@@ -642,6 +696,133 @@ void value(const Binding &b, sbn3_const_limbs v, size_t count, sbn3_limbs out, b
         require(!overlaps(v.data, bytes, l.data, l.bytes), SBN3_FATAL_ARGUMENT, "Newton input/team overlap");
     }
 }
+bool local_binding(const sbn3_newton_binding *b) {
+    return b&&*reinterpret_cast<const uint64_t *>(b)==local_magic;
+}
+void local_idle(const LocalBinding &b) {
+    require(pthread_equal(b.team->creator,pthread_self())&&!b.team->busy,SBN3_FATAL_TEAM,"local Newton owner/idle");
+}
+unsigned compact_divide_recipe(size_t n){
+    // Once full-precision products enter the local FFT domain, preserve the
+    // quotient-only refinement: exact division's later DC/Barrett crossover
+    // includes remainder work that this service does not need.
+    if(!product::local_program_eligible(n)&&local_dyadic_divide_supported(n))
+        return unsigned(local_dyadic_divide_native(n));
+    return n>=4&&native_available()&&!product::local_program_eligible(newton_contract::next_precision(n)+1)?2:3;
+}
+size_t compact_divide_work(size_t n,unsigned recipe){
+    return recipe==2?local_divide_bytes(n):local_dyadic_divide_bytes(n,recipe==1);
+}
+bool dyadic_query(size_t n,unsigned recipe,const sbn3_newton_options &o,sbn3_newton_plan *out,sbn3_newton_info *i) {
+    const size_t control=aligned(sizeof(LocalBinding),128),work=compact_divide_work(n,recipe);
+    newton_detail::DyadicPlan p{newton_detail::dyadic_plan_magic,n,aligned(control+work,128),recipe,o.timing};
+    i->kind=SBN3_NEWTON_DIVIDE;i->workers=1;i->precision_limbs=n;i->output_limbs=n+1;
+    i->control_bytes=control;i->storage_bytes=p.bytes;i->shared_bytes=work;i->storage_alignment=128;
+    i->stages=1;i->lease_peak=SBN3_CHECK_SMALL?1:0;
+    if(recipe==2){i->products=3;for(size_t m=newton_contract::next_precision(n);m>15;m=newton_contract::next_precision(m)){++i->stages;i->products+=2;}}
+    i->plan_id=newton_detail::dyadic_plan_magic^(uint64_t(n)<<3)^(uint64_t(recipe)<<1)^o.timing;
+    if(o.memory_budget&&p.bytes>o.memory_budget)return false;
+    memcpy(out->opaque,&p,sizeof p);return true;
+}
+void bind_dyadic(const sbn3_newton_plan &opaque,sbn3_arena *arena,size_t offset,
+                sbn3_team *team,sbn3_newton_binding **out) {
+    newton_detail::DyadicPlan p;memcpy(&p,opaque.opaque,sizeof p);
+    require(team->arena==arena,SBN3_FATAL_TEAM,"small quotient arena/team");
+    auto *data=arena->base+offset;
+    require(!(reinterpret_cast<uintptr_t>(data)&127),SBN3_FATAL_WORKSPACE,"small quotient alignment");
+    sbn3_lease storage{data,p.bytes,0};
+    if constexpr(SBN3_CHECK_SMALL){
+        require(p.recipe<=2&&p.timing<=1&&p.recipe==compact_divide_recipe(p.n),SBN3_FATAL_ARGUMENT,"small quotient plan");
+        require(p.bytes==aligned(aligned(sizeof(LocalBinding),128)+compact_divide_work(p.n,p.recipe),128),SBN3_FATAL_WORKSPACE,"small quotient quote");
+        require(!team->busy&&pthread_equal(team->creator,pthread_self()),SBN3_FATAL_TEAM,"small quotient owner");
+        require(arena->unleased(offset,p.bytes),SBN3_FATAL_WORKSPACE,"small quotient exclusive range");
+        storage=arena->acquire(offset,p.bytes);
+    }
+    auto *b=::new(data)LocalBinding{};b->arena=arena;b->team=team;b->storage=storage;
+    b->n=p.n;b->kind=SBN3_NEWTON_DIVIDE;b->control_bytes=aligned(sizeof(LocalBinding),128);
+    b->timed=p.timing;b->dyadic=static_cast<unsigned char>(1+p.recipe);
+    if(p.recipe==2){b->products=3;for(size_t m=newton_contract::next_precision(p.n);m>15;m=newton_contract::next_precision(m))b->products+=2;}
+    *out=reinterpret_cast<sbn3_newton_binding *>(b);
+}
+void execute_dyadic(LocalBinding &b,const sbn3_newton_inputs *in,sbn3_limbs out){
+    require(!b.used&&in,SBN3_FATAL_LIFETIME,"small quotient input/single use");
+    const auto a=in->numerator,d=in->denominator;const size_t bytes=8*(b.n+1);
+    if constexpr(SBN3_CHECK_SMALL){
+        local_idle(b);
+        require(a.data&&a.count==b.n+1&&d.data&&d.count==b.n&&out.data&&out.capacity>=b.n+1&&
+                !(reinterpret_cast<uintptr_t>(out.data)&63),SBN3_FATAL_ARGUMENT,"small quotient values");
+        require(!overlaps(d.data,8*b.n,out.data,bytes)&&!overlaps(d.data,8*b.n,a.data,bytes)&&
+                (a.data==out.data||!overlaps(a.data,bytes,out.data,bytes)),SBN3_FATAL_ARGUMENT,"small quotient value alias");
+        for(auto span:{sbn3_const_limbs{a.data,b.n+1},sbn3_const_limbs{d.data,b.n},sbn3_const_limbs{out.data,b.n+1}}){
+            valid_span(span.data,8*span.count,"small quotient span");
+            require(!overlaps(span.data,8*span.count,b.storage.data,b.storage.bytes),SBN3_FATAL_ARGUMENT,"small quotient scratch alias");
+            for(unsigned j=0;j<b.team->width;++j){const auto &l=j?b.team->stacks[j]:b.team->storage;
+                require(!overlaps(span.data,8*span.count,l.data,l.bytes),SBN3_FATAL_ARGUMENT,"small quotient team alias");}
+        }
+    }
+    require(d.data&&(d.data[b.n-1]>>63)&&a.data&&a.data[b.n]<=1,SBN3_FATAL_ARGUMENT,"small quotient normalized input");
+    b.used=true;const auto begin=b.timed?now():0;
+    auto *work=static_cast<unsigned char *>(b.storage.data)+b.control_bytes;const size_t work_bytes=b.storage.bytes-b.control_bytes;
+    if(b.dyadic==3){auto frame=Frame::external(work,work_bytes);local_divide(out.data,a.data,d.data,b.n,frame);}
+    else local_dyadic_divide(out.data,a.data,d.data,b.n,b.dyadic==2,work,work_bytes);
+    if(b.timed)b.metrics.compute_ns=now()-begin;
+    b.metrics.products_executed=b.products;
+}
+bool local_query(Plan &p) {
+    const auto kind=p.info.kind;const size_t n=p.info.precision_limbs;
+    if(kind!=SBN3_NEWTON_INVERSE&&kind!=SBN3_NEWTON_DIVIDE)return false;
+    const bool ordinary=product::inline_window_preferred(n,p.options.prime_count,p.options.workers)&&
+        n<=(kind==SBN3_NEWTON_INVERSE?local_inverse_max_limbs:local_divide_service_limbs);
+    if(!ordinary&&(p.options.prime_count||p.options.workers!=1||!native_available()||
+        !local_refinement_supported(n,kind==SBN3_NEWTON_DIVIDE)))return false;
+    auto &i=p.info;p.local=true;
+    static_assert(sizeof(p.choices)>=sizeof(product::LocalWindowProgram::steps));
+    if(n<=local_inverse_max_limbs&&product::local_program_eligible(newton_contract::next_precision(n)+1)){
+        product::LocalWindowProgram program{};
+        i.shared_bytes=local_refinement_compile(n,kind==SBN3_NEWTON_DIVIDE,program);
+        p.local_steps=program.count;memcpy(p.choices,program.steps,program.count*sizeof(program.steps[0]));
+    }else i.shared_bytes=kind==SBN3_NEWTON_INVERSE?local_inverse_approximate_bytes(n):local_divide_bytes(n);
+    i.control_bytes=aligned(sizeof(LocalBinding)+p.local_steps*sizeof(product::LocalWindowStep),128);i.storage_alignment=128;
+    i.storage_bytes=aligned(i.control_bytes+i.shared_bytes,128);i.lease_peak=1;i.workers=1;
+    size_t target=kind==SBN3_NEWTON_INVERSE?n:newton_contract::next_precision(n);
+    while(target>15){++i.stages;i.products+=2;target=newton_contract::next_precision(target);}
+    if(kind==SBN3_NEWTON_DIVIDE){++i.stages;i.products+=3;}
+    i.plan_id=feed(feed(feed(local_magic,uint64_t(kind)),n),i.storage_bytes);
+    return true;
+}
+void execute_local(LocalBinding &b,const sbn3_newton_inputs *provided,sbn3_limbs out) {
+    if(b.dyadic)return execute_dyadic(b,provided,out);
+    local_idle(b);require(!b.used&&provided,SBN3_FATAL_LIFETIME,"local Newton single-use input");
+    const size_t bytes=(b.n+1)*8;
+    require(out.data&&out.capacity>=b.n+1&&!(reinterpret_cast<uintptr_t>(out.data)&63),SBN3_FATAL_ARGUMENT,"local Newton output");
+    valid_span(out.data,bytes,"local Newton output");
+    auto check=[&](const void *data,size_t count){
+        valid_span(data,count,"local Newton value");
+        require(!overlaps(data,count,b.storage.data,b.storage.bytes),SBN3_FATAL_ARGUMENT,"local Newton scratch overlap");
+        for(unsigned j=0;j<b.team->width;++j){const auto &l=j?b.team->stacks[j]:b.team->storage;
+            require(!overlaps(data,count,l.data,l.bytes),SBN3_FATAL_ARGUMENT,"local Newton team overlap");}
+    };
+    check(out.data,bytes);
+    const auto d=provided->denominator;
+    require(d.data&&d.count==b.n&&!(reinterpret_cast<uintptr_t>(d.data)&7)&&!overlaps(d.data,b.n*8,out.data,bytes),
+            SBN3_FATAL_ARGUMENT,"local Newton divisor");
+    check(d.data,b.n*8);require(d.data[b.n-1]>>63,SBN3_FATAL_ARGUMENT,"local Newton normalized divisor");
+    if(b.kind==SBN3_NEWTON_DIVIDE){const auto a=provided->numerator;
+        require(a.data&&a.count==b.n+1&&!(reinterpret_cast<uintptr_t>(a.data)&7)&&
+                (a.data==out.data||!overlaps(a.data,bytes,out.data,bytes)),SBN3_FATAL_ARGUMENT,"local Newton numerator");
+        check(a.data,bytes);require(a.data[b.n]<=1,SBN3_FATAL_ARGUMENT,"local Newton numerator high word");
+    }
+    b.used=true;const auto begin=b.timed?now():0;
+    auto *base=static_cast<unsigned char *>(b.storage.data);
+    auto frame=Frame::external(base+b.control_bytes,b.storage.bytes-b.control_bytes);
+    if(b.program.count){
+        if(b.kind==SBN3_NEWTON_INVERSE)local_inverse_replay(out.data,d.data,b.n,frame,b.program);
+        else local_divide_replay(out.data,provided->numerator.data,d.data,b.n,frame,b.program);
+    }else if(b.kind==SBN3_NEWTON_INVERSE)local_inverse_approximate(out.data,d.data,b.n,frame);
+    else local_divide(out.data,provided->numerator.data,d.data,b.n,frame);
+    if(b.timed)b.metrics.compute_ns=now()-begin;
+    b.metrics.products_executed=b.products;
+}
 } // namespace
 } // namespace sbn::v3
 using namespace sbn::v3;
@@ -650,24 +831,30 @@ extern "C" sbn3_query_result sbn3_newton_query(sbn3_newton_kind kind, size_t n,
                                                sbn3_newton_info *info) {
     require(out && info, SBN3_FATAL_ARGUMENT, "Newton query output");
     *info = {};
-    if (unsigned(kind) > SBN3_SQRT2_RATIONAL || !n || (kind == SBN3_NEWTON_DIVIDE && n < 4))
+    if (unsigned(kind) > SBN3_SQRT2_RATIONAL || !n)
         return SBN3_UNSUPPORTED;
     if (n > newton_limits::precision_words)
         return SBN3_QUERY_CAPACITY;
-    Plan p{};
-    p.options = options ? *options : sbn3_newton_options{1, 0, 0, 0};
-    if (!p.options.workers || p.options.workers > 32 || p.options.timing > 1 ||
-        (p.options.prime_count && (p.options.prime_count < newton_limits::first_ntt_prime_count ||
-                                   p.options.prime_count > newton_limits::last_ntt_prime_count)))
+    const auto opt=options?*options:sbn3_newton_options{1,0,0,0};
+    if (!opt.workers || opt.workers > 32 || opt.timing > 1 ||
+        (opt.prime_count && (opt.prime_count < newton_limits::first_ntt_prime_count ||
+                            opt.prime_count > newton_limits::last_ntt_prime_count)))
         return SBN3_UNSUPPORTED;
+    if(kind==SBN3_NEWTON_DIVIDE&&!opt.prime_count){
+        const unsigned recipe=compact_divide_recipe(n);
+        if(recipe<=2)return dyadic_query(n,recipe,opt,out,info)?SBN3_SUPPORTED:SBN3_QUERY_CAPACITY;
+    }
+    if(kind==SBN3_NEWTON_DIVIDE&&n<4)return SBN3_UNSUPPORTED;
+    Plan p{};p.options=opt;
     p.info.kind = kind;
     p.info.precision_limbs = n;
     p.info.output_limbs = n + 1;
-    Assembly a(p);
-    a.run();
-    if (!a.finish())
-        return a.status;
-    if (kind <= SBN3_NEWTON_DIVIDE && p.choice_count) {
+    if(!local_query(p)){
+        Assembly a(p);
+        a.run();
+        if (!a.finish())return a.status;
+    }
+    if (!p.local && kind <= SBN3_NEWTON_DIVIDE && p.choice_count) {
         // Reuse placement-independent choices; compact division reselects
         // its final cycle with the extra spectrum-build cost. Include all
         // immutable recipe metadata when comparing the storage layouts.
@@ -689,6 +876,8 @@ extern "C" sbn3_query_result sbn3_newton_query(sbn3_newton_kind kind, size_t n,
 extern "C" void sbn3_newton_bind(const sbn3_newton_plan *opaque, sbn3_arena *arena, size_t offset,
                                  sbn3_team *team, sbn3_newton_binding **out) {
     require(opaque && arena && team && out, SBN3_FATAL_ARGUMENT, "Newton bind arguments");
+    if(opaque->opaque[0]==newton_detail::dyadic_plan_magic)
+        return bind_dyadic(*opaque,arena,offset,team,out);
     const auto p = load(*opaque);
     require(team->arena == arena && team->width >= p.info.workers &&
                 pthread_equal(team->creator, pthread_self()) && !team->busy,
@@ -703,6 +892,17 @@ extern "C" void sbn3_newton_bind(const sbn3_newton_plan *opaque, sbn3_arena *are
     sbn3_arena_get_stats(arena, &stats);
     require(stats.active_leases + p.info.lease_peak <= Arena::max_leases, SBN3_FATAL_WORKSPACE,
             "Newton lease capacity", p.info.lease_peak, Arena::max_leases - stats.active_leases);
+    if(p.local){
+        const auto storage=arena->acquire(offset,p.info.storage_bytes);
+        auto *b=::new(storage.data)LocalBinding{};b->arena=arena;b->team=team;b->storage=storage;
+        b->n=p.info.precision_limbs;b->control_bytes=p.info.control_bytes;b->kind=p.info.kind;
+        b->products=p.info.products;b->timed=p.options.timing;
+        if(p.local_steps){
+            auto *steps=reinterpret_cast<product::LocalWindowStep *>(static_cast<unsigned char *>(storage.data)+sizeof(LocalBinding));
+            memcpy(steps,p.choices,p.local_steps*sizeof(*steps));b->program={steps,p.local_steps};
+        }
+        *out=reinterpret_cast<sbn3_newton_binding *>(b);return;
+    }
     auto control = arena->acquire(offset, p.info.control_bytes);
     auto *b = ::new (control.data) Binding{};
     b->plan = p;
@@ -724,6 +924,7 @@ extern "C" void sbn3_newton_bind(const sbn3_newton_plan *opaque, sbn3_arena *are
 }
 extern "C" void sbn3_newton_execute(sbn3_newton_binding *opaque, const sbn3_newton_inputs *provided,
                                     sbn3_limbs output) {
+    if(local_binding(opaque))return execute_local(*reinterpret_cast<LocalBinding *>(opaque),provided,output);
     auto &b = binding(opaque);
     idle(b);
     require(!b.used, SBN3_FATAL_LIFETIME, "Newton binding already executed");
@@ -781,6 +982,8 @@ extern "C" void sbn3_newton_execute(sbn3_newton_binding *opaque, const sbn3_newt
         b.metrics.verify_ns = b.checker ? now() - calculated : 0;
     }
     b.metrics.products_executed = unsigned(2 * b.inv.rung_count + 2 * b.rs.rung_count);
+    if(b.inv.local_seed_bytes)for(size_t n=b.inv.seed_limbs;n>15;n=newton_contract::next_precision(n))
+        b.metrics.products_executed+=2;
     if (p.info.kind == SBN3_NEWTON_DIVIDE || p.info.kind == SBN3_SQRT2_RATIONAL)
         b.metrics.products_executed += 3;
     if (p.info.kind == SBN3_SQRT2_RATIONAL)
@@ -790,12 +993,17 @@ extern "C" void sbn3_newton_execute(sbn3_newton_binding *opaque, const sbn3_newt
     b.metrics.spectra_computed = b.compact ? b.compact->reservations : b.spectrum_count;
 }
 extern "C" void sbn3_newton_get_metrics(const sbn3_newton_binding *opaque, sbn3_newton_metrics *out) {
+    if(local_binding(opaque)){const auto &b=*reinterpret_cast<const LocalBinding *>(opaque);local_idle(b);
+        require(out,SBN3_FATAL_ARGUMENT,"local Newton metrics");*out=b.metrics;return;}
     const auto &b = binding(opaque);
     idle(b);
     require(out, SBN3_FATAL_ARGUMENT, "Newton metrics");
     *out = b.metrics;
 }
 extern "C" void sbn3_newton_unbind(sbn3_newton_binding *opaque) {
+    if(local_binding(opaque)){auto &b=*reinterpret_cast<LocalBinding *>(opaque);
+        if(!b.dyadic||SBN3_CHECK_SMALL)local_idle(b);
+        auto *arena=b.arena;const auto storage=b.storage;b.marker=0;b.~LocalBinding();if(storage.token)arena->release(storage);return;}
     auto &b = binding(opaque);
     idle(b);
     for (unsigned j = 0; j < b.product_count; ++j)

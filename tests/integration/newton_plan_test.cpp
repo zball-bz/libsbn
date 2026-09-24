@@ -3,6 +3,7 @@
 #include "algorithms/newton_contract.hpp"
 #include "algorithms/newton_planner.hpp"
 #include "algorithms/newton_tuning.hpp"
+#include "product/local_program.hpp"
 #include <math.h>
 #include <assert.h>
 #include <initializer_list>
@@ -34,7 +35,7 @@ int main() {
                 allocation_watch_start();
                 auto result = sbn3_newton_query(sbn3_newton_kind(kind), n, &options, &plan, &info);
                 assert(!allocation_watch_stop());
-                if (!n || (kind == SBN3_NEWTON_DIVIDE && n < 4))
+                if (!n)
                     assert(result == SBN3_UNSUPPORTED);
                 else if (n > newton_limits::precision_words)
                     assert(result == SBN3_QUERY_CAPACITY);
@@ -44,7 +45,17 @@ int main() {
                         assert(info.products <= newton_limits::products &&
                                info.spectra <= newton_limits::spectra);
                         assert(info.lease_peak <= newton_limits::leases);
-                        if (kind == SBN3_NEWTON_INVERSE || kind == SBN3_NEWTON_RSQRT) {
+                        const bool dyadic=plan.opaque[0]==newton_detail::dyadic_plan_magic;
+                        newton_detail::Plan internal{};if(!dyadic)memcpy(&internal,plan.opaque,sizeof internal);
+                        if(dyadic){
+                            newton_detail::DyadicPlan direct;memcpy(&direct,plan.opaque,sizeof direct);
+                            assert(kind==SBN3_NEWTON_DIVIDE&&!info.spectra&&info.lease_peak<=1);
+                            assert(direct.recipe==2?info.products>0:info.products==0);
+                            assert(info.control_bytes<=256&&info.storage_bytes>=info.control_bytes+info.shared_bytes);
+                        }else if(internal.local){
+                            assert(info.value_bytes==0&&info.control_bytes<=256+128*((internal.local_steps*sizeof(product::LocalWindowStep)+127)/128)&&info.lease_peak==1);
+                            assert(info.storage_bytes>=info.control_bytes+info.shared_bytes);
+                        } else if (kind == SBN3_NEWTON_INVERSE || kind == SBN3_NEWTON_RSQRT) {
                             const size_t seed = kind == SBN3_NEWTON_INVERSE ? 15 : 3;
                             // Compact execution sends the last rung directly
                             // to caller output; internal values need no final n.

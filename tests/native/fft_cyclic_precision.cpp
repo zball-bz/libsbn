@@ -2,6 +2,7 @@
 static void coefficient(size_t,const double *,const double *);
 #define PQ16_COEFFICIENT_OBSERVER ::coefficient
 #include "backend/pq16/island.hpp"
+#include "backend/pq16/ct.hpp"
 #include "../integration/product_support.hpp"
 #include <cmath>
 using namespace sbn::v3;
@@ -15,10 +16,11 @@ static void coefficient(size_t limb,const double *a,const double *b){
         assert(at<exact.size()&&!seen[at]++&&std::isfinite(x));maximum=std::max(maximum,std::abs(x-double(exact[at])));
     }
 }
-static void check(unsigned M,unsigned branch,unsigned pattern){
-    const unsigned N=M*branch;const size_t ring=N/2,an=ring/2,bn=ring;Fixture f(1);
-    const Shape shape{N,branch,M,false,Recipe::PfaPQ,16,false};auto tl=f.allocate(table_bytes(shape),128);Frame tables(*f.arena,tl);
+static void check(unsigned M,unsigned branch,unsigned pattern,bool ct=false,unsigned parts=8){
+    const unsigned N=M*branch;const size_t ring=N/2,an=parts==8?ring/2:ring*parts/16-1,bn=ring;Fixture f(1);
+    const Shape shape{N,branch,M,false,ct?Recipe::CooleyTukeyPQ:Recipe::PfaPQ,16,false};auto tl=f.allocate(table_bytes(shape),128);Frame tables(*f.arena,tl);
     pq16_plan plan{};plan.builder=&tables;pq16_plan_ensure(&plan,branch,M!=1);
+    const auto *ct_table=ct?ct_prepare(tables,plan,shape):nullptr;
     auto *a=f.guarded(an),*b=f.guarded(bn),*out=f.guarded(ring);auto al=f.allocate(16*size_t(N),128),bl=f.allocate(16*size_t(N),128);
     for(unsigned side=0;side<2;++side){auto *p=side?b:a;const size_t size=side?bn:an;
         for(size_t j=0;j<size;++j)p[j]=pattern==0?UINT64_MAX:pattern==1?random_word():pattern==2?(j%2?0:UINT64_MAX):pattern==3?(j==0||j+1==size?UINT64_MAX:0):
@@ -31,11 +33,23 @@ static void check(unsigned M,unsigned branch,unsigned pattern){
     exact.assign(2*N,0);for(size_t j=0;j<full.size();++j)exact[j%(2*N)]+=full[j];seen.assign(2*N,0);maximum=0;
     auto *x=static_cast<double *>(al.data),*y=static_cast<double *>(bl.data);q_cctx unused{};
     allocation_watch_start();
-    if(M==1){pq16_input_stage_w(x,a,an,branch,&plan,0,nullptr,1);pq16_fwd_core_w(x,branch,&plan,nullptr,1);
+    if(ct){
+#define FWD(M) case M:ct_forward<M>(x,a,an,*ct_table);ct_forward<M>(y,b,bn,*ct_table);break
+        switch(M){FWD(3);FWD(5);FWD(7);}
+#undef FWD
+    }else if(M==1){pq16_input_stage_w(x,a,an,branch,&plan,0,nullptr,1);pq16_fwd_core_w(x,branch,&plan,nullptr,1);
         pq16_input_stage_w(y,b,bn,branch,&plan,0,nullptr,1);pq16_fwd_core_w(y,branch,&plan,nullptr,1);}
     else{pq16_pfa_fwd_w(x,a,an,branch,M,&plan,0,nullptr,1);pq16_pfa_fwd_w(y,b,bn,branch,M,&plan,0,nullptr,1);}
-    const bool ok=pq16_conv_emit_w(out,ring,x,y,branch,M,N,0,1,&unused,nullptr,&plan,nullptr,1);
+    bool ok=false;
+    if(ct){
+#define INV(M) case M:ct_pointwise<M>(x,y,*ct_table);for(unsigned s=0;s<M;++s)pq16_odd_inv(x+2*size_t(s)*branch,branch,&plan);ok=ct_emit<M,true>(out,ring,x,*ct_table);break
+        switch(M){INV(3);INV(5);INV(7);}
+#undef INV
+    }else ok=pq16_conv_emit_w(out,ring,x,y,branch,M,N,0,1,&unused,nullptr,&plan,nullptr,1);
     assert(!allocation_watch_stop()&&ok);for(auto v:seen)assert(v==1);
-    printf("FFT cyclic coefficient gate N=%u M=%u pattern=%u max_error=%.9g\n",N,M,pattern,maximum);fflush(stdout);assert(maximum<.25);
+    printf("FFT cyclic coefficient gate N=%u M=%u CT=%u pattern=%u max_error=%.9g\n",N,M,ct,pattern,maximum);fflush(stdout);assert(maximum<.25);
 }
-int main(){for(unsigned pattern=0;pattern<8;++pattern){check(1,65536,pattern);check(3,16384,pattern);check(5,8192,pattern);check(7,4096,pattern);}puts("FFT cyclic precision margin PASS");}
+int main(){for(unsigned pattern=0;pattern<8;++pattern){check(1,65536,pattern);check(3,16384,pattern);check(5,8192,pattern);check(7,4096,pattern);
+    check(3,8192,pattern,true);check(5,4096,pattern,true);check(7,4096,pattern,true);
+    check(1,32768,pattern,false,9);check(3,8192,pattern,true,9);check(5,4096,pattern,true,9);check(7,4096,pattern,true,9);}
+    puts("FFT cyclic precision margin PASS");}

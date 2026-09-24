@@ -1,12 +1,13 @@
 {
   "schema": 1,
-  "id": "fft-numeric-domain-20260910-preserved",
+  "id": "fft-numeric-domain-20260923-o3-emission",
   "evidence_level": "adversarially_validated_not_universal_fp_proof",
   "implementation": "src/backend/pq16/numeric_domain.hpp",
-  "implementation_sha256": "cfca00060fbff6b2c4e4ba532055b5eba28c72e44744e7ebd1e2d161bf1be398",
+  "implementation_sha256": "e768336b1d9bc6ddda607f035e6de6423828639debd75c1127c31fc06f75b706",
   "target": {
     "compiler": "Clang 21.1.8",
-    "cpu": "Zen5 Strix Halo"
+    "cpu": "Zen5 Strix Halo",
+    "fft_optimization": "Clang -O3, explicit FMA, no fast-math"
   },
   "restrictions": [
     "coefficient error strictly below 0.25 in the recorded adversarial envelope",
@@ -17,13 +18,116 @@
     "pq16_test",
     "fft_cyclic_precision",
     "wide_cyclic_precision",
-    "plus_cyclic_precision"
+    "plus_cyclic_precision",
+    "compact_windows_test",
+    "rac_window_test",
+    "fft_tail_window_test"
   ],
   "evidence": [
     {
       "path": "results/code_cleanup_2026-09-10/baseline/source/src/backend/pq16/tuning.hpp",
       "sha256": "2042c7a406d10a43ab5219c12b05e83f7abd438282f242e5cf6b08cc72b3ead9",
       "role": "preserved caps and detailed original experiment references"
+    },
+    {
+      "path": "results/barrett_mid_2026-09-21/numeric-domain-audit/compare.cpp",
+      "sha256": "91636616f6388c165ae6f0166a078d0182d4a99cb3e22e3af42b5db541ea4e7c",
+      "role": "equivalence audit for the input-count refactor already present at goal start; no envelope extension"
+    },
+    {
+      "path": "results/barrett_mid_2026-09-21/numeric-domain-audit/compare.receipt.json",
+      "sha256": "133a598f9eb52baa59d3c6230f1d9e235a96a5deda704d552bb8eb7f56d37f12",
+      "role": "executed predicate equivalence check; unchanged numerical caps"
+    },
+    {
+      "path": "results/barrett_mid_2026-09-21/numeric-domain-audit/before.hpp",
+      "sha256": "31e6a1bf440a3891f7780435d8f58c160597817ab7c415cdb0d42e297bbba51b",
+      "role": "previous predicate frozen with namespace/ADL qualification only; original implementation hash cfca00060fbff6b2c4e4ba532055b5eba28c72e44744e7ebd1e2d161bf1be398"
+    },
+    {
+      "path": "results/division_speed_2026-09-22/ct-native-fixed.log",
+      "sha256": "d8cdb0017479497569260f2cbe7031811e176ec5e3cbe49ecbf70bb610be430c",
+      "role": "16-bit CT cyclic odd-radix raw coefficient, carry, cache and division gates; nfull <=32768, one operand <=half period"
+    },
+    {
+      "path": "results/division_followup_2026-09-23/domain-probe/gate.stdout",
+      "sha256": "52bdf2083998232e4e15c97cf2ade69b1964f7c27c7ca7beca50158cbbec3bd3",
+      "role": "888 cyclic coefficient cases at maximum/preceding sizes and half/9-of-16 short supports; independent GMP polynomial oracle; all error <0.25"
+    },
+    {
+      "path": "results/division_followup_2026-09-23/final-native.log",
+      "sha256": "5041c743e5cd9d629c5edd6ea1ee7c54067fb426869dc546bb1a23ffa5a897e5",
+      "role": "production cyclic coefficient and full integer/carry/cache gates at independent caps; compact root bank agrees bitwise with runtime builder; final inverse, exact division and radix consumers pass"
+    },
+    {
+      "path": "results/division_roots_2026-09-23/bias-fixed-probe/gate.stdout",
+      "sha256": "585bbe8ad20580226fe1959d6d0b8edbe8411063a9a6766aceb84cfe60b012dd",
+      "role": "1184 coefficient and full integer checks, including opposed-sign patterns that expose insufficient cyclic carry bias"
+    },
+    {
+      "path": "results/division_roots_2026-09-23/quarter-probe/gate.stdout",
+      "sha256": "400149d744dd87f40ce6bbde1a4657280646c035b6767d3b87c0489ea96afa56",
+      "role": "1248 independent GMP coefficient/integer cases: full long operand and balanced-16 short support below 5/8, factored CT cross roots; all errors <0.25"
+    },
+    {
+      "path": "results/division_capacity_2026-09-23/gates/carry-envelope-native.stdout",
+      "sha256": "e935aa5584c3e68e5ad72ed545d828cc67555a1e9b29ca60712eaa38f4322bdc",
+      "role": "Exact 32-bit pair carry boundary and cyclic raw coefficients/integer residues; carry fix leaves numerical caps unchanged"
+    },
+    {
+      "path": "results/division_capacity_2026-09-23/gates/repair-native-fixed.stdout",
+      "sha256": "7d7faa0752c4caab918b8957ddff509e0cc5400fb607526fa99cb4e953b138d3",
+      "role": "Smaller-ring extension through 139000 words: 360 driver and 66 public service checks, including all-ones reciprocal at 131072"
+    },
+    {
+      "path": "results/division_capacity_2026-09-23/native-seams.log",
+      "sha256": "07db9cc305100c0c12fb5daa5997c3d2e85f025f5f68a36cd0ad58722501f2ac",
+      "role": "414 compact/fallback arithmetic cases and 84 public cases, including final supported 143355 and following 143356/143360 lengths; native and ASan agree"
+    },
+    {
+      "path": "results/division_fft_terminal_2026-09-23/address-validation.log",
+      "sha256": "42d1fe6d63c421464f4a7450601f0cb0114fa0dcbe1806769d740daa3e1718b4",
+      "role": "Empty decode-group and half-input odd-radix optimizations: direct full-form equivalence, unsigned/signed decode tails, native FFT/cyclic coefficient and integer gates under ASan; numerical caps unchanged"
+    },
+    {
+      "path": "results/division_yc_geometry_2026-09-23/rac-unsigned-envelope/probe.stdout",
+      "sha256": "9d1ee331a1c27457ea69326e37452742efe2a50fabc1adfe337f24d6c33d1288",
+      "role": "Independent bounded plus coefficient/integer/cache/canonical endpoint envelope; unsigned16 admitted maxima <0.25; balanced18 M3/N12288 equals0.25 and is excluded"
+    },
+    {
+      "path": "results/division_yc_geometry_2026-09-23/address.log",
+      "sha256": "edbdce23026f48b3d627251e16d903331b60bd0900f0154f1209cc942ed1906b",
+      "role": "Final ASan native bounded-plus/full-form/replay/Newton/exact-consumer checks; streaming biased 16-bit quad carry"
+    },
+    {
+      "path": "results/division_fft_tail_2026-09-23/address-final.log",
+      "sha256": "5ea8e5539e553e2f9ec23d59afccf51c195ee553bada4130b2c4b8085639a379",
+      "role": "Bounded residual emission: independent modular-error/cache/padding and signed cancellation gates under ASan, strict Newton and exact consumers; floating-point arithmetic and numerical caps unchanged"
+    },
+    {
+      "path": "results/division_fft_o3_2026-09-23/native-final.log",
+      "sha256": "ac8c76fb62cddbe6dddddb87f8766f6810193055856e6ea7cebdde5465043f27",
+      "role": "FFT TU and native coefficient-test TUs use -O3; emission is forced inline; existing linear/cyclic/plus caps unchanged and gates pass"
+    },
+    {
+      "path": "results/division_fft_o3_2026-09-23/address-final.log",
+      "sha256": "2c9a8fb1a21f8411a92f0fedbd8b4e937b5aa21e37d97bb423a5a5658af684fe",
+      "role": "FFT TU and native coefficient-test TUs use -O3; emission is forced inline; existing linear/cyclic/plus caps unchanged and gates pass"
+    },
+    {
+      "path": "results/division_fft_o3_2026-09-23/native-extra.log",
+      "sha256": "e588bbfc5cd217f64e695fae24d70d7eab0500be0375d6353922d19098f83166",
+      "role": "FFT TU and native coefficient-test TUs use -O3; emission is forced inline; existing linear/cyclic/plus caps unchanged and gates pass"
+    },
+    {
+      "path": "results/division_fft_o3_2026-09-23/address-extra.log",
+      "sha256": "a51d0781f95e9901b020169a0411ec8d055ab6f6676eea55c54129026358bede",
+      "role": "FFT TU and native coefficient-test TUs use -O3; emission is forced inline; existing linear/cyclic/plus caps unchanged and gates pass"
+    },
+    {
+      "path": "results/division_pow2_roots_2026-09-23/address.log",
+      "sha256": "75b0e3d1daf52d0844228aa7e67f82534475e14f63d30bcf4697b0196f823b67",
+      "role": "Selective radix-4 level18 and longer PQ prefix: bitwise equality to runtime builder, unchanged smaller prefixes, unsupported radix-8 level rejected, exact products and next dynamic level under ASan; numerical caps unchanged"
     }
   ]
 }

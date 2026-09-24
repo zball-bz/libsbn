@@ -14,6 +14,7 @@
 #include "radix/programs.hpp"
 #include "radix/rail_product.hpp"
 #include "radix/leaf.hpp"
+#include "radix/plan_slots.hpp"
 namespace sbn::v3::radix {
 inline constexpr unsigned max_parse_classes = 448;
 struct ParseClass {
@@ -38,10 +39,11 @@ struct ParseTask {
     uint64_t *out;
 };
 struct ParseTreePlan {
+    ParseTreePlan() noexcept {}
     BaseInfo base{};
     unsigned workers = 1, top_workers = 1;
     unsigned class_count = 0;
-    ParseClass classes[max_parse_classes]{};
+    PlanSlots<ParseClass,max_parse_classes> classes;
     RailPlan rail{};
     ProductShape extra[2]{}; // products of the owning service, prepared with the tree's programs
     unsigned extra_count = 0;

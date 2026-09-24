@@ -933,6 +933,15 @@ inline void tft_blk(V *x, size_t n, size_t j, size_t lout, size_t lin, const Pri
     for(int k = 0; k < kf - 1; ++k) full<false, false, 1>((uint64_t *)(x + (size_t)k * e), e, 8 * j + (size_t)k, P, pv, pf);
     tft_blk(x + (size_t)(kf - 1) * e, e, 8 * j + (size_t)(kf - 1), lout - (size_t)(kf - 1) * e, e, P, pv, pf);
 }
+// Full output still benefits from a known-zero upper input half: every
+// partner of the first butterfly level is zero. Dense input retains the
+// optimized full DFS; ordinary output truncation retains the blocked TFT.
+inline void forward_prefix(V *x,size_t n,size_t j,size_t lout,size_t lin,
+                           const Prime &P,const PrimeV &pv,PfCur *pf=NULL){
+    if(lout==n&&(n<=CR_BLK_MIN||lin>n/2))
+        full<false,false,1>((uint64_t *)x,n,j,P,pv,pf);
+    else tft_blk(x,n,j,lout,lin,P,pv,pf);
+}
 /* inverse: frequencies [0, l) of node (n, j) known; the tail [l, n) known in memory (zero when ZT) */
 template<bool ZT>
 void itft_blk(V *x, size_t n, size_t j, size_t l, const Prime &P, const PrimeV &pv, PfCur *pf = NULL){

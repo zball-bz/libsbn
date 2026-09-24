@@ -51,107 +51,26 @@ uint64_t sbpi1_div_qr(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp,
     return qh;
 }
 uint64_t divrem_1(uint64_t *qp, const uint64_t *up, size_t un, uint64_t d) noexcept {
-    uint64_t r = 0;
-    if (!un)
-        return 0;
-    qp += un - 1;
-    if (d >> 63) {
-        r = up[un - 1];
-        const uint64_t q = r >= d;
-        *qp-- = q;
-        r -= d & (0 - q);
-        un--;
-        const uint64_t dinv = invert_limb(d);
-        for (size_t i = un; i-- > 0;) {
-            udiv_qrnnd_preinv(*qp, r, r, up[i], d, dinv);
-            qp--;
-        }
-        return r;
-    }
-    const unsigned cnt = unsigned(__builtin_clzll(d));
-    uint64_t n1 = up[un - 1];
-    if (n1 < d) {
-        r = n1;
-        *qp-- = 0;
-        if (--un == 0)
-            return r;
-    }
-    d <<= cnt;
-    r <<= cnt;
-    const uint64_t dinv = invert_limb(d);
-    n1 = up[un - 1];
-    r |= n1 >> (64 - cnt);
-    for (size_t i = un - 1; i-- > 0;) {
-        const uint64_t n0 = up[i], nshift = (n1 << cnt) | (n0 >> (64 - cnt));
-        udiv_qrnnd_preinv(*qp, r, r, nshift, d, dinv);
-        qp--;
-        n1 = n0;
-    }
-    udiv_qrnnd_preinv(*qp, r, r, n1 << cnt, d, dinv);
-    return r >> cnt;
+    const unsigned shift = unsigned(__builtin_clzll(d));
+    const uint64_t normalized = d << shift;
+    return divrem_1_prepared(qp, up, un, normalized, shift, invert_limb(normalized));
 }
 uint64_t divrem_2(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp) noexcept {
-    np += nn - 2;
-    const uint64_t d1 = dp[1], d0 = dp[0];
-    uint64_t r1 = np[1], r0 = np[0], most = 0;
-    if (r1 >= d1 && (r1 > d1 || r0 >= d0)) {
-        sub_ddmmss(r1, r0, r1, r0, d1, d0);
-        most = 1;
-    }
-    const uint64_t dinv = invert_pi1(d1, d0);
-    for (size_t i = nn - 2; i-- > 0;) {
-        uint64_t q;
-        const uint64_t n0 = np[-1];
-        udiv_qr_3by2(q, r1, r0, r1, r0, n0, d1, d0, dinv);
-        np--;
-        qp[i] = q;
-    }
-    np[1] = r1;
-    np[0] = r0;
-    return most;
+    return divrem_2_prepared(qp, np, nn, dp, invert_pi1(dp[1], dp[0]));
 }
 size_t schoolbook(uint64_t *q, uint64_t *r, const uint64_t *n, size_t nn, const uint64_t *d, size_t dn,
                   uint64_t *scratch) noexcept {
-    const size_t qcount = nn >= dn ? nn - dn + 1 : 0;
-    while (nn && !n[nn - 1])
-        --nn;
-    if (nn < dn) {
-        memcpy(r, n, nn * 8);
-        memset(r + nn, 0, (dn - nn) * 8);
-        memset(q, 0, qcount * 8);
+    // Preserve the one-shot no-work case without preparing an unused D.
+    size_t used = nn;
+    while (used && !n[used - 1]) --used;
+    if (used < dn) {
+        if (used) memcpy(r, n, used * 8);
+        memset(r + used, 0, (dn - used) * 8);
+        if (nn >= dn) memset(q, 0, (nn - dn + 1) * 8);
         return 0;
     }
-    const size_t qn = nn - dn + 1;
-    memset(q + qn, 0, (qcount - qn) * 8);
-    if (dn == 1) {
-        r[0] = divrem_1(q, n, nn, d[0]);
-    } else {
-        const unsigned cnt = unsigned(__builtin_clzll(d[dn - 1]));
-        uint64_t *n2 = scratch;
-        uint64_t small[2];
-        const uint64_t *d2 = d;
-        uint64_t *d2buf = dn == 2 ? small : scratch + nn + 1;
-        if (cnt) {
-            shift_left(d2buf, d, dn, cnt);
-            d2 = d2buf;
-            n2[nn] = shift_left(n2, n, nn, cnt);
-        } else {
-            memcpy(n2, n, nn * 8);
-            n2[nn] = 0;
-        }
-        if (dn == 2)
-            divrem_2(q, n2, nn + 1, d2);
-        else
-            sbpi1_div_qr(q, n2, nn + 1, d2, dn, invert_pi1(d2[dn - 1], d2[dn - 2]));
-        if (cnt)
-            shift_right(r, n2, dn, cnt);
-        else
-            memcpy(r, n2, dn * 8);
-    }
-    size_t count = qn;
-    while (count && !q[count - 1])
-        --count;
-    return count;
+    auto p = prepare(d, dn, dn <= 2 ? nullptr : scratch + nn + 1);
+    return schoolbook_prepared(q, r, n, nn, p, scratch);
 }
 } // namespace sbn::v3::divrem_words
 extern "C" size_t sbn3_divrem_basecase(uint64_t *q, uint64_t *r, const uint64_t *n, size_t nn,
