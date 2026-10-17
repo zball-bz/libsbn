@@ -31,12 +31,107 @@
  * entered by call/ret inside the frame; the only external call (fix) is made at the 64-byte aligned frame after
  * vzeroupper; vzeroupper before the return; zmm0..31 and k0..k7 are clobbered (caller-saved). The exact carry
  * pass (.Lexact, through the frame) and the Karatsuba path's exact S / t' fallbacks are in .text.unlikely.
+ *
+ * Shared kit (MULSHARE): the sections Z, SEG (with the group sums SX), RCP, RC, GZ, UPD, and the exact pass
+ * (.Lexact / .Lcanon_mem) are src/fp/x86_64/qv_kit.S (tools/generate_fp_qv_kit.py), one copy
+ * for this engine and the rsqrt engine; this file calls their hidden entries sbn3f_qvk_<name> (the same call / ret
+ * protocol and registers as above).
  */
 .text
 .p2align 6
 .globl sbn3f_inv_chain
 .hidden sbn3f_inv_chain
 .hidden sbn3f_inv_fix
+.hidden sbn3f_qvk_z9
+.hidden sbn3f_qvk_z8
+.hidden sbn3f_qvk_z7
+.hidden sbn3f_qvk_z6
+.hidden sbn3f_qvk_z5
+.hidden sbn3f_qvk_z4
+.hidden sbn3f_qvk_z3
+.hidden sbn3f_qvk_z2
+.hidden sbn3f_qvk_z1
+.hidden sbn3f_qvk_z0
+.hidden sbn3f_qvk_seg9
+.hidden sbn3f_qvk_seg8
+.hidden sbn3f_qvk_seg7
+.hidden sbn3f_qvk_seg6
+.hidden sbn3f_qvk_seg5
+.hidden sbn3f_qvk_seg4
+.hidden sbn3f_qvk_seg3
+.hidden sbn3f_qvk_seg2
+.hidden sbn3f_qvk_seg1
+.hidden sbn3f_qvk_seg0
+.hidden sbn3f_qvk_rcp9
+.hidden sbn3f_qvk_rcp8
+.hidden sbn3f_qvk_rcp7
+.hidden sbn3f_qvk_rcp6
+.hidden sbn3f_qvk_rcp5
+.hidden sbn3f_qvk_rcp4
+.hidden sbn3f_qvk_rcp3
+.hidden sbn3f_qvk_rcp2
+.hidden sbn3f_qvk_rcp1
+.hidden sbn3f_qvk_rcp0
+.hidden sbn3f_qvk_rc9
+.hidden sbn3f_qvk_rc8
+.hidden sbn3f_qvk_rc7
+.hidden sbn3f_qvk_rc6
+.hidden sbn3f_qvk_rc5
+.hidden sbn3f_qvk_rc4
+.hidden sbn3f_qvk_rc3
+.hidden sbn3f_qvk_rc2
+.hidden sbn3f_qvk_gz9
+.hidden sbn3f_qvk_gz8
+.hidden sbn3f_qvk_gz7
+.hidden sbn3f_qvk_gz6
+.hidden sbn3f_qvk_gz5
+.hidden sbn3f_qvk_gz4
+.hidden sbn3f_qvk_gz3
+.hidden sbn3f_qvk_gz2
+.hidden sbn3f_qvk_gz1
+.hidden sbn3f_qvk_gz0
+.hidden sbn3f_qvk_upd9
+.hidden sbn3f_qvk_upd8
+.hidden sbn3f_qvk_upd7
+.hidden sbn3f_qvk_upd6
+.hidden sbn3f_qvk_upd5
+.hidden sbn3f_qvk_upd4
+.hidden sbn3f_qvk_upd3
+.hidden sbn3f_qvk_upd2
+.hidden sbn3f_qvk_upd1
+.hidden sbn3f_qvk_upd0
+.hidden sbn3f_qvk_seg9_r1
+.hidden sbn3f_qvk_seg9_r2
+.hidden sbn3f_qvk_seg9_r3
+.hidden sbn3f_qvk_seg8_r1
+.hidden sbn3f_qvk_seg8_r2
+.hidden sbn3f_qvk_seg8_r3
+.hidden sbn3f_qvk_seg7_r1
+.hidden sbn3f_qvk_seg7_r2
+.hidden sbn3f_qvk_seg7_r3
+.hidden sbn3f_qvk_seg6_r1
+.hidden sbn3f_qvk_seg6_r2
+.hidden sbn3f_qvk_seg6_r3
+.hidden sbn3f_qvk_seg5_r1
+.hidden sbn3f_qvk_seg5_r2
+.hidden sbn3f_qvk_seg5_r3
+.hidden sbn3f_qvk_seg4_r1
+.hidden sbn3f_qvk_seg4_r2
+.hidden sbn3f_qvk_seg4_r3
+.hidden sbn3f_qvk_seg3_r1
+.hidden sbn3f_qvk_seg3_r2
+.hidden sbn3f_qvk_seg3_r3
+.hidden sbn3f_qvk_seg2_r1
+.hidden sbn3f_qvk_seg2_r2
+.hidden sbn3f_qvk_seg2_r3
+.hidden sbn3f_qvk_seg1_r1
+.hidden sbn3f_qvk_seg1_r2
+.hidden sbn3f_qvk_seg1_r3
+.hidden sbn3f_qvk_seg0_r1
+.hidden sbn3f_qvk_seg0_r2
+.hidden sbn3f_qvk_seg0_r3
+.hidden sbn3f_qvk_sx
+.hidden sbn3f_qvk_exact
 .type sbn3f_inv_chain, @function
 sbn3f_inv_chain:
 	pushq %rbp
@@ -175,7 +270,7 @@ sbn3f_inv_chain:
 	jmp .Lst2
 .p2align 4
 .Lst3:
-	call .Lz2
+	call sbn3f_qvk_z2
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -189,44 +284,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm19, %zmm21, %zmm3
 	vpaddq %zmm3, %zmm6, %zmm6
-	call .Lrc2
+	call sbn3f_qvk_rc2
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst3_xa
 .Lst3_a:
-	call .Lgz2
+	call sbn3f_qvk_gz2
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $3, %eax
-	call .Lseg2
+	call sbn3f_qvk_seg2
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm19, %zmm21, %zmm3
 	vpaddq %zmm3, %zmm6, %zmm6
-	call .Lrc2
+	call sbn3f_qvk_rc2
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst3_xb
 .Lst3_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd2
+	call sbn3f_qvk_upd2
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst3_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst3_a
 .Lst3_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst3_b
 .p2align 4
 .Lst4:
-	call .Lz3
+	call sbn3f_qvk_z3
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -240,44 +335,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm21, %zmm23, %zmm3
 	vpaddq %zmm3, %zmm8, %zmm8
-	call .Lrc3
+	call sbn3f_qvk_rc3
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst4_xa
 .Lst4_a:
-	call .Lgz3
+	call sbn3f_qvk_gz3
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $4, %eax
-	call .Lseg3
+	call sbn3f_qvk_seg3
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm21, %zmm23, %zmm3
 	vpaddq %zmm3, %zmm8, %zmm8
-	call .Lrc3
+	call sbn3f_qvk_rc3
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst4_xb
 .Lst4_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd3
+	call sbn3f_qvk_upd3
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst4_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst4_a
 .Lst4_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst4_b
 .p2align 4
 .Lst5:
-	call .Lz4
+	call sbn3f_qvk_z4
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -291,44 +386,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm23, %zmm24, %zmm3
 	vpaddq %zmm3, %zmm9, %zmm9
-	call .Lrc4
+	call sbn3f_qvk_rc4
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst5_xa
 .Lst5_a:
-	call .Lgz4
+	call sbn3f_qvk_gz4
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $5, %eax
-	call .Lseg4
+	call sbn3f_qvk_seg4
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm23, %zmm24, %zmm3
 	vpaddq %zmm3, %zmm9, %zmm9
-	call .Lrc4
+	call sbn3f_qvk_rc4
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst5_xb
 .Lst5_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd4
+	call sbn3f_qvk_upd4
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst5_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst5_a
 .Lst5_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst5_b
 .p2align 4
 .Lst6:
-	call .Lz5
+	call sbn3f_qvk_z5
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -342,44 +437,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm24, %zmm25, %zmm3
 	vpaddq %zmm3, %zmm10, %zmm10
-	call .Lrc5
+	call sbn3f_qvk_rc5
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst6_xa
 .Lst6_a:
-	call .Lgz5
+	call sbn3f_qvk_gz5
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $6, %eax
-	call .Lseg5
+	call sbn3f_qvk_seg5
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm24, %zmm25, %zmm3
 	vpaddq %zmm3, %zmm10, %zmm10
-	call .Lrc5
+	call sbn3f_qvk_rc5
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst6_xb
 .Lst6_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd5
+	call sbn3f_qvk_upd5
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst6_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst6_a
 .Lst6_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst6_b
 .p2align 4
 .Lst7:
-	call .Lz6
+	call sbn3f_qvk_z6
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -393,44 +488,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm25, %zmm26, %zmm3
 	vpaddq %zmm3, %zmm11, %zmm11
-	call .Lrc6
+	call sbn3f_qvk_rc6
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst7_xa
 .Lst7_a:
-	call .Lgz6
+	call sbn3f_qvk_gz6
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $7, %eax
-	call .Lseg6
+	call sbn3f_qvk_seg6
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm25, %zmm26, %zmm3
 	vpaddq %zmm3, %zmm11, %zmm11
-	call .Lrc6
+	call sbn3f_qvk_rc6
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst7_xb
 .Lst7_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd6
+	call sbn3f_qvk_upd6
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst7_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst7_a
 .Lst7_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst7_b
 .p2align 4
 .Lst8:
-	call .Lz7
+	call sbn3f_qvk_z7
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -444,44 +539,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm26, %zmm27, %zmm3
 	vpaddq %zmm3, %zmm12, %zmm12
-	call .Lrc7
+	call sbn3f_qvk_rc7
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst8_xa
 .Lst8_a:
-	call .Lgz7
+	call sbn3f_qvk_gz7
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $8, %eax
-	call .Lseg7
+	call sbn3f_qvk_seg7
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm26, %zmm27, %zmm3
 	vpaddq %zmm3, %zmm12, %zmm12
-	call .Lrc7
+	call sbn3f_qvk_rc7
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst8_xb
 .Lst8_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd7
+	call sbn3f_qvk_upd7
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst8_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst8_a
 .Lst8_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst8_b
 .p2align 4
 .Lst9:
-	call .Lz8
+	call sbn3f_qvk_z8
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -495,44 +590,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm27, %zmm28, %zmm3
 	vpaddq %zmm3, %zmm13, %zmm13
-	call .Lrc8
+	call sbn3f_qvk_rc8
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst9_xa
 .Lst9_a:
-	call .Lgz8
+	call sbn3f_qvk_gz8
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $9, %eax
-	call .Lseg8
+	call sbn3f_qvk_seg8
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm27, %zmm28, %zmm3
 	vpaddq %zmm3, %zmm13, %zmm13
-	call .Lrc8
+	call sbn3f_qvk_rc8
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst9_xb
 .Lst9_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd8
+	call sbn3f_qvk_upd8
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst9_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst9_a
 .Lst9_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst9_b
 .p2align 4
 .Lst10:
-	call .Lz9
+	call sbn3f_qvk_z9
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -546,44 +641,44 @@ sbn3f_inv_chain:
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm28, %zmm29, %zmm3
 	vpaddq %zmm3, %zmm14, %zmm14
-	call .Lrc9
+	call sbn3f_qvk_rc9
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst10_xa
 .Lst10_a:
-	call .Lgz9
+	call sbn3f_qvk_gz9
 	movq %rbx, %r10
 	movq %r12, %r11
 	movl $2, %ecx
 	movl $10, %eax
-	call .Lseg9
+	call sbn3f_qvk_seg9
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
 	valignq $7, %zmm28, %zmm29, %zmm3
 	vpaddq %zmm3, %zmm14, %zmm14
-	call .Lrc9
+	call sbn3f_qvk_rc9
 	vptestmq .Lb52(%rip){1to8}, %zmm5, %k6
 	kortestb %k6, %k6
 	jnz .Lst10_xb
 .Lst10_b:
 	vpxord %zmm7, %zmm7, %zmm7
-	call .Lupd9
+	call sbn3f_qvk_upd9
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lst10_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst10_a
 .Lst10_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst10_b
 .p2align 4
 .Lst1:
-	call .Lz0
+	call sbn3f_qvk_z0
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -667,7 +762,7 @@ sbn3f_inv_chain:
 	vpmadd52luq %zmm31, %zmm30, %zmm3
 	vpmadd52huq %zmm23, %zmm30, %zmm18
 .Lsm1_t8:
-	call .Lsx
+	call sbn3f_qvk_sx
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
@@ -693,15 +788,15 @@ sbn3f_inv_chain:
 	jmp .Ldone
 .Lst1_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst1_a
 .Lst1_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst1_b
 .p2align 4
 .Lst2:
-	call .Lz1
+	call sbn3f_qvk_z1
 	leaq (%r10,%r8,8), %r10
 	leaq (,%r8,8), %rdi
 	subq %rdi, %r11
@@ -856,7 +951,7 @@ sbn3f_inv_chain:
 	vpmadd52luq %zmm31, %zmm30, %zmm3
 	vpmadd52huq %zmm31, %zmm30, %zmm18
 .Lsm2_t16:
-	call .Lsx
+	call sbn3f_qvk_sx
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
@@ -896,11 +991,11 @@ sbn3f_inv_chain:
 	jmp .Ldone
 .Lst2_xa:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst2_a
 .Lst2_xb:
 	xorl %r8d, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lst2_b
 .p2align 4
 .Lstbig:
@@ -921,8 +1016,8 @@ sbn3f_inv_chain:
 	movslq 160(%rsi,%rdi,4), %r8
 	addq %rsi, %r8
 	movq %r8, 1472(%rsp)
-	call .Lz9
-	call .Lseg9
+	call sbn3f_qvk_z9
+	call sbn3f_qvk_seg9
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
@@ -931,7 +1026,7 @@ sbn3f_inv_chain:
 	vmovdqu64 %zmm29, 1280(%rsp)
 	vpsrlq $52, %zmm14, %zmm1
 	vmovdqu64 %zmm1, 1344(%rsp)
-	call .Lrc9
+	call sbn3f_qvk_rc9
 	vmovdqu64 %zmm0, 0(%rsp)
 	vmovdqu64 %zmm4, 64(%rsp)
 	vmovdqu64 %zmm6, 128(%rsp)
@@ -977,13 +1072,13 @@ sbn3f_inv_chain:
 	vmovdqu64 576(%rsp), %zmm14
 	kmovw 1432(%rsp), %k1
 	kshiftrw $8, %k1, %k2
-	call .Lgz9
+	call sbn3f_qvk_gz9
 	movq %rbx, %r10
 	movq %r12, %r11
 	leal -9(%r14), %ecx
 	shll $1, %ecx
 	movl $10, %eax
-	call .Lseg9
+	call sbn3f_qvk_seg9
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
@@ -992,7 +1087,7 @@ sbn3f_inv_chain:
 	vmovdqu64 %zmm29, 1280(%rsp)
 	vpsrlq $52, %zmm14, %zmm1
 	vmovdqu64 %zmm1, 1344(%rsp)
-	call .Lrc9
+	call sbn3f_qvk_rc9
 	vmovdqu64 %zmm0, 0(%rsp)
 	vmovdqu64 %zmm4, 64(%rsp)
 	vmovdqu64 %zmm6, 128(%rsp)
@@ -1071,18 +1166,18 @@ sbn3f_inv_chain:
 	kshiftrw $8, %k1, %k2
 	kmovw 1434(%rsp), %k3
 	kshiftrw $8, %k3, %k4
-	call .Lupd9
+	call sbn3f_qvk_upd9
 	vptestmq .Lb52(%rip){1to8}, %zmm7, %k6
 	kortestb %k6, %k6
 	jnz .Lfix
 	jmp .Ldone
 .Lbig_xa:
 	movl $640, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lbig_a
 .Lbig_xb:
 	movl $640, %r8d
-	call .Lexact
+	call sbn3f_qvk_exact
 	jmp .Lbig_b
 .Lfix:
 	movq %r15, %rdi
@@ -1102,1100 +1197,7 @@ sbn3f_inv_chain:
 	popq %rbp
 	vzeroupper
 	ret
-.Lz9:
-	vmovdqu64 568(%r11), %zmm14
-	vpxord %zmm29, %zmm29, %zmm29
-.Lz8:
-	vmovdqu64 504(%r11), %zmm13
-	vpxord %zmm28, %zmm28, %zmm28
-.Lz7:
-	vmovdqu64 440(%r11), %zmm12
-	vpxord %zmm27, %zmm27, %zmm27
-.Lz6:
-	vmovdqu64 376(%r11), %zmm11
-	vpxord %zmm26, %zmm26, %zmm26
-.Lz5:
-	vmovdqu64 312(%r11), %zmm10
-	vpxord %zmm25, %zmm25, %zmm25
-.Lz4:
-	vmovdqu64 248(%r11), %zmm9
-	vpxord %zmm24, %zmm24, %zmm24
-.Lz3:
-	vmovdqu64 184(%r11), %zmm8
-	vpxord %zmm23, %zmm23, %zmm23
-.Lz2:
-	vmovdqu64 120(%r11), %zmm6
-	vpxord %zmm21, %zmm21, %zmm21
-	vpxord %zmm7, %zmm7, %zmm7
-	vpxord %zmm22, %zmm22, %zmm22
-.Lz1:
-	vmovdqu64 56(%r11), %zmm4
-	vpxord %zmm19, %zmm19, %zmm19
-	vpxord %zmm5, %zmm5, %zmm5
-	vpxord %zmm20, %zmm20, %zmm20
-.Lz0:
-	vmovdqu64 -8(%r11), %zmm0
-	vpxord %zmm15, %zmm15, %zmm15
-	vpxord %zmm1, %zmm1, %zmm1
-	vpxord %zmm16, %zmm16, %zmm16
-	vpxord %zmm2, %zmm2, %zmm2
-	vpxord %zmm17, %zmm17, %zmm17
-	vpxord %zmm3, %zmm3, %zmm3
-	vpxord %zmm18, %zmm18, %zmm18
-	ret
-.Lseg9:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 576(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm14
-	vpmadd52huq %zmm31, %zmm30, %zmm29
-	vmovdqu64 512(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 448(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 384(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 320(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg9_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 584(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm14
-	vpmadd52huq %zmm31, %zmm30, %zmm29
-	vmovdqu64 520(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 456(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 392(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 328(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg9_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 592(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm14
-	vpmadd52huq %zmm31, %zmm30, %zmm29
-	vmovdqu64 528(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 464(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 400(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 336(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg9_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 600(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm14
-	vpmadd52huq %zmm31, %zmm30, %zmm29
-	vmovdqu64 536(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 472(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 408(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 344(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg9
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg8:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 512(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 448(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 384(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 320(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg8_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 520(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 456(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 392(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 328(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg8_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 528(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 464(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 400(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 336(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg8_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 536(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm13
-	vpmadd52huq %zmm31, %zmm30, %zmm28
-	vmovdqu64 472(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 408(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 344(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg8
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg7:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 448(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 384(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 320(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg7_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 456(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 392(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 328(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg7_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 464(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 400(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 336(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg7_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 472(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm12
-	vpmadd52huq %zmm31, %zmm30, %zmm27
-	vmovdqu64 408(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 344(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg7
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg6:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 384(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 320(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg6_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 392(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 328(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg6_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 400(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 336(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg6_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 408(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm11
-	vpmadd52huq %zmm31, %zmm30, %zmm26
-	vmovdqu64 344(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg6
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg5:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 320(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg5_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 328(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg5_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 336(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg5_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 344(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm10
-	vpmadd52huq %zmm31, %zmm30, %zmm25
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg5
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg4:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 256(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg4_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 264(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg4_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 272(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg4_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 280(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm9
-	vpmadd52huq %zmm31, %zmm30, %zmm24
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg4
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg3:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 192(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg3_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 200(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg3_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 208(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg3_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 216(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm8
-	vpmadd52huq %zmm31, %zmm30, %zmm23
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg3
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg2:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 128(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg2_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 136(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg2_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 144(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm6
-	vpmadd52huq %zmm31, %zmm30, %zmm21
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg2_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 152(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm7
-	vpmadd52huq %zmm31, %zmm30, %zmm22
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg2
-	decl %eax
-	jz .Lsx
-	movl $2, %ecx
-.Lseg1:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 64(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg1_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 72(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg1_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 80(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm4
-	vpmadd52huq %zmm31, %zmm30, %zmm19
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg1_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 88(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm5
-	vpmadd52huq %zmm31, %zmm30, %zmm20
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg1
-	decl %eax
-	jz .Lsx
-	movl %r9d, %ecx
-.Lseg0:
-	vpbroadcastq 0(%r10), %zmm30
-	vmovdqu64 0(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm0
-	vpmadd52huq %zmm31, %zmm30, %zmm15
-.Lseg0_r1:
-	vpbroadcastq -8(%r10), %zmm30
-	vmovdqu64 8(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm1
-	vpmadd52huq %zmm31, %zmm30, %zmm16
-.Lseg0_r2:
-	vpbroadcastq -16(%r10), %zmm30
-	vmovdqu64 16(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm2
-	vpmadd52huq %zmm31, %zmm30, %zmm17
-.Lseg0_r3:
-	vpbroadcastq -24(%r10), %zmm30
-	vmovdqu64 24(%r11), %zmm31
-	vpmadd52luq %zmm31, %zmm30, %zmm3
-	vpmadd52huq %zmm31, %zmm30, %zmm18
-	subq $32, %r10
-	addq $32, %r11
-	decl %ecx
-	jnz .Lseg0
-.Lsx:
-	vpaddq %zmm1, %zmm0, %zmm0
-	vpaddq %zmm3, %zmm2, %zmm2
-	vpaddq %zmm2, %zmm0, %zmm0
-	vpaddq %zmm16, %zmm15, %zmm15
-	vpaddq %zmm18, %zmm17, %zmm17
-	vpaddq %zmm17, %zmm15, %zmm15
-	vpaddq %zmm5, %zmm4, %zmm4
-	vpaddq %zmm20, %zmm19, %zmm19
-	vpaddq %zmm7, %zmm6, %zmm6
-	vpaddq %zmm22, %zmm21, %zmm21
-	ret
-.Lrcp9:
-	valignq $7, %zmm28, %zmm29, %zmm3
-	vpaddq %zmm3, %zmm14, %zmm14
-	jmp .Lrc9
-.Lrcp8:
-	valignq $7, %zmm27, %zmm28, %zmm3
-	vpaddq %zmm3, %zmm13, %zmm13
-	jmp .Lrc8
-.Lrcp7:
-	valignq $7, %zmm26, %zmm27, %zmm3
-	vpaddq %zmm3, %zmm12, %zmm12
-	jmp .Lrc7
-.Lrcp6:
-	valignq $7, %zmm25, %zmm26, %zmm3
-	vpaddq %zmm3, %zmm11, %zmm11
-	jmp .Lrc6
-.Lrcp5:
-	valignq $7, %zmm24, %zmm25, %zmm3
-	vpaddq %zmm3, %zmm10, %zmm10
-	jmp .Lrc5
-.Lrcp4:
-	valignq $7, %zmm23, %zmm24, %zmm3
-	vpaddq %zmm3, %zmm9, %zmm9
-	jmp .Lrc4
-.Lrcp3:
-	valignq $7, %zmm21, %zmm23, %zmm3
-	vpaddq %zmm3, %zmm8, %zmm8
-	jmp .Lrc3
-.Lrcp2:
-	valignq $7, %zmm19, %zmm21, %zmm3
-	vpaddq %zmm3, %zmm6, %zmm6
-	jmp .Lrc2
-.Lrcp1:
-	valignq $7, %zmm15, %zmm19, %zmm3
-	vpaddq %zmm3, %zmm4, %zmm4
-	jmp .Lrc1
-.Lrcp0:
-	valignq $7, %zmm30, %zmm15, %zmm3
-	vpaddq %zmm3, %zmm0, %zmm0
-	jmp .Lrc0
-.Lrc9:
-	valignq $7, %zmm27, %zmm28, %zmm3
-	vpaddq %zmm3, %zmm13, %zmm13
-	vpsrlq $52, %zmm14, %zmm1
-	vpsrlq $52, %zmm13, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm14, %zmm14
-	vpaddq %zmm1, %zmm14, %zmm14
-	vporq %zmm14, %zmm5, %zmm5
-.Lrc8:
-	valignq $7, %zmm26, %zmm27, %zmm3
-	vpaddq %zmm3, %zmm12, %zmm12
-	vpsrlq $52, %zmm13, %zmm1
-	vpsrlq $52, %zmm12, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm13, %zmm13
-	vpaddq %zmm1, %zmm13, %zmm13
-	vporq %zmm13, %zmm5, %zmm5
-.Lrc7:
-	valignq $7, %zmm25, %zmm26, %zmm3
-	vpaddq %zmm3, %zmm11, %zmm11
-	vpsrlq $52, %zmm12, %zmm1
-	vpsrlq $52, %zmm11, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm12, %zmm12
-	vpaddq %zmm1, %zmm12, %zmm12
-	vporq %zmm12, %zmm5, %zmm5
-.Lrc6:
-	valignq $7, %zmm24, %zmm25, %zmm3
-	vpaddq %zmm3, %zmm10, %zmm10
-	vpsrlq $52, %zmm11, %zmm1
-	vpsrlq $52, %zmm10, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm11, %zmm11
-	vpaddq %zmm1, %zmm11, %zmm11
-	vporq %zmm11, %zmm5, %zmm5
-.Lrc5:
-	valignq $7, %zmm23, %zmm24, %zmm3
-	vpaddq %zmm3, %zmm9, %zmm9
-	vpsrlq $52, %zmm10, %zmm1
-	vpsrlq $52, %zmm9, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm10, %zmm10
-	vpaddq %zmm1, %zmm10, %zmm10
-	vporq %zmm10, %zmm5, %zmm5
-.Lrc4:
-	valignq $7, %zmm21, %zmm23, %zmm3
-	vpaddq %zmm3, %zmm8, %zmm8
-	vpsrlq $52, %zmm9, %zmm1
-	vpsrlq $52, %zmm8, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm9, %zmm9
-	vpaddq %zmm1, %zmm9, %zmm9
-	vporq %zmm9, %zmm5, %zmm5
-.Lrc3:
-	valignq $7, %zmm19, %zmm21, %zmm3
-	vpaddq %zmm3, %zmm6, %zmm6
-	vpsrlq $52, %zmm8, %zmm1
-	vpsrlq $52, %zmm6, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm8, %zmm8
-	vpaddq %zmm1, %zmm8, %zmm8
-	vporq %zmm8, %zmm5, %zmm5
-.Lrc2:
-	valignq $7, %zmm15, %zmm19, %zmm3
-	vpaddq %zmm3, %zmm4, %zmm4
-	vpsrlq $52, %zmm6, %zmm1
-	vpsrlq $52, %zmm4, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm6, %zmm6
-	vpaddq %zmm1, %zmm6, %zmm6
-	vporq %zmm6, %zmm5, %zmm5
-.Lrc1:
-	valignq $7, %zmm30, %zmm15, %zmm3
-	vpaddq %zmm3, %zmm0, %zmm0
-	vpsrlq $52, %zmm4, %zmm1
-	vpsrlq $52, %zmm0, %zmm2
-	valignq $7, %zmm2, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm4, %zmm4
-	vpaddq %zmm1, %zmm4, %zmm4
-	vporq %zmm4, %zmm5, %zmm5
-.Lrc0:
-	vpsrlq $52, %zmm0, %zmm1
-	valignq $7, %zmm31, %zmm1, %zmm1
-	vpandq .Lm52(%rip){1to8}, %zmm0, %zmm0
-	vpaddq %zmm1, %zmm0, %zmm0
-	vporq %zmm0, %zmm5, %zmm5
-	ret
-.Lgz9:
-	vpxorq .Lm52(%rip){1to8}, %zmm14, %zmm1
-	vmovdqu64 %zmm1, 576(%rdx)
-	vpxord %zmm14, %zmm14, %zmm14
-	vpxord %zmm29, %zmm29, %zmm29
-.Lgz8:
-	vpxorq .Lm52(%rip){1to8}, %zmm13, %zmm1
-	vmovdqu64 %zmm1, 512(%rdx)
-	vpxord %zmm13, %zmm13, %zmm13
-	vpxord %zmm28, %zmm28, %zmm28
-.Lgz7:
-	vpxorq .Lm52(%rip){1to8}, %zmm12, %zmm1
-	vmovdqu64 %zmm1, 448(%rdx)
-	vpxord %zmm12, %zmm12, %zmm12
-	vpxord %zmm27, %zmm27, %zmm27
-.Lgz6:
-	vpxorq .Lm52(%rip){1to8}, %zmm11, %zmm1
-	vmovdqu64 %zmm1, 384(%rdx)
-	vpxord %zmm11, %zmm11, %zmm11
-	vpxord %zmm26, %zmm26, %zmm26
-.Lgz5:
-	vpxorq .Lm52(%rip){1to8}, %zmm10, %zmm1
-	vmovdqu64 %zmm1, 320(%rdx)
-	vpxord %zmm10, %zmm10, %zmm10
-	vpxord %zmm25, %zmm25, %zmm25
-.Lgz4:
-	vpxorq .Lm52(%rip){1to8}, %zmm9, %zmm1
-	vmovdqu64 %zmm1, 256(%rdx)
-	vpxord %zmm9, %zmm9, %zmm9
-	vpxord %zmm24, %zmm24, %zmm24
-.Lgz3:
-	vpxorq .Lm52(%rip){1to8}, %zmm8, %zmm1
-	vmovdqu64 %zmm1, 192(%rdx)
-	vpxord %zmm8, %zmm8, %zmm8
-	vpxord %zmm23, %zmm23, %zmm23
-.Lgz2:
-	vpxorq .Lm52(%rip){1to8}, %zmm6, %zmm1
-	vmovdqu64 %zmm1, 128(%rdx)
-	vpxord %zmm6, %zmm6, %zmm6
-	vpxord %zmm21, %zmm21, %zmm21
-	vpxord %zmm7, %zmm7, %zmm7
-	vpxord %zmm22, %zmm22, %zmm22
-.Lgz1:
-	vpxorq .Lm52(%rip){1to8}, %zmm4, %zmm1{%k2}{z}
-	vmovdqu64 %zmm1, 64(%rdx)
-	vpxord %zmm4, %zmm4, %zmm4
-	vpxord %zmm19, %zmm19, %zmm19
-	vpxord %zmm5, %zmm5, %zmm5
-	vpxord %zmm20, %zmm20, %zmm20
-.Lgz0:
-	vpxorq .Lm52(%rip){1to8}, %zmm0, %zmm1{%k1}{z}
-	vmovdqu64 %zmm1, 0(%rdx)
-	vpxord %zmm0, %zmm0, %zmm0
-	vpxord %zmm15, %zmm15, %zmm15
-	vpxord %zmm1, %zmm1, %zmm1
-	vpxord %zmm16, %zmm16, %zmm16
-	vpxord %zmm2, %zmm2, %zmm2
-	vpxord %zmm17, %zmm17, %zmm17
-	vpxord %zmm3, %zmm3, %zmm3
-	vpxord %zmm18, %zmm18, %zmm18
-	ret
-.Lupd9:
-	vpaddq 576(%r13), %zmm14, %zmm1
-	vmovdqu64 %zmm1, 576(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd8:
-	vpaddq 512(%r13), %zmm13, %zmm1
-	vmovdqu64 %zmm1, 512(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd7:
-	vpaddq 448(%r13), %zmm12, %zmm1
-	vmovdqu64 %zmm1, 448(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd6:
-	vpaddq 384(%r13), %zmm11, %zmm1
-	vmovdqu64 %zmm1, 384(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd5:
-	vpaddq 320(%r13), %zmm10, %zmm1
-	vmovdqu64 %zmm1, 320(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd4:
-	vpaddq 256(%r13), %zmm9, %zmm1
-	vmovdqu64 %zmm1, 256(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd3:
-	vpaddq 192(%r13), %zmm8, %zmm1
-	vmovdqu64 %zmm1, 192(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd2:
-	vpaddq 128(%r13), %zmm6, %zmm1
-	vmovdqu64 %zmm1, 128(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd1:
-	vmovdqa64 %zmm4, %zmm1{%k2}{z}
-	vpsubq .Ltwo(%rip){1to8}, %zmm1, %zmm1{%k4}
-	vpaddq 64(%r13), %zmm1, %zmm1
-	vmovdqu64 %zmm1, 64(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-.Lupd0:
-	vmovdqa64 %zmm0, %zmm1{%k1}{z}
-	vpsubq .Ltwo(%rip){1to8}, %zmm1, %zmm1{%k3}
-	vpaddq 0(%r13), %zmm1, %zmm1
-	vmovdqu64 %zmm1, 0(%r13)
-	vporq %zmm1, %zmm7, %zmm7
-	ret
+.skip 4, 0xcc
 .p2align 4
 .Lkchk:
 	movl 1412(%rsp), %edi
@@ -2727,13 +1729,13 @@ sbn3f_inv_chain:
 	jmpq *%rdi
 .Lk_jb:
 	leaq 8(%rsp), %r11
-	call .Lz9
+	call sbn3f_qvk_z9
 	vpsrlq $52, %zmm14, %zmm1
 	vmovdqu64 %zmm1, 22400(%rsp)
 	vpxord %zmm30, %zmm30, %zmm30
 	vpxord %zmm31, %zmm31, %zmm31
 	vpxord %zmm5, %zmm5, %zmm5
-	call .Lrc9
+	call sbn3f_qvk_rc9
 	vmovdqu64 %zmm0, 21056(%rsp)
 	vmovdqu64 %zmm4, 21120(%rsp)
 	vmovdqu64 %zmm6, 21184(%rsp)
@@ -3030,63 +2032,6 @@ sbn3f_inv_chain:
 	ret
 .Lend:
 .section .text.unlikely,"ax",@progbits
-.Lexact:
-	vmovdqu64 %zmm0, 8(%rsp,%r8)
-	vmovdqu64 %zmm4, 72(%rsp,%r8)
-	vmovdqu64 %zmm6, 136(%rsp,%r8)
-	vmovdqu64 %zmm8, 200(%rsp,%r8)
-	vmovdqu64 %zmm9, 264(%rsp,%r8)
-	vmovdqu64 %zmm10, 328(%rsp,%r8)
-	vmovdqu64 %zmm11, 392(%rsp,%r8)
-	vmovdqu64 %zmm12, 456(%rsp,%r8)
-	vmovdqu64 %zmm13, 520(%rsp,%r8)
-	vmovdqu64 %zmm14, 584(%rsp,%r8)
-	leaq 8(%rsp), %rdi
-	movl %r14d, %esi
-	call .Lcanon_mem
-	vmovdqu64 8(%rsp,%r8), %zmm0
-	vmovdqu64 72(%rsp,%r8), %zmm4
-	vmovdqu64 136(%rsp,%r8), %zmm6
-	vmovdqu64 200(%rsp,%r8), %zmm8
-	vmovdqu64 264(%rsp,%r8), %zmm9
-	vmovdqu64 328(%rsp,%r8), %zmm10
-	vmovdqu64 392(%rsp,%r8), %zmm11
-	vmovdqu64 456(%rsp,%r8), %zmm12
-	vmovdqu64 520(%rsp,%r8), %zmm13
-	vmovdqu64 584(%rsp,%r8), %zmm14
-	ret
-.Lcanon_mem:
-	vpxord %zmm3, %zmm3, %zmm3
-	xorl %eax, %eax
-	pushq %r10
-	pushq %r11
-	movl %esi, %r10d
-.Lcm_loop:
-	vmovdqu64 (%rdi), %zmm1
-	vpsrlq $52, %zmm1, %zmm2
-	vpandq .Lm52(%rip){1to8}, %zmm1, %zmm1
-	valignq $7, %zmm3, %zmm2, %zmm3
-	vpaddq %zmm3, %zmm1, %zmm1
-	vmovdqa64 %zmm2, %zmm3
-	vpcmpuq $6, .Lm52(%rip){1to8}, %zmm1, %k5
-	vpcmpeqq .Lm52(%rip){1to8}, %zmm1, %k6
-	kmovb %k5, %ecx
-	kmovb %k6, %r11d
-	leal (%rax,%rcx,2), %ecx
-	addl %r11d, %ecx
-	movl %ecx, %eax
-	shrl $8, %eax
-	xorl %r11d, %ecx
-	kmovb %ecx, %k7
-	vpsubq .Lm52(%rip){1to8}, %zmm1, %zmm1{%k7}
-	vpandq .Lm52(%rip){1to8}, %zmm1, %zmm1
-	vmovdqu64 %zmm1, (%rdi)
-	addq $64, %rdi
-	decl %r10d
-	jnz .Lcm_loop
-	popq %r11
-	popq %r10
-	ret
 .Lk_sx:
 	movl 2848(%rsp), %eax
 	movq 2592(%rsp), %rsi
@@ -3242,46 +2187,46 @@ sbn3f_inv_chain:
 .long .Lkchk - .Lst_tab
 .long .Lkchk - .Lst_tab
 .Ldtab:
-.long .Lseg0 - .Ldtab
-.long .Lseg0_r1 - .Ldtab
-.long .Lseg0_r2 - .Ldtab
-.long .Lseg0_r3 - .Ldtab
-.long .Lseg1 - .Ldtab
-.long .Lseg1_r1 - .Ldtab
-.long .Lseg1_r2 - .Ldtab
-.long .Lseg1_r3 - .Ldtab
-.long .Lseg2 - .Ldtab
-.long .Lseg2_r1 - .Ldtab
-.long .Lseg2_r2 - .Ldtab
-.long .Lseg2_r3 - .Ldtab
-.long .Lseg3 - .Ldtab
-.long .Lseg3_r1 - .Ldtab
-.long .Lseg3_r2 - .Ldtab
-.long .Lseg3_r3 - .Ldtab
-.long .Lseg4 - .Ldtab
-.long .Lseg4_r1 - .Ldtab
-.long .Lseg4_r2 - .Ldtab
-.long .Lseg4_r3 - .Ldtab
-.long .Lseg5 - .Ldtab
-.long .Lseg5_r1 - .Ldtab
-.long .Lseg5_r2 - .Ldtab
-.long .Lseg5_r3 - .Ldtab
-.long .Lseg6 - .Ldtab
-.long .Lseg6_r1 - .Ldtab
-.long .Lseg6_r2 - .Ldtab
-.long .Lseg6_r3 - .Ldtab
-.long .Lseg7 - .Ldtab
-.long .Lseg7_r1 - .Ldtab
-.long .Lseg7_r2 - .Ldtab
-.long .Lseg7_r3 - .Ldtab
-.long .Lseg8 - .Ldtab
-.long .Lseg8_r1 - .Ldtab
-.long .Lseg8_r2 - .Ldtab
-.long .Lseg8_r3 - .Ldtab
-.long .Lseg9 - .Ldtab
-.long .Lseg9_r1 - .Ldtab
-.long .Lseg9_r2 - .Ldtab
-.long .Lseg9_r3 - .Ldtab
+.long sbn3f_qvk_seg0 - .Ldtab
+.long sbn3f_qvk_seg0_r1 - .Ldtab
+.long sbn3f_qvk_seg0_r2 - .Ldtab
+.long sbn3f_qvk_seg0_r3 - .Ldtab
+.long sbn3f_qvk_seg1 - .Ldtab
+.long sbn3f_qvk_seg1_r1 - .Ldtab
+.long sbn3f_qvk_seg1_r2 - .Ldtab
+.long sbn3f_qvk_seg1_r3 - .Ldtab
+.long sbn3f_qvk_seg2 - .Ldtab
+.long sbn3f_qvk_seg2_r1 - .Ldtab
+.long sbn3f_qvk_seg2_r2 - .Ldtab
+.long sbn3f_qvk_seg2_r3 - .Ldtab
+.long sbn3f_qvk_seg3 - .Ldtab
+.long sbn3f_qvk_seg3_r1 - .Ldtab
+.long sbn3f_qvk_seg3_r2 - .Ldtab
+.long sbn3f_qvk_seg3_r3 - .Ldtab
+.long sbn3f_qvk_seg4 - .Ldtab
+.long sbn3f_qvk_seg4_r1 - .Ldtab
+.long sbn3f_qvk_seg4_r2 - .Ldtab
+.long sbn3f_qvk_seg4_r3 - .Ldtab
+.long sbn3f_qvk_seg5 - .Ldtab
+.long sbn3f_qvk_seg5_r1 - .Ldtab
+.long sbn3f_qvk_seg5_r2 - .Ldtab
+.long sbn3f_qvk_seg5_r3 - .Ldtab
+.long sbn3f_qvk_seg6 - .Ldtab
+.long sbn3f_qvk_seg6_r1 - .Ldtab
+.long sbn3f_qvk_seg6_r2 - .Ldtab
+.long sbn3f_qvk_seg6_r3 - .Ldtab
+.long sbn3f_qvk_seg7 - .Ldtab
+.long sbn3f_qvk_seg7_r1 - .Ldtab
+.long sbn3f_qvk_seg7_r2 - .Ldtab
+.long sbn3f_qvk_seg7_r3 - .Ldtab
+.long sbn3f_qvk_seg8 - .Ldtab
+.long sbn3f_qvk_seg8_r1 - .Ldtab
+.long sbn3f_qvk_seg8_r2 - .Ldtab
+.long sbn3f_qvk_seg8_r3 - .Ldtab
+.long sbn3f_qvk_seg9 - .Ldtab
+.long sbn3f_qvk_seg9_r1 - .Ldtab
+.long sbn3f_qvk_seg9_r2 - .Ldtab
+.long sbn3f_qvk_seg9_r3 - .Ldtab
 .Lsm1_tab:
 .long .Lsm1_t2 - .Lsm1_tab
 .long .Lsm1_t3 - .Lsm1_tab
@@ -3301,56 +2246,56 @@ sbn3f_inv_chain:
 .long .Lsm2_t8 - .Lsm2_tab
 .long .Lsm2_t9 - .Lsm2_tab
 .Lbig_tab:
-.long .Lz0 - .Lbig_tab
-.long .Lz1 - .Lbig_tab
-.long .Lz2 - .Lbig_tab
-.long .Lz3 - .Lbig_tab
-.long .Lz4 - .Lbig_tab
-.long .Lz5 - .Lbig_tab
-.long .Lz6 - .Lbig_tab
-.long .Lz7 - .Lbig_tab
-.long .Lz8 - .Lbig_tab
-.long .Lz9 - .Lbig_tab
-.long .Lseg0 - .Lbig_tab
-.long .Lseg1 - .Lbig_tab
-.long .Lseg2 - .Lbig_tab
-.long .Lseg3 - .Lbig_tab
-.long .Lseg4 - .Lbig_tab
-.long .Lseg5 - .Lbig_tab
-.long .Lseg6 - .Lbig_tab
-.long .Lseg7 - .Lbig_tab
-.long .Lseg8 - .Lbig_tab
-.long .Lseg9 - .Lbig_tab
-.long .Lrcp0 - .Lbig_tab
-.long .Lrcp1 - .Lbig_tab
-.long .Lrcp2 - .Lbig_tab
-.long .Lrcp3 - .Lbig_tab
-.long .Lrcp4 - .Lbig_tab
-.long .Lrcp5 - .Lbig_tab
-.long .Lrcp6 - .Lbig_tab
-.long .Lrcp7 - .Lbig_tab
-.long .Lrcp8 - .Lbig_tab
-.long .Lrcp9 - .Lbig_tab
-.long .Lgz0 - .Lbig_tab
-.long .Lgz1 - .Lbig_tab
-.long .Lgz2 - .Lbig_tab
-.long .Lgz3 - .Lbig_tab
-.long .Lgz4 - .Lbig_tab
-.long .Lgz5 - .Lbig_tab
-.long .Lgz6 - .Lbig_tab
-.long .Lgz7 - .Lbig_tab
-.long .Lgz8 - .Lbig_tab
-.long .Lgz9 - .Lbig_tab
-.long .Lupd0 - .Lbig_tab
-.long .Lupd1 - .Lbig_tab
-.long .Lupd2 - .Lbig_tab
-.long .Lupd3 - .Lbig_tab
-.long .Lupd4 - .Lbig_tab
-.long .Lupd5 - .Lbig_tab
-.long .Lupd6 - .Lbig_tab
-.long .Lupd7 - .Lbig_tab
-.long .Lupd8 - .Lbig_tab
-.long .Lupd9 - .Lbig_tab
+.long sbn3f_qvk_z0 - .Lbig_tab
+.long sbn3f_qvk_z1 - .Lbig_tab
+.long sbn3f_qvk_z2 - .Lbig_tab
+.long sbn3f_qvk_z3 - .Lbig_tab
+.long sbn3f_qvk_z4 - .Lbig_tab
+.long sbn3f_qvk_z5 - .Lbig_tab
+.long sbn3f_qvk_z6 - .Lbig_tab
+.long sbn3f_qvk_z7 - .Lbig_tab
+.long sbn3f_qvk_z8 - .Lbig_tab
+.long sbn3f_qvk_z9 - .Lbig_tab
+.long sbn3f_qvk_seg0 - .Lbig_tab
+.long sbn3f_qvk_seg1 - .Lbig_tab
+.long sbn3f_qvk_seg2 - .Lbig_tab
+.long sbn3f_qvk_seg3 - .Lbig_tab
+.long sbn3f_qvk_seg4 - .Lbig_tab
+.long sbn3f_qvk_seg5 - .Lbig_tab
+.long sbn3f_qvk_seg6 - .Lbig_tab
+.long sbn3f_qvk_seg7 - .Lbig_tab
+.long sbn3f_qvk_seg8 - .Lbig_tab
+.long sbn3f_qvk_seg9 - .Lbig_tab
+.long sbn3f_qvk_rcp0 - .Lbig_tab
+.long sbn3f_qvk_rcp1 - .Lbig_tab
+.long sbn3f_qvk_rcp2 - .Lbig_tab
+.long sbn3f_qvk_rcp3 - .Lbig_tab
+.long sbn3f_qvk_rcp4 - .Lbig_tab
+.long sbn3f_qvk_rcp5 - .Lbig_tab
+.long sbn3f_qvk_rcp6 - .Lbig_tab
+.long sbn3f_qvk_rcp7 - .Lbig_tab
+.long sbn3f_qvk_rcp8 - .Lbig_tab
+.long sbn3f_qvk_rcp9 - .Lbig_tab
+.long sbn3f_qvk_gz0 - .Lbig_tab
+.long sbn3f_qvk_gz1 - .Lbig_tab
+.long sbn3f_qvk_gz2 - .Lbig_tab
+.long sbn3f_qvk_gz3 - .Lbig_tab
+.long sbn3f_qvk_gz4 - .Lbig_tab
+.long sbn3f_qvk_gz5 - .Lbig_tab
+.long sbn3f_qvk_gz6 - .Lbig_tab
+.long sbn3f_qvk_gz7 - .Lbig_tab
+.long sbn3f_qvk_gz8 - .Lbig_tab
+.long sbn3f_qvk_gz9 - .Lbig_tab
+.long sbn3f_qvk_upd0 - .Lbig_tab
+.long sbn3f_qvk_upd1 - .Lbig_tab
+.long sbn3f_qvk_upd2 - .Lbig_tab
+.long sbn3f_qvk_upd3 - .Lbig_tab
+.long sbn3f_qvk_upd4 - .Lbig_tab
+.long sbn3f_qvk_upd5 - .Lbig_tab
+.long sbn3f_qvk_upd6 - .Lbig_tab
+.long sbn3f_qvk_upd7 - .Lbig_tab
+.long sbn3f_qvk_upd8 - .Lbig_tab
+.long sbn3f_qvk_upd9 - .Lbig_tab
 .p2align 2
 .Lst_tab0:
 .long 0

@@ -122,14 +122,19 @@ ap.add_argument('--kara-policy', default='')          # KARA512: file of "c nn" 
 ap.add_argument('--kara-padmax', default='model')     # KARA512: pad rule ('model' or a constant cap)
 ap.add_argument('--kara-count', default='')           # KARA512 gate build: count the exact fallbacks in SYM_s / SYM_t
 ap.add_argument('--kara-dup', default='')             # KARA512 timing ablations: G,S,T,H,R run twice, C splits each leaf call
+ap.add_argument('--kit', action='store_true')         # MULSHARE T1: the sections shared with the rsqrt engine (tools/fp_qv/kit.py) from qv_kit.S
 ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
 FPINV = ROOT / 'tools/fp_inv'
+__import__('sys').path.insert(0, str(ROOT / 'tools/fp_qv'))
+import kit as qvkit                                   # MULSHARE: the shared sections' spans, names, kit text
+QVK = {}                                              # MULSHARE: spans of L emitted for the kit
 PROD = ['--name', 'sbn3f_inv_chain', '--fixsym', 'sbn3f_inv_fix', '--chain', '--U', '4', '--gmap', '4,2,2', '--duff',
         '--small', '2', '--mpinit', '--hidden', '--prod-header', '--ovh-ss', '--ovh-hc', '--ovh-hc-max', '1',
-        '--kara-policy', str(FPINV / 'kara_policy.txt')]   # the shipped engine (oz)
+        '--kara-policy', str(FPINV / 'kara_policy.txt'), '--kit']   # the shipped engine (oz), its shared sections in qv_kit.S
 argv = __import__('sys').argv[1:]
 CHECK = '--check' in argv
-argv = [x for x in argv if x != '--check']
+KITEMIT = '--kit-emit' in argv                        # MULSHARE: print only the kit (tools/generate_fp_qv_kit.py)
+argv = [x for x in argv if x not in ('--check', '--kit-emit')]
 if not any(x.startswith('-') for x in argv):
     argv = (argv or [str(ROOT / 'src/fp/x86_64/inv_engine.S')]) + PROD
 a = ap.parse_args(argv)
@@ -659,6 +664,7 @@ e('ret')
 
 # ---------------------------------------------------------------- sections (descending vector entries, each ends in ret)
 # Z: zero the accumulators of vectors v .. 0
+QVK['hot'] = [len(L)]
 for v in range(NVMAX - 1, -1, -1): lab(f'.Lz{v}'); zib(v)
 e('ret')
 
@@ -697,6 +703,7 @@ e('ret')
 # UPD: X[r13 + 64 v] += C (lanes >= e: k1 / k2; -2 at lane e when mid: k3 / k4); bit 52 of any result -> BADU
 for v in range(NVMAX - 1, -1, -1): lab(f'.Lupd{v}'); upb(v)
 e('ret')
+QVK['hot'].append(len(L))
 if a.kara_policy: kara_hot()                          # KARA512: appended after every shipped section
 lab('.Lend')
 
@@ -705,6 +712,7 @@ lab('.Lend')
 # carry pass runs over F[0 .. NV) (from the fast-round digits: same value mod beta^(8 NV), so the same canonical digits
 # as v1.1's pass from the raw sums), V_0..V_9 come back from F + r8. Uses rax, rcx, rsi, rdi, zmm T1..T3, k5..k7.
 e('.section .text.unlikely,"ax",@progbits')
+QVK['cold'] = [len(L)]
 lab('.Lexact')
 for v in range(NVMAX): e(f'vmovdqu64 {z(VR[v])}, {8 + F_OFF + 64 * v}(%rsp,%r8)')   # +8: the return address
 e(f'leaq {8 + F_OFF}(%rsp), %rdi'); e('movl %r14d, %esi')
@@ -742,6 +750,7 @@ e('decl %r10d')
 e('jnz .Lcm_loop')
 e('popq %r11'); e('popq %r10')
 e('ret')
+QVK['cold'].append(len(L))
 if a.xreg:
     # S4X: the exact pass of the NV 1..10 stubs in registers (--xs; exploration: --xreg / --xpair / --xk). Free in every
     # caller: the trampolines run right after a fast round, where only the window's vector registers and the stub's
@@ -895,7 +904,17 @@ e('.text')
 e(f'.size {a.name}, .Lend - {a.name}')
 e('.section .note.GNU-stack,"",@progbits')
 
+if KITEMIT:                                           # MULSHARE: the kit's text only (the same for every --kit engine)
+    assert a.duff and not SN and U == 4 and GM == [4, 2, 2] + [1] * 7 and a.mpinit and F_OFF == 0 and not a.align
+    __import__('sys').stdout.write(qvkit.body(L, QVK['hot'], QVK['cold']))
+    raise SystemExit(0)
+if a.kit:                                             # MULSHARE: leave the kit's lines out, call its entries
+    qvkit.strip(L, QVK['hot'], QVK['cold'])
 src = '\n'.join(L) + '\n'
+if a.kit:
+    src, KUSED = qvkit.rename(src)
+    assert a.hidden and src.count(f'.hidden {a.fixsym}\n') == 1
+    src = src.replace(f'.hidden {a.fixsym}\n', f'.hidden {a.fixsym}\n' + qvkit.hidden(KUSED), 1)
 if a.maplabels:
     import re
     src = re.sub(r'\.L(?=[a-z_])', 'Lq_', src)
@@ -1007,6 +1026,12 @@ if a.prod_header and not a.xs and a.name == 'sbn3f_inv_chain' and a.kara_policy:
            ' * vzeroupper; vzeroupper before the return; zmm0..31 and k0..k7 are clobbered (caller-saved). The exact carry\n'
            ' * pass (.Lexact, through the frame) and the Karatsuba path\'s exact S / t\' fallbacks are in .text.unlikely.\n'
            ' */\n')
+if a.kit:                                             # MULSHARE: where the shared sections are
+    assert hdr.endswith(' */\n')
+    hdr = hdr[:-4] + (' *\n * Shared kit (MULSHARE): the sections Z, SEG (with the group sums SX), RCP, RC, GZ, UPD, and the exact pass\n'
+                      ' * (.Lexact / .Lcanon_mem) are src/fp/x86_64/qv_kit.S (tools/generate_fp_qv_kit.py), one copy\n'
+                      ' * for this engine and the rsqrt engine; this file calls their hidden entries sbn3f_qvk_<name> (the same call / ret\n'
+                      ' * protocol and registers as above).\n */\n')
 if CHECK:
     if open(a.out).read() != hdr + src:
         raise SystemExit(f'{a.out} differs from tools/generate_fp_inv_engine.py\'s output')
