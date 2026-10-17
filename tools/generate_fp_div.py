@@ -3,7 +3,7 @@
 
   fxr sbn3f_div(limb *z, const fx *a, const fx *b, int64_t leps)   rdi z, rsi a, rdx b, rcx leps
   fxr sbn3f_inv_base(limb *z, const fx *b, int64_t leps)           rdi z, rsi b, rdx leps (hidden: the reciprocal
-      sbn3f_inv, src/fp/x86_64/inv.S, hands over k <= 3, k = 4 at ld > 60 and k > 256; precondition k <= 230)
+      sbn3f_inv, src/fp/x86_64/inv.S, hands over k <= 3, k = 4 at ld > 60 and k > 512; precondition k <= 512)
   result: rax e, rdx ns
 
 The research prototype's scalar division (experiments/results/fp_roots_2026-10-09/src/gen_fpdiv_s.py, 2026-10-10 .. 11)
@@ -13,7 +13,9 @@ Foundation, Inc.; notice src/core/x86_64/scalar-donor-notice.txt); n >= 6 is the
 division (divsw.hpp there, Bounds (1)-(6)).
 
 Shape. e_top = ea - eb + 1 (the quotient a / b is below B^e_top), k = e_top - floor((leps - 2) / 64) quotient limbs at
-grid L(2) (k <= 0: zero; precondition k <= 230). The top k + 1 limbs of a and of b (zero below an operand that is
+grid L(2) (k <= 0: zero; precondition k <= 512). The division from k = KMIN = 22 is sbn3f_div_km
+(src/fp/x86_64/div_km.cpp: Karp-Markstein on the reciprocal's IFMA levels, the operands' whole arrays; its header has the
+derivation); below, and for the reciprocal entry (an = 0), the cores here. The top k + 1 limbs of a and of b (zero below an operand that is
 shorter) are shifted left together by ld = lzcnt(b's top limb) (k <= 5: in registers by mulx with 2^ld; k <= NMAX: a
 VPSHLDVQ funnel into the frame; qv: inside its u64 -> u52 conversions, the windows passed unshifted):
   Y = floor(b_w 2^ld / B), k limbs, normalized;   X = floor(a_w 2^ld / B), k + 1 limbs, X < B Y (X / Y < 2^(ld+1)).
@@ -23,7 +25,9 @@ subtraction for X >= Y), which keeps their invariant 0 <= R < 2 Y B^(k+1) at the
   k = 1: one divq of <x1, x0> by y0.  k = 2: two exact 3/2 steps on <x2, x1, x0> and <r1, r0, 0>.
   k = 3..5: div_ssF's 3/2 loop, the registers loaded with X[k] .. X[0] top-aligned.
   k = 6..NMAX: the register-window short division, M from position k (X[0] .. X[k-5], complemented), the window
-    X[k-4] .. X[k].  k > NMAX: sbn3f_div_qv (src/fp/x86_64/div_qv.cpp, the IFMA short division).
+    X[k-4] .. X[k] (the division to KMIN - 1, the reciprocal to NMAX).  The reciprocal above NMAX (k <= QVMAX = 230; not
+    reached from sbn3f_inv, which hands over only k <= 4 and k > 512): sbn3f_div_qv (src/fp/x86_64/div_qv.cpp, the IFMA
+    short division).
 Error, in units of the last quotient limb: the cores give z in (v' - 1 - 16/B, v' + 2k/B^2) (k <= 2: the exact floor;
 qv: (v' - 1 - 2^-6.9, v' + 2^-400]), v' = X B^(k-1) / Y; Y below b_w 2^ld / B by < 1 + 2^ld / B < 3/2 with
 Y >= B^k / 2 and v' < B^k puts v' above the true quotient by less than 3; X's and a's truncations lower v' by
@@ -42,7 +46,10 @@ import sys
 
 OUT = 'src/fp/x86_64/div.S'
 NMAX = 34                         # the scalar cores' largest n (the prototype's measured cut 34 / 35); qv beyond
-KMAX = 230                        # the precondition's largest k (qv's range)
+KMAX = 512                        # the precondition's largest k (Karp-Markstein's range)
+QVMAX = 230                       # qv's largest k (the reciprocal's na = 0 path above NMAX, unreachable from sbn3f_inv)
+KMIN = 22                         # the division's k from which Karp-Markstein (div_km.cpp) beats the register-window cores
+CORE_PAD = 15                     # int3 bytes before the cores: the route's code in the entries moved them by 49 B (+1 % at k 9..17)
 MO = 0                            # M: positions n-6 .. 2n+1 at 8 (p - (n-6))
 QO = 8 * (NMAX + 8)               # Qd[k] at QO + 8k, k <= n
 V1 = QO + 8 * (NMAX + 1)
@@ -902,6 +909,7 @@ def cores():
     # k = 6..NMAX: state as at .Lf<k> (rsi = a.d, r10 = na, rdx = b.d, r11 = nb, rax = e_top, r8 = ns, r9 = k,
     # rdi = z); the windows go into the core's own frame: X shifted always, Y shifted unless ld = 0 and nb >= k (then
     # b's top k limbs as they are: no stores for the core's many D reads to forward from)
+    e(f'\t.skip\t{CORE_PAD}, 0xcc')                 # the cores at their placement (mod 64) before the Karp-Markstein route
     e('.Lbe:')
     for r in SAVE_REGS:
         e(f'\tpush\t%{r}')
@@ -1063,14 +1071,30 @@ def entries():
     e('\taddq\t%rcx, %r9')
     e('\tjmp\t*%r9')
     e('.Lgen:')
-    e(f'\tcmpq\t${NMAX}, %r9')
+    e(f'\tcmpq\t${KMIN - 1}, %r9')
     e('\tjbe\t.Lbe')
-    # qv: the windows' top limbs unshifted (the shift by ld goes into its u64 -> u52 conversions), an = 0 the reciprocal
+    e('\ttestq\t%r10, %r10')
+    e('\tjnz\t.Lgkm')
+    e(f'\tcmpq\t${NMAX}, %r9')                    # na = 0, the reciprocal: the cores to NMAX, then qv
+    e('\tjbe\t.Lbe')
+    e('.Lgkm:')
     e('\tpushq\t%rdi')                            # z
     e('\tpushq\t%rax')                            # e_top
     e('\tpushq\t%r8')                             # ns
     e('\tpushq\t%r9')                             # k
     e('\tsubq\t$8, %rsp')                         # rsp 16-aligned at the call
+    e('\ttestq\t%r10, %r10')
+    e('\tjz\t.Lgqv')                              # na = 0: the reciprocal (qv)
+    # Karp-Markstein: the operands' whole arrays
+    e('\tmovq\t%rdx, %rcx')                       # b.d
+    e('\tmovq\t%r10, %rdx')                       # na
+    e('\tmovq\t%r11, %r8')                        # nb
+    e('\tcall\tsbn3f_div_km')                     # (z, a.d, na, b.d, nb, k)
+    e('\tjmp\t.Lgret')
+    # qv: the windows' top limbs unshifted (the shift by ld goes into its u64 -> u52 conversions), an = 0 the reciprocal
+    e('.Lgqv:')
+    e(f'\tcmpq\t${QVMAX}, %r9')
+    e('\tja\t.Lbad')
     e('\tleaq\t1(%r9), %rcx')
     e('\tmovq\t%r11, %r8')
     e('\tcmpq\t%rcx, %r8')
@@ -1083,6 +1107,7 @@ def entries():
     e('\tsubq\t%rdx, %r10')
     e('\tleaq\t(%rsi,%r10,8), %rsi')              # aw
     e('\tcall\tsbn3f_div_qv')                     # (z, aw, an, bw, bn, k)
+    e('.Lgret:')
     e('\taddq\t$8, %rsp')
     e('\tpopq\t%rcx')                             # k
     e('\tpopq\t%rdx')                             # ns
@@ -1166,7 +1191,8 @@ def funnel_vector(nsrc, top_from_b, pre=''):
 
 def main():
     e(f'/* Generated by tools/generate_fp_div.py; do not edit. fp kernel division and reciprocal, x86-64 (BMI2, ADX,')
-    e(' * LZCNT): the research prototype\'s scalar division on the limb grid, IFMA qv beyond NMAX (div_qv.cpp).')
+    e(' * LZCNT): the research prototype\'s scalar division on the limb grid to k = 21; from k = 22 Karp-Markstein on the')
+    e(' * reciprocal\'s IFMA levels (sbn3f_div_km, div_km.cpp); the reciprocal entry above k = 34: IFMA qv (div_qv.cpp).')
     e(' * n = 2 and n = 3..5 port GMP 6.3.0 udiv_qr_3by2 / invert_pi1 / sbpi1_div_qr arithmetic via the library (dual')
     e(' * LGPLv3+ / GPLv2+; Copyright 1991-2016 Free Software Foundation, Inc.; notice')
     e(' * src/core/x86_64/scalar-donor-notice.txt); n >= 6 is the prototype\'s register-window short division. */')
@@ -1188,7 +1214,14 @@ def main():
         e(f'\t.long\t.Li{k}-.Litab')
     b_tables()
     e('\t.section\t.note.GNU-stack,"",@progbits')
-    open(sys.argv[1] if len(sys.argv) > 1 else OUT, 'w').write('\n'.join(out) + '\n')
+    args = [x for x in sys.argv[1:] if x != '--check']
+    path, text = args[0] if args else OUT, '\n'.join(out) + '\n'
+    if '--check' in sys.argv[1:]:                 # compare instead of writing (tools/build.py)
+        if open(path).read() != text:
+            raise SystemExit(f'{path} differs from tools/generate_fp_div.py\'s output')
+        print(f'OK: {path} is tools/generate_fp_div.py\'s output')
+        return
+    open(path, 'w').write(text)
 
 if __name__ == '__main__':
     main()
