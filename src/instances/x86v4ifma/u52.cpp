@@ -194,12 +194,21 @@ template<bool track_root>
 static inline Algorithm multiply_buffers(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,
                                         sb_vec *ax,sb_vec *bx,sb_vec *px,size_t va,size_t vb,Frame &space,Algorithm root) noexcept {
     if(!an || !bn){if(an+bn)memset(out,0,(an+bn)*8);return Algorithm::zero;}
-    const size_t na=u52_from_u64(ax,a,an),nb=u52_from_u64(bx,b,bn);
+    // the same operand twice is a square: one conversion, the square kernels
+    const bool square=root==Algorithm::automatic && a==b && an==bn;
+    const size_t na=u52_from_u64(ax,a,an),nb=square?na:u52_from_u64(bx,b,bn);
+    if(square)bx=ax;
     ax[va-1]=bx[vb-1]=sb_zero();
     if(!na || !nb){memset(out,0,(an+bn)*8);return Algorithm::zero;}
     size_t x=na,y=nb;if(x<y){auto *p=ax;ax=bx;bx=p;auto n=x;x=y;y=n;}
     int cls=0;
-    if(root==Algorithm::automatic){if constexpr(track_root){root=choose(x,y);if(root==Algorithm::karatsuba && y<=x/2)root=Algorithm::basecase;}cls=mul_u52_dispatch(px,ax,bx,x,y,&space);}
+    if(root==Algorithm::automatic){
+        if constexpr(track_root){
+            if(square)root=x<MUL_U52_T22_THRESHOLD?Algorithm::basecase:Algorithm::karatsuba;   // sqr_u52_dispatch's choice
+            else{root=choose(x,y);if(root==Algorithm::karatsuba && y<=x/2)root=Algorithm::basecase;}
+        }
+        cls=square?sqr_u52_dispatch(px,ax,x,&space):mul_u52_dispatch(px,ax,bx,x,y,&space);
+    }
     else switch(root){
         case Algorithm::basecase:require(y<=112,SBN3_FATAL_ARGUMENT,"forced u52 basecase lane bound");mul_u52_basecase(px,ax,bx,x,y);break;
         case Algorithm::karatsuba:require(y>x/2,SBN3_FATAL_ARGUMENT,"forced Karatsuba shape");cls=mul_u52_karatsuba(px,ax,bx,x,y,&space);break;
@@ -260,41 +269,30 @@ static void middle_impl(uint64_t *out,const uint64_t *a,size_t an,const uint64_t
                         size_t readable_bn=0) noexcept {
     FrameMark mark(f);const size_t na=(an*64+51)/52,nb=(bn*64+51)/52,rn=nb-na+1;
     if constexpr(Guards)require(na>Guards && na<=1024 && bn>=an && bn<=8192,SBN3_FATAL_ARGUMENT,"guarded middle shape");
-    auto *A=f.alloc<uint64_t>(na+24),*B=f.alloc<uint64_t>(nb+56),*R=f.alloc<uint64_t>(rn+Guards+8);
-    memset(A,0,(na+24)*8);memset(B,0,(nb+56)*8);memset(R,0,(rn+Guards+8)*8);
+    auto *A=f.alloc<uint64_t>(na+24),*B=f.alloc<uint64_t>(nb+64),*R=f.alloc<uint64_t>(rn+Guards+24);
     // Fixed planned counts, including leading zero digits; no value-dependent
     // certificate or allocation. Front padding makes donor masked bases valid.
-    A+=8;B+=8;u52_from_u64((sb_pvec)A,a,an);u52_from_u64((sb_pvec)B,b,readable_bn?readable_bn:bn);
-    mulmid_dc(R+Guards,A,B,int64_t(na),int64_t(nb),&f);
-    if constexpr(Guards){
-        constexpr uint64_t mask=(uint64_t(1)<<52)-1;
-        for(unsigned g=0;g<Guards;++g){
-            const size_t diagonal=na-1-Guards+g;
-            __m512i low=_mm512_setzero_si512(),high=low;
-            const __m512i order=_mm512_setr_epi64(0,1,2,3,4,5,6,7);
-            for(size_t i=0;i<=diagonal;i+=8){
-                const unsigned count=unsigned(std::min<size_t>(8,diagonal-i+1));
-                const __mmask8 lanes=__mmask8((1u<<count)-1);
-                const __m512i x=_mm512_maskz_loadu_epi64(lanes,A+i);
-                const __m512i raw=_mm512_maskz_loadu_epi64(lanes,B+diagonal-i+1-count);
-                const __m512i indices=_mm512_sub_epi64(_mm512_set1_epi64(count-1),order);
-                const __m512i y=_mm512_permutexvar_epi64(indices,raw);
-                low=_mm512_madd52lo_epu64(low,x,y);high=_mm512_madd52hi_epu64(high,x,y);
-            }
-            const __uint128_t sum=(__uint128_t(uint64_t(_mm512_reduce_add_epi64(high)))<<52)+
-                                  uint64_t(_mm512_reduce_add_epi64(low));
-            R[g]+=uint64_t(sum)&mask;R[g+1]+=uint64_t(sum>>52);
-        }
-    }
-    __int128 carry=0;uint64_t acc=0;unsigned bits=0;size_t w=0;
-    for(size_t j=0;j<rn+Guards+2;++j){
-        if(j<rn+Guards+1)carry+=(__int128)(int64_t)R[j];
-        const uint64_t d=uint64_t(carry)&((uint64_t(1)<<52)-1);carry=(carry-d)>>52;
-        acc|=d<<bits;
-        if(bits+52>=64){out[w++]=acc;acc=bits?d>>(64-bits):0;bits=bits+52-64;}
-        else bits+=52;
-    }
-    if(bits)out[w++]=acc;
+    // Conversion writes whole vectors; only the pads and the planned digits
+    // past its last vector need zeros, and of R the lanes the encoder reads
+    // past the band (the band kernels write R[0, Guards+rn]).
+    // B's front pad is 16 digits: the row stream reads from 8 below the guard-shifted b.
+    memset(A,0,64);memset(B,0,128);A+=8;B+=16;
+    const size_t ca=(u52_from_u64((sb_pvec)A,a,an)+7)&~size_t(7);
+    const size_t cb=(u52_from_u64((sb_pvec)B,b,readable_bn?readable_bn:bn)+7)&~size_t(7);
+    memset(A+ca,0,(na+16-ca)*8);memset(B+cb,0,(nb+48-cb)*8);
+    // The guard diagonals na-1-Guards.. are the band of b shifted up by Guards
+    // digits through B's zero front pad: the same lo-only bottom digit and
+    // partial diagonals, computed by the band kernels themselves.
+    memset(R+Guards+rn+1,0,23*8);
+    mulmid_dc(R,A,B-Guards,int64_t(na),int64_t(nb+Guards),&f);
+    // The biased encoder takes lanes in [-2^62+2^10, 2^64-2^62) (lane plus
+    // 2^62-2^10 in [0, 2^64)). R's lanes: basecase and row-stream digits are
+    // non-negative sums < 2*na*2^52 <= 2^63; Karatsuba interiors |.| < 2^55, plus
+    // non-negative strip/diagonal sums < 2^56; a Karatsuba top limb is <= 2^62.5
+    // and >= -8, being (V - S)/B^2m with the band value V >= 0 and the interior
+    // |S| < 2^55*B^2m/(B-1); a seam adds a top to the next block's bottom digit,
+    // so it lies in [-2^57, 2^62.5+2^62]. It writes ceil(52*(rn+Guards+2)/64) words.
+    u64_from_u52_canonneg(out,(sb_cpvec)R,(52*(rn+Guards+2)+63)/64);
 }
 void middle(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
     middle_impl<0>(out,a,an,b,bn,f);

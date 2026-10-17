@@ -1,4 +1,5 @@
-/* Imported from libsbn/include/sbn/detail/mulmid/mulmid.h; kernel arithmetic retained. */
+/* Imported from libsbn/include/sbn/detail/mulmid/mulmid.h; kernel arithmetic retained. The row-stream
+ * kernel mulmid_rows (short a, long bands) is new in libsbn_v3. */
 #pragma once
 namespace sbn::v3::u52 {
 
@@ -249,6 +250,94 @@ static inline void mulmid_basecase(sb_plimb r, const sb_limb *a, const sb_limb *
         sb_vec H2 = sb_maskz(stmask, sb_add(sb_add(F_hi[1], sb_lane_rsh(F_hi[2], 1)), sb_lane_rsh(F_hi[3], 2)));
         sb_vec res = sb_add(H2, L2, (uint8_t)((1u << n2) - 1), H2);
         sb_store(r + V, res, (uint8_t)((2u << n2) - 1));
+    }
+}
+
+// Short a (an <= 8*MY digits) against a long b: the row stream of fixed::mul_rows_stream
+// over L = b + an - 1 with a's digits as the rows. Band digit p = sum_i lo(a_i L[p-i]) +
+// hi(a_i L[p-1-i]) is product digit an-1+p of a*b, so step q (L's vector q against the
+// 8 class windows) feeds outputs q..q+MY-1 exactly as there. The stream starts MY-1
+// steps early, its windows reaching below b + an - 1 into real digits of b (the lanes
+// they give below b[0] are outputs before p = 0 or the hi of diagonal an-2), and stops
+// at the output holding digit rn: no ramp, no flush. Lane 0 of output 0 drops its hi
+// (diagonal an-2), digit rn its lo (diagonal bn). b is read from b - 8 to b + bn + 7.
+template<int MY, int C>
+__attribute__((noinline)) static void mulmid_rows(uint64_t *r, const uint64_t *a, int64_t an, const uint64_t *b, int64_t bn) {
+    using namespace fixed;
+    using std::integral_constant;
+    const int64_t rn = bn - an + 1, Q = rn / 8, ty = an - 8 * (MY - 1), t = rn - 8 * Q;
+    const uint64_t *L = b + an - 1;
+    sb_vec Lo[C][MY], Hi[C][MY];                // outputs q .. q+MY-1
+    unroll<C>([&](auto c) __attribute__((always_inline)) {
+        unroll<MY>([&](auto i) __attribute__((always_inline)) { Lo[c][i] = sb_zero(); Hi[c][i] = sb_zero(); });
+    });
+    const sb_vec idxt = sb_add(sb_setr_64(0, 1, 2, 3, 4, 5, 6, 7), sb_set1_64(8 - ty)), ylast = sb_set1_64(a[an - 1]);
+    // class s of window W: rows 8m+s (lo) and 8m+s-1 (hi) of the full blocks, and of a's
+    // last block when `last`
+    auto rows = [&](auto S, sb_vec W, auto last) __attribute__((always_inline)) {
+        constexpr int s = S, c = s % C;
+        unroll<MY - 1>([&](auto m) __attribute__((always_inline)) {
+            Lo[c][m] = madd52lo_row(Lo[c][m], W, a + 8 * m + s);
+            if constexpr (s > 0 || m > 0) Hi[c][m] = madd52hi_row(Hi[c][m], W, a + 8 * m + s - 1);
+        });
+        if constexpr (last) {
+            Lo[c][MY - 1] = madd52lo_row(Lo[c][MY - 1], W, a + 8 * (MY - 1) + s);
+            if constexpr (s > 0 || MY > 1) Hi[c][MY - 1] = madd52hi_row(Hi[c][MY - 1], W, a + 8 * (MY - 1) + s - 1);
+        }
+    };
+    sb_vec prev = sb_load(L - 8 * MY);
+    for(int64_t q = 1 - MY; q <= Q; ++q){
+        const sb_vec cur = sb_load(L + 8 * q);
+        auto both = [&](auto S) __attribute__((always_inline)) { rows(S, window<8 - S>(cur, prev), std::true_type{}); };
+        auto full = [&](auto S) __attribute__((always_inline)) { rows(S, window<8 - S>(cur, prev), std::false_type{}); };
+        switch(ty){                             // classes ty-1..0 take a's last block too
+        case 1: goto b0;
+        case 2: goto b1;
+        case 3: goto b2;
+        case 4: goto b3;
+        case 5: goto b4;
+        case 6: goto b5;
+        case 7: goto b6;
+        default: goto b7;
+        }
+        b7: both(integral_constant<int, 7>{});
+        b6: both(integral_constant<int, 6>{});
+        b5: both(integral_constant<int, 5>{});
+        b4: both(integral_constant<int, 4>{});
+        b3: both(integral_constant<int, 3>{});
+        b2: both(integral_constant<int, 2>{});
+        b1: both(integral_constant<int, 1>{});
+        b0: both(integral_constant<int, 0>{});
+        switch(ty){                             // classes ty..7 only the full blocks
+        case 1: goto f1;
+        case 2: goto f2;
+        case 3: goto f3;
+        case 4: goto f4;
+        case 5: goto f5;
+        case 6: goto f6;
+        case 7: goto f7;
+        default: goto fe;
+        }
+        f1: full(integral_constant<int, 1>{});
+        f2: full(integral_constant<int, 2>{});
+        f3: full(integral_constant<int, 3>{});
+        f4: full(integral_constant<int, 4>{});
+        f5: full(integral_constant<int, 5>{});
+        f6: full(integral_constant<int, 6>{});
+        f7: full(integral_constant<int, 7>{});
+        fe:                                     // class ty of the last block: hi of row an-1
+        Hi[0][MY - 1] = sb_madd52hi(Hi[0][MY - 1], sb_perm64x2(prev, idxt, cur), ylast);
+        prev = cur;
+        sb_vec lo = Lo[0][0], hi = Hi[0][0];   // retire output q
+        unroll<C - 1>([&](auto c) __attribute__((always_inline)) { lo = sb_add(lo, Lo[c + 1][0]); hi = sb_add(hi, Hi[c + 1][0]); });
+        unroll<C>([&](auto c) __attribute__((always_inline)) {
+            unroll<MY - 1>([&](auto i) __attribute__((always_inline)) { Lo[c][i] = Lo[c][i + 1]; Hi[c][i] = Hi[c][i + 1]; });
+            Lo[c][MY - 1] = sb_zero(); Hi[c][MY - 1] = sb_zero();
+        });
+        if(q < 0) continue;
+        if(q == 0) hi = sb_maskz(0xFE, hi);
+        if(q < Q) sb_store(r + 8 * q, sb_add(lo, hi));
+        else sb_store(r + 8 * q, sb_add(sb_maskz(lanes_below(t), lo), hi), lanes_below(t + 1));
     }
 }
 

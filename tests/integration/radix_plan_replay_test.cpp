@@ -6,7 +6,8 @@
 //   1. a chosen product query returns the plan of the search, bit for bit (plain products and the rail's squares);
 //   2. a recorded assembly replays into the same tree plan without a single search, for every node class, stage,
 //      rail squaring and ring plan; a transcript without room, a transcript of another request and damaged
-//      entries fall back to the search and still give the same plan;
+//      entries fall back to the search and still give the same plan; a finite-use product's record replays only
+//      for the same application count (2a); a ring plan only for the same complete request (2b);
 //   3. the plan value is sealed: a changed transcript word, Newton plan word or layout word is refused at bind;
 //   4. the schoolbook reciprocal of small scaling powers is inside the Newton INVERSE contract.
 #include "product_support.hpp"
@@ -116,6 +117,57 @@ void products() {
         }
     // almost every bit is compared: the padding is a few words of a 384-word value
     assert(count > 150 && padding_bits * 20 < compared_bits);
+}
+// 2a. a finite-use product's application count is part of its request: the choice depends on it (one use
+// takes U52 where more uses amortise a PQ16 shape's tables). A record of another count, or of the
+// ordinary product (count 0), falls back to the search and gives the shape of an independent search;
+// a record of the same count replays without a search.
+void finite_counts() {
+    unsigned differing = 0, cases = 0;
+    for (auto [an, bn] : {std::pair<size_t, size_t>{300, 300}, {300, 151}, {450, 450}, {700, 700}})
+        for (uint64_t recorded_uses : {0ull, 1ull, 2ull, 64ull, 1ull << 40})
+            for (uint64_t uses : {0ull, 1ull, 2ull, 3ull, 8ull, 64ull, 1ull << 40}) {
+                ProductShape recorded{}, searched{}, replayed{};
+                auto transcript = std::make_unique<PlanTranscript>();
+                assert(product_shape(an, bn, 1, recorded, nullptr, transcript.get(), recorded_uses) == SBN3_SUPPORTED &&
+                       transcript->count == 1);
+                assert(product_shape(an, bn, 1, searched, nullptr, nullptr, uses) == SBN3_SUPPORTED);
+                transcript->replay = true;
+                assert(product_shape(an, bn, 1, replayed, nullptr, transcript.get(), uses) == SBN3_SUPPORTED &&
+                       transcript->cursor == 1);
+                assert(same_shape(searched, replayed));
+                assert(transcript->searched == (uses == recorded_uses ? 0u : 1u));
+                differing += recorded.choice != searched.choice;
+                ++cases;
+            }
+    assert(differing > 10 && differing < cases); // the counts above do move the choice
+}
+// 2b. a ring plan's request is every field its choice depends on: the complete application count (2 and 8
+// are both cached) and fresh and common separately (2000 + 8336 and 2001 + 8333 have the same 3*fresh +
+// common, the same minimum ring and the same winner's resources). A record of another request falls back
+// to the search and gives the ring plan of an independent search; the same request replays without one.
+bool same_ring(const RingPlan &a, const RingPlan &b) {
+    return a.enabled == b.enabled && a.cached == b.cached && a.np == b.np && a.algorithm == b.algorithm && a.workers == b.workers &&
+           a.trunk_bits == b.trunk_bits && a.ring == b.ring && a.common_limbs == b.common_limbs && a.fresh_limbs == b.fresh_limbs &&
+           a.table_bytes == b.table_bytes && a.work_bytes == b.work_bytes && a.work_alignment == b.work_alignment &&
+           a.output_limbs == b.output_limbs && a.spectrum_bytes == b.spectrum_bytes && a.spectrum_alignment == b.spectrum_alignment &&
+           a.predicted_ns == b.predicted_ns && a.prepare_ns == b.prepare_ns;
+}
+void ring_requests() {
+    struct Request { size_t fresh, common, ring; uint64_t uses; };
+    const Request requests[] = {{2000, 8336, 8192, 2}, {2000, 8336, 8192, 8}, {2001, 8333, 8192, 2}};
+    for (unsigned r = 0; r < 3; ++r)
+        for (unsigned u = 0; u < 3; ++u) {
+            const auto &rec = requests[r], &use = requests[u];
+            RingPlan recorded{}, searched{}, replayed{};
+            auto transcript = std::make_unique<PlanTranscript>();
+            assert(ring_plan(rec.fresh, rec.common, rec.ring, 1, recorded, transcript.get(), rec.uses) && transcript->count == 1);
+            assert(ring_plan(use.fresh, use.common, use.ring, 1, searched, nullptr, use.uses) && searched.cached);
+            transcript->replay = true;
+            assert(ring_plan(use.fresh, use.common, use.ring, 1, replayed, transcript.get(), use.uses) && transcript->cursor == 1);
+            assert(same_ring(searched, replayed));
+            assert(transcript->searched == (r == u ? 0u : 1u));
+        }
 }
 // 2. format and parse tree plans.
 bool same_split(const SplitPlan &a, const SplitPlan &b) {
@@ -390,6 +442,8 @@ void reciprocals() {
 } // namespace
 int main() {
     products();
+    finite_counts();
+    ring_requests();
     trees();
     sealed_values();
     reciprocals();

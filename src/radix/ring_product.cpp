@@ -4,7 +4,9 @@
 #include "product/root_prepare_cost.hpp"
 #include "runtime/arena.hpp"
 #include "common/checked.hpp"
+#include "common/identity.hpp"
 #include <algorithm>
+#include <initializer_list>
 #include <math.h>
 namespace sbn::v3::radix {
 namespace {
@@ -89,11 +91,16 @@ bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned worker
         out.prepare_ns = prepare;
         fill(out, q);
     };
-    // Transcript entry of the winner: [1][np:7][algorithm:4][0:12][T:12], checked against the request and the
-    // resources of the plan it stands for.
+    // Transcript entry of the winner: [1][np:7][algorithm:4][0:12][T:12], checked against the request (every
+    // field the choice depends on, the complete application count included) and the plan it stands for,
+    // word by word.
     auto check = [&] {
-        return PlanTranscript::check(fresh * 3 + common, minimum_ring, workers,
-                                     out.enabled ? out.ring + 31 * (out.table_bytes + 31 * (out.work_bytes + 31 * out.spectrum_bytes)) + uint64_t(out.cached) : 0);
+        uint64_t h = identity::word(identity::word(identity::fnv_seed, workers), applications);
+        if (out.enabled)
+            for (uint64_t v : {uint64_t(out.np), uint64_t(out.algorithm), uint64_t(out.trunk_bits), uint64_t(out.ring),
+                               uint64_t(out.table_bytes), uint64_t(out.work_bytes), uint64_t(out.spectrum_bytes), uint64_t(out.cached)})
+                h = identity::word(h, v);
+        return PlanTranscript::check(fresh, common, minimum_ring, h);
     };
     if (transcript && transcript->replay) {
         const uint64_t e = transcript->next();

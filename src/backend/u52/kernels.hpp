@@ -36,6 +36,37 @@ void middle_guard_zero2(uint64_t *,const uint64_t *,size_t,const uint64_t *,size
 // writes bn words; all spans disjoint. Used for a short quotient tail.
 size_t high_prefix_scratch_bytes(size_t bn) noexcept;
 void high_prefix(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
+// Short high half of an n x n product: writes n words r with
+// 0 <= floor(A*B/2^(64n)) - r <= 1 (the exact HIGH product kind is separate).
+// 1<=n<=mulhigh_limit, the validated range. Without scratch: n<=4 the inline
+// L0 kernels (core/x86_64/gen/mulhigh.hpp), products 5..14 and squares 5..20
+// the generated scalar kernels (core/x86_64/high_fixed.S: register columns to
+// 10, rows beyond; all with the same kept terms); beyond, the u52
+// truncated kernels (backend/u52/mulhigh.hpp: window rows for products of
+// 15..19 limbs, block diagonals otherwise). out must not overlap a or
+// b; a may equal b. Scratch depends only on n. The scalar kernels truncate at a
+// u64 column, the u52 kernels at a digit column, so the two families may differ
+// by one within the contract. mulhigh gives the same words for a == b as for a
+// copy of a (a == b takes the square kernel of the same family); sqrhigh, the
+// explicit square, runs the scalar rows up to n = 20 and may differ by one from
+// mulhigh(out,a,a,n) at n = 15..20.
+// 231..234 (2026-10-09) serve the n + 4 high halves of fp roots at n <= 230:
+// K = t at 231..233 (q = 52*284 + 16, 52*285 + 28, 52*286 + 40; 2t - 1 <= 2^s),
+// K = t - 1 at 234 (q = 52*288, s = 0); 285..288 digits (column sums of at
+// most 2d < 2^12 terms), first kept vector 35 at each; output windows start 28,
+// 36, 44 and 0 bytes into a packed block (233 spans three blocks); scratch by
+// formula.
+inline constexpr size_t mulhigh_limit=234;
+size_t mulhigh_scratch_bytes(size_t n) noexcept;
+void mulhigh(uint64_t *out,const uint64_t *a,const uint64_t *b,size_t n,Frame &) noexcept;
+size_t sqrhigh_scratch_bytes(size_t n) noexcept;
+void sqrhigh(uint64_t *out,const uint64_t *a,size_t n,Frame &) noexcept;
+// The u52 family alone, unchecked and without a Frame: 8 <= n <= mulhigh_limit, b == a
+// takes the square kernel; scratch holds mulhigh_u52_bytes(n,a==b) bytes, 64-byte aligned
+// (<= 40n + 256 for every n). sbn3i_mulhigh_u52 is the same for assembly callers.
+size_t mulhigh_u52_bytes(size_t n,bool square) noexcept;
+void mulhigh_u52(uint64_t *out,const uint64_t *a,const uint64_t *b,size_t n,void *scratch) noexcept;
+extern "C" void sbn3i_mulhigh_u52(uint64_t *out,const uint64_t *a,const uint64_t *b,size_t n,void *scratch) noexcept;
 Prepared prepare_buffers(Frame &,size_t an,size_t bn,bool allow_streaming=true) noexcept;
 void multiply_prepared(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
                        const Prepared &,Frame &) noexcept;

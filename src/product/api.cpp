@@ -214,7 +214,8 @@ static bool short_options(const sbn3_mul_options &o) {
 }
 template <class Info, class Query>
 static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mul_options &opt,
-                                       sbn3_mul_plan &plan, Info &info, Query query, ProductChoice *choice = nullptr) {
+                                       sbn3_mul_plan &plan, Info &info, Query query, ProductChoice *choice = nullptr,
+                                       bool square = false) {
     if (choice)
         *choice = 0;
     if (opt.algorithm >= SBN3_MUL_SCALAR) {
@@ -227,12 +228,44 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
     const size_t lo = std::min(s.a_limbs, s.b_limbs), hi = std::max(s.a_limbs, s.b_limbs);
     if (opt.algorithm || !short_options(opt))
         return select_plan(s, opt, plan, info, query, small_domain(s, opt), choice);
-    if (lo <= 1 || hi <= 8) {
+    // Scalar below the u64/u52 crossovers measured at the bound-execution kernels
+    // (mul_basecase_assumed against u52::multiply_prepared, 2026-10-09): the fixed-row kernel
+    // to 16 limbs wins to about 100 limb products (11x9, 13x7, 16x6), the row kernels win
+    // long-by-short to a < 56 / <= 28 / < 20 limbs for b = 2/3/4, and the straight-line
+    // squares to 14 limbs. Query time only.
+    const bool scalar = square ? hi <= 14
+                               : hi <= 8 || (hi <= 16 && lo * hi <= 100) || (lo == 2 && hi < 56) ||
+                                     (lo == 3 && hi <= 28) || (lo == 4 && hi < 20);
+    if (lo <= 1 || scalar) {
         auto o = opt;
         o.algorithm = SBN3_MUL_SCALAR;
         if (choice)
             *choice = encode_choice(short_entry, o);
         return query(short_backend(), o, plan, info);
+    }
+    // W1 direct U52 entries, measured at bound execution with both producer models; a rejected
+    // U52 query (workspace budget) falls back to the cost comparison below.
+    // Squares (2026-10-09, every n of 222..264 and 264..392): U52 faster through 291 (parity
+    // 292) and again from 320 (parity, then faster to 344; parity 345..357, PQ16 from 358).
+    // 293..319 is the top of PQ16's 1024-point power-of-two transform with 19..20-bit digits:
+    // flat in n and up to 1.10x faster than U52; 320 starts the 1280-point radix-5 transform.
+    // The cost comparison takes 293..319 (PQ16) and 350 on. The product cost model alone moved
+    // squares to PQ16 near 222 limbs (up to 1.17x slower).
+    // Products to 16 limbs left by the scalar rules above (both operands >= 5, an*bn > 100):
+    // U52, the comparison's own choice there (scalar model >= 64 ns, U52 <= 35 ns, PQ16
+    // beyond), without querying the other families.
+    if (opt.workers == 1 && (square ? hi <= 292 || (hi >= 320 && hi <= 349) : hi <= 16 && !opt.workspace_budget)) {
+        auto o = opt;
+        o.algorithm = SBN3_MUL_U52;
+        sbn3_mul_plan p{};
+        Info ci{};
+        if (query(short_backend(), o, p, ci) == SBN3_SUPPORTED) {
+            plan = p;
+            info = ci;
+            if (choice)
+                *choice = encode_choice(short_entry, o);
+            return SBN3_SUPPORTED;
+        }
     }
     bool found = false;
     double best = 0;
@@ -258,7 +291,7 @@ static sbn3_query_result select_family(const sbn3_product_spec &s, const sbn3_mu
     };
     for (unsigned alg : {unsigned(SBN3_MUL_SCALAR), unsigned(SBN3_MUL_U52), unsigned(SBN3_MUL_PQ16)}) {
         if(alg==SBN3_MUL_PQ16 && found && mul_info(info).output_limbs==s.a_limbs+s.b_limbs &&
-           best<=query_bounds::fft_score(s.a_limbs,s.b_limbs,opt.workers))
+           !query_bounds::fft_may_beat(s.a_limbs,s.b_limbs,opt.workers,best))
             continue;
         // Scalar remains a real low-memory candidate; do not enter a target
         // kernel or change algorithms at execution time on budget rejection.
@@ -341,7 +374,7 @@ sbn3_query_result sbn::v3::square_query_choose(size_t limbs, const sbn3_mul_opti
     return select_family(sbn3_product_spec{limbs, limbs}, opt, p, i,
                          [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
                              sbn3_product_info &ci, bool geometry = false) { return search_query(b, r, co, cp, ci, geometry); },
-                         &choice);
+                         &choice, true);
 }
 sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_options &opt, ProductChoice choice,
                                                sbn3_mul_plan &p, sbn3_product_info &i) noexcept {
@@ -455,7 +488,8 @@ extern "C" sbn3_query_result sbn3_product_query(const sbn3_product_request *s, c
         const sbn3_product_spec spec{s->a_limbs, s->kind == SBN3_PRODUCT_SQR ? s->a_limbs : s->b_limbs};
         return select_family(spec, opt, *p, *i,
                              [&](const Backend &b, const sbn3_mul_options &co, sbn3_mul_plan &cp,
-                                 sbn3_product_info &ci, bool geometry = false) { return search_query(b, *s, co, cp, ci, geometry); });
+                                 sbn3_product_info &ci, bool geometry = false) { return search_query(b, *s, co, cp, ci, geometry); },
+                             nullptr, s->kind == SBN3_PRODUCT_SQR);
     }
     const sbn3_product_spec spec{s->a_limbs, s->kind == SBN3_PRODUCT_SQR ? s->a_limbs : s->b_limbs};
     const bool small = !s->cyclic_limbs && s->kind == SBN3_PRODUCT_MUL && !s->cached_a[0] &&

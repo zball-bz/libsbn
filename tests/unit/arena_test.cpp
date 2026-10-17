@@ -7,6 +7,7 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <initializer_list>
 using namespace sbn::v3;
 
 static sbn3_arena *create(size_t budget=4u<<20) {
@@ -15,6 +16,8 @@ static sbn3_arena *create(size_t budget=4u<<20) {
     assert(sbn3_arena_create(&c,&a,&e)==SBN3_OK);
     return a;
 }
+static constexpr size_t slots=Arena::max_leases;
+static size_t slot_of(const sbn3_lease &l) {return static_cast<size_t>(l.token&0xffffu);}
 static void fatal_case(int which) {
     sbn3_arena *a=create();sbn3_error e{};
     assert(sbn3_arena_prepare(a,0,16384,&e)==SBN3_OK);
@@ -24,7 +27,67 @@ static void fatal_case(int which) {
     if(which==2) {Frame f(*a,l);f.allocate(16385);}
     if(which==3) {auto stale=l;sbn3_arena_release(a,&l);a->retain(stale);}
     if(which==4) sbn3_arena_destroy(a);
+    static sbn3_lease many[slots];
+    if(which==5) {for(size_t i=1;i<=slots;++i)sbn3_arena_acquire(a,64*(i%256),64,&many[i-1]);} // 513th descriptor
+    if(which==6) {                                        // the only overlapping live lease is slot 511
+        sbn3_arena_release(a,&l);sbn3_lease low{};sbn3_arena_acquire(a,0,64,&low);
+        for(size_t i=1;i<slots-1;++i)sbn3_arena_acquire(a,8192,64,&many[i]);   // released before the claim
+        sbn3_lease high{};sbn3_arena_acquire(a,32,64,&high);assert(slot_of(low)==0 && slot_of(high)==slots-1);
+        for(size_t i=1;i<slots-1;++i)sbn3_arena_release(a,&many[i]);
+        a->claim_unshared(low);
+    }
+    if(which==7) {                                        // stale token of a reused word-boundary slot
+        sbn3_arena_release(a,&l);
+        for(size_t i=0;i<=64;++i)sbn3_arena_acquire(a,64*i,64,&many[i]);
+        const auto stale=many[64];sbn3_arena_release(a,&many[64]);
+        sbn3_arena_acquire(a,64*64,64,&many[64]);assert(slot_of(many[64])==64 && many[64].token!=stale.token);
+        a->retain(stale);
+    }
     _exit(99);
+}
+// Live-slot index across its 64-bit words: lowest-free allocation through slots 63/64,
+// 127/128 and 511, exhaustion, holes reused lowest first with new tokens, and lifetime,
+// trim, guard and overlap checks when only high slots are live.
+static void lease_slots(size_t pg) {
+    sbn3_arena *a=create();sbn3_error e{};sbn3_arena_stats s{};
+    assert(sbn3_arena_prepare(a,0,16*pg,&e)==SBN3_OK);
+    static sbn3_lease l[slots];
+    for(size_t i=0;i<slots;++i){sbn3_arena_acquire(a,64*i,64,&l[i]);assert(slot_of(l[i])==i);}
+    sbn3_arena_get_stats(a,&s);assert(s.active_leases==slots && s.lease_references==slots);
+    sbn3_lease g{};assert(a->reserve_guard(20*pg,pg,g)==SBN3_ECAPACITY);
+    static uint64_t before[slots];                        // release clears the caller's lease
+    for(size_t i:{511,128,127,64,63,5}){before[i]=l[i].token;sbn3_arena_release(a,&l[i]);}
+    sbn3_arena_get_stats(a,&s);assert(s.active_leases==slots-6);
+    for(size_t i:{5,63,64,127,128,511}) {
+        sbn3_arena_acquire(a,64*i,64,&l[i]);
+        assert(slot_of(l[i])==i && l[i].token!=before[i]);
+    }
+    for(size_t i=0;i<slots;++i)if(i!=300 && i!=511)sbn3_arena_release(a,&l[i]);
+    sbn3_arena_get_stats(a,&s);assert(s.active_leases==2 && s.lease_references==2);
+    const size_t high_page=64*511/pg*pg;
+    assert(sbn3_arena_trim(a,high_page,pg,&e)==SBN3_EBUSY);
+    assert(!a->unleased(64*511,64) && !a->unleased(64*300,1) && a->unleased(0,64));
+    // a guard in the top slot while everything below it is held, then only it and slot 300 live
+    sbn3_arena_release(a,&l[511]);
+    static sbn3_lease fill[slots];size_t nf=0;
+    while(nf<slots-2){sbn3_arena_acquire(a,0,8,&fill[nf]);assert(slot_of(fill[nf])!=300);++nf;}
+    sbn3_lease guard{};assert(a->reserve_guard(20*pg,pg,guard)==SBN3_OK && slot_of(guard)==slots-1);
+    for(size_t i=0;i<nf;++i)sbn3_arena_release(a,&fill[i]);
+    sbn3_arena_get_stats(a,&s);assert(s.active_leases==2);
+    assert(sbn3_arena_prepare(a,20*pg,1,&e)==SBN3_EBUSY);
+    sbn3_lease second{};assert(a->reserve_guard(20*pg,pg,second)==SBN3_EBUSY);
+    assert(sbn3_arena_trim(a,20*pg,pg,&e)==SBN3_EBUSY);
+    // retain: one release keeps the lease live, the last one frees the slot for a new token
+    a->retain(l[300]);auto once=l[300];sbn3_arena_release(a,&once);
+    assert(!a->unleased(64*300,1) && sbn3_arena_trim(a,64*300/pg*pg,pg,&e)==SBN3_EBUSY);
+    const auto old300=l[300];sbn3_arena_release(a,&l[300]);
+    sbn3_arena_get_stats(a,&s);assert(s.active_leases==1 && a->unleased(64*300,1));
+    for(size_t i=0;i<300;++i)sbn3_arena_acquire(a,0,8,&fill[i]);
+    sbn3_arena_acquire(a,64*300,64,&l[300]);assert(slot_of(l[300])==300 && l[300].token!=old300.token);
+    for(size_t i=0;i<300;++i)sbn3_arena_release(a,&fill[i]);
+    sbn3_arena_release(a,&l[300]);sbn3_arena_release(a,&guard);
+    sbn3_arena_get_stats(a,&s);assert(!s.active_leases && !s.lease_references);
+    sbn3_arena_destroy(a);
 }
 int main() {
     const size_t pg=static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -111,10 +174,11 @@ int main() {
         sbn3_arena_release(q,&live);sbn3_arena_destroy(q);_exit(0);
     }
     int st;assert(waitpid(child,&st,0)==child && WIFEXITED(st) && WEXITSTATUS(st)==0);
-    for(int i=0;i<5;++i) {
+    lease_slots(pg);
+    for(int i=0;i<8;++i) {
         child=fork();assert(child>=0);
         if(!child){struct rlimit z={0,0};setrlimit(RLIMIT_CORE,&z);fatal_case(i);}
         assert(waitpid(child,&st,0)==child && WIFSIGNALED(st) && WTERMSIG(st)==SIGABRT);
     }
-    puts("arena: sparse page model, shared-page leases, retained frames, lock rollback and 5 fatal gates OK");
+    puts("arena: sparse page model, shared-page leases, retained frames, lock rollback, live-slot words and 8 fatal gates OK");
 }

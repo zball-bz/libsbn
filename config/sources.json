@@ -134,6 +134,90 @@
       ]
     },
     {
+      "path": "src/core/x86_64/mul_basecase_le16.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mul_basecase_le16"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/sqr_basecase_fixed.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_sqr_basecase_2",
+        "sbn3i_sqr_basecase_3",
+        "sbn3i_sqr_basecase_4",
+        "sbn3i_sqr_basecase_5",
+        "sbn3i_sqr_basecase_6",
+        "sbn3i_sqr_basecase_7",
+        "sbn3i_sqr_basecase_8",
+        "sbn3i_sqr_basecase_9",
+        "sbn3i_sqr_basecase_10",
+        "sbn3i_sqr_basecase_11",
+        "sbn3i_sqr_basecase_12",
+        "sbn3i_sqr_basecase_13",
+        "sbn3i_sqr_basecase_14"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/core/x86_64/high_fixed.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mulhigh_5",
+        "sbn3i_mulhigh_6",
+        "sbn3i_mulhigh_7",
+        "sbn3i_mulhigh_8",
+        "sbn3i_mulhigh_9",
+        "sbn3i_mulhigh_10",
+        "sbn3i_mulhigh_11",
+        "sbn3i_mulhigh_12",
+        "sbn3i_mulhigh_13",
+        "sbn3i_mulhigh_14",
+        "sbn3i_sqrhigh_5",
+        "sbn3i_sqrhigh_6",
+        "sbn3i_sqrhigh_7",
+        "sbn3i_sqrhigh_8",
+        "sbn3i_sqrhigh_9",
+        "sbn3i_sqrhigh_10",
+        "sbn3i_sqrhigh_11",
+        "sbn3i_sqrhigh_12",
+        "sbn3i_sqrhigh_13",
+        "sbn3i_sqrhigh_14",
+        "sbn3i_sqrhigh_15",
+        "sbn3i_sqrhigh_16",
+        "sbn3i_sqrhigh_17",
+        "sbn3i_sqrhigh_18",
+        "sbn3i_sqrhigh_19",
+        "sbn3i_sqrhigh_20"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
       "path": "src/common/base.cpp",
       "language": "cxx",
       "group": "common",
@@ -159,6 +243,8 @@
         "src/core/x86_64/addmul_1_adx.s",
         "src/core/x86_64/addmul_2_adx.s",
         "src/core/x86_64/mul_basecase_le6.S",
+        "src/core/x86_64/mul_basecase_le16.S",
+        "src/core/x86_64/sqr_basecase_fixed.S",
         "src/core/x86_64/addmul_1.s",
         "src/core/x86_64/addmul_2.s"
       ],
@@ -600,6 +686,47 @@
       "provides_symbols": [
         "sbn::v3::u52::high_prefix_scratch_bytes",
         "sbn::v3::u52::high_prefix"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/mulhigh.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/core/x86_64/high_fixed.S"
+      ],
+      "provides_symbols": [
+        "sbn::v3::u52::mulhigh_scratch_bytes",
+        "sbn::v3::u52::mulhigh",
+        "sbn::v3::u52::sqrhigh_scratch_bytes",
+        "sbn::v3::u52::sqrhigh",
+        "sbn::v3::u52::mulhigh_u52_bytes",
+        "sbn::v3::u52::mulhigh_u52",
+        "sbn3i_mulhigh_u52"
       ],
       "requires_symbols": [],
       "donor_ids": [
@@ -1487,6 +1614,292 @@
       "provides_symbols": [],
       "requires_symbols": [],
       "donor_ids": []
+    },
+    {
+      "path": "src/fp/addsub.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::fp::portable::add",
+        "sbn::v3::fp::portable::sub"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/mul.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::fp::portable::mul",
+        "sbn::v3::fp::portable::sqr"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/addsub.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_add",
+        "sbn3f_sub"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/mul.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/core/x86_64/mul_1.s",
+        "src/kernels/x86v4ifma/mulhigh.cpp",
+        "src/fp/x86_64/mul_glue.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_mul",
+        "sbn3f_sqr"
+      ],
+      "requires_symbols": [
+        "sbn3i_mul_1",
+        "sbn3i_mulhigh_u52",
+        "sbn3f_full"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/mul_glue.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/core/x86_64/word.cpp",
+        "src/instances/x86v4ifma/u52.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_full",
+        "sbn::v3::fp::mul_m_need",
+        "sbn::v3::fp::mul_m",
+        "sbn::v3::fp::sqr_m"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/div.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512vbmi2",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/div_qv.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_div",
+        "sbn3f_inv_base"
+      ],
+      "requires_symbols": [
+        "sbn3f_div_qv"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/div_qv.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/core/x86_64/recip_u1024.s"
+      ],
+      "provides_symbols": [
+        "sbn3f_div_qv",
+        "sbn3f_sqrt_qv"
+      ],
+      "requires_symbols": [
+        "sbn3i_recip_u1024",
+        "sbn3f_sqrt"
+      ],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/inv.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_qv.cpp",
+        "src/fp/x86_64/div.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv",
+        "sbn3f_inv_seed"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_qv",
+        "sbn3f_inv_base"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/inv_qv.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vbmi",
+        "bmi2"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv.S",
+        "src/fp/x86_64/inv_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv_qv",
+        "sbn3f_inv_fix"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_seed",
+        "sbn3f_inv_chain"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/inv_engine.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512ifma",
+        "bmi2",
+        "popcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_qv.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv_chain"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_fix"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/sqrt.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/sqrt.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_sqrt",
+        "sbn3f_rsqrt"
+      ],
+      "requires_symbols": [
+        "sbn3f_root_core",
+        "sbn3f_sqrt_sb_fix"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/sqrt.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512vl",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/core/x86_64/word.cpp",
+        "src/core/x86_64/high_fixed.S",
+        "src/kernels/x86v4ifma/mulhigh.cpp",
+        "src/fp/x86_64/mul_glue.cpp",
+        "src/fp/x86_64/div_qv.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_root_core",
+        "sbn3f_sqrt_sb_fix"
+      ],
+      "requires_symbols": [
+        "sbn3i_mulhigh_u52",
+        "sbn3f_full",
+        "sbn3f_sqrt_qv"
+      ],
+      "donor_ids": [],
+      "extra_flags": [
+        "-fno-vectorize",
+        "-fno-slp-vectorize"
+      ]
     }
   ]
 }

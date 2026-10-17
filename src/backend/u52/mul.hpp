@@ -1,5 +1,6 @@
 /* Imported from libsbn/include/sbn/detail/u52/mul.h; arithmetic preserved, private namespace and prepared Frame adapter. */
 #pragma once
+#include "backend/u52/mul_small.hpp"
 namespace sbn::v3::u52 {
 
 
@@ -23,159 +24,6 @@ inline sb_cpvec u52_cpvec_add(sb_cpvec p, uint64_t limbs) {
 // Dispatch thresholds. A tune build makes them mutable globals so the tuner
 // can re-measure code that recurses through them (GMP TUNE_PROGRAM_BUILD).
 
-
-// n0 : output accumulator (persistent across the chunk)
-// n1 : single rotating diagonal reg; incoming offset ind+1, then reborn as offset ind
-#define mul1_substep(a, ind) {                              \
-    n1 = sb_madd52hi(n1, (a), bx[ind]);                        \
-    n0 = sb_add(n0, sb_alignr64(n1, m[ind], 7-(ind)));            \
-    m[ind] = n1;                                            \
-    n1 = sb_madd52lo(sb_zero(), (a), bx[ind]);                    \
-}
-#define mul1_substep0(a) {                                  \
-    n1  = sb_madd52hi(n1, (a), bx[0]);                         \
-    n0  = sb_add(n0, sb_alignr64(n1, m[0], 7));                   \
-    m[0] = n1;                                              \
-    lo0 = sb_madd52lo(sb_zero(), (a), bx[0]);                     \
-}
-
-inline static void mul_u52_bn1(sb_pvec r, sb_cpvec a, uint64_t an, sb_vec b0){
-    if(!an) return;
-    sb_vec carry = sb_zero();
-    uint64_t c = an >> 3;
-    const uint64_t tail = an & 7;
-#pragma GCC unroll 4
-    for(; c; --c){
-        const sb_vec ax = sb_load(a++);
-        sb_vec hi = sb_madd52hi(sb_zero(), ax, b0);
-        sb_store(r++, sb_add(sb_madd52lo(sb_zero(), ax, b0), sb_alignr64(hi, carry, 7)));
-        carry = hi;
-    }
-    if(tail){
-        const sb_vec ax = sb_load(a, u52_limb_mask(tail));
-        const sb_vec hi = sb_madd52hi(sb_zero(), ax, b0);
-        const sb_vec lo = sb_madd52lo(sb_zero(), ax, b0);
-        sb_store(r, sb_add(lo, sb_alignr64(hi, carry, 7)), u52_limb_mask(tail + 1));
-    }else{
-        sb_store(r, sb_alignr64(sb_zero(), carry, 7), u52_limb_mask(1));
-    }
-}
-
-inline static void mul_u52_bn2(sb_pvec r, sb_cpvec a, uint64_t an, sb_vec b0, sb_vec b1){
-    if(!an) return;
-    sb_vec pMid = sb_zero(), pH1 = sb_zero();
-    uint64_t c = an >> 3;
-    const uint64_t tail = an & 7;
-
-    #define MUL2_CHUNK(ax, dst) do {                       \
-        sb_vec L0 = sb_madd52lo(sb_zero(), (ax), b0);              \
-        sb_vec H0 = sb_madd52hi(sb_zero(), (ax), b0);              \
-        sb_vec L1 = sb_madd52lo(sb_zero(), (ax), b1);              \
-        sb_vec H1 = sb_madd52hi(sb_zero(), (ax), b1);              \
-        sb_vec mid = sb_add(H0, L1);                            \
-        (dst) = sb_add(L0, sb_add(sb_alignr64(mid, pMid, 7),        \
-                            sb_alignr64(H1,  pH1,  6)));      \
-        pMid = mid; pH1 = H1;                              \
-    } while(0)
-
-#pragma GCC unroll 2
-    for(; c; --c){
-        const sb_vec ax = sb_load(a++);
-        sb_vec o;
-        MUL2_CHUNK(ax, o);
-        sb_store(r++, o);
-    }
-    if(tail){
-        const sb_vec ax = sb_load(a, u52_limb_mask(tail));
-        sb_vec o;
-        const uint64_t tail_limbs = tail + 2;
-        MUL2_CHUNK(ax, o);
-        if(tail_limbs <= 8){
-            sb_store(r, o, u52_limb_mask(tail_limbs));
-        }else{
-            sb_store(r++, o);
-            sb_store(r, sb_add(sb_alignr64(sb_zero(), pMid, 7),
-                             sb_alignr64(sb_zero(), pH1,  6)), u52_limb_mask(tail_limbs - 8));
-        }
-    }else{
-        sb_store(r, sb_add(sb_alignr64(sb_zero(), pMid, 7),
-                         sb_alignr64(sb_zero(), pH1,  6)), u52_limb_mask(2));
-    }
-    #undef MUL2_CHUNK
-}
-
-inline static void mul_u52_1(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, const uint64_t bn){
-    if(!an) return;
-    if(bn == 1) return mul_u52_bn1(r, a, an, sb_splat_load(b, 0));
-    else if(bn == 2) return mul_u52_bn2(r, a, an, sb_splat_load(b, 0), sb_splat_load(b, 1));
-    sb_vec n0, n1, lo0, ax, m[8], bx[8];
-    m[0]=m[1]=m[2]=m[3]=m[4]=m[5]=m[6]=m[7]=sb_zero();
-    if(bn > 4){
-        bx[7] = sb_splat_load(b, 7);
-        bx[6] = sb_splat_load(b, 6);
-        bx[5] = sb_splat_load(b, 5);
-        bx[4] = sb_splat_load(b, 4);
-    }
-    bx[3] = sb_splat_load(b, 3);
-    bx[2] = sb_splat_load(b, 2);
-    bx[1] = sb_splat_load(b, 1);
-    bx[0] = sb_splat_load(b, 0);
-    const uint64_t tail = an & 7;
-    for(an = an >> 3; an; --an){
-        ax = sb_load(a++);
-        n0 = sb_zero();
-        n1 = sb_zero();
-        switch(bn){
-            case 8: mul1_substep (ax, 7);
-            case 7: mul1_substep (ax, 6);
-            case 6: mul1_substep (ax, 5);
-            case 5: mul1_substep (ax, 4);
-            case 4: mul1_substep (ax, 3);
-            case 3: mul1_substep (ax, 2);
-            case 2: mul1_substep (ax, 1);
-            case 1: mul1_substep0(ax);
-        }
-        n0 = sb_add(n0, lo0);
-        sb_store(r++, n0);
-    }
-    if(tail){
-        ax = sb_load(a, u52_limb_mask(tail));
-        n0 = sb_zero();
-        n1 = sb_zero();
-        switch(bn){
-            case 8: mul1_substep (ax, 7);
-            case 7: mul1_substep (ax, 6);
-            case 6: mul1_substep (ax, 5);
-            case 5: mul1_substep (ax, 4);
-            case 4: mul1_substep (ax, 3);
-            case 3: mul1_substep (ax, 2);
-            case 2: mul1_substep (ax, 1);
-            case 1: mul1_substep0(ax);
-        }
-        n0 = sb_add(n0, lo0);
-        const uint64_t tail_limbs = tail + bn;
-        if(tail_limbs <= 8) sb_store(r, n0, u52_limb_mask(tail_limbs));
-        else sb_store(r++, n0);
-    }
-    n0 = sb_zero(); n1 = sb_zero();
-    switch(bn){
-        case 8: n0 = sb_add(n0, sb_alignr64(sb_zero(), m[7], 0));
-        case 7: n1 = sb_add(n1, sb_alignr64(sb_zero(), m[6], 1));
-        case 6: n0 = sb_add(n0, sb_alignr64(sb_zero(), m[5], 2));
-        case 5: n1 = sb_add(n1, sb_alignr64(sb_zero(), m[4], 3));
-        case 4: n0 = sb_add(n0, sb_alignr64(sb_zero(), m[3], 4));
-        case 3: n1 = sb_add(n1, sb_alignr64(sb_zero(), m[2], 5));
-        case 2: n0 = sb_add(n0, sb_alignr64(sb_zero(), m[1], 6));
-        case 1: n1 = sb_add(n1, sb_alignr64(sb_zero(), m[0], 7));
-    }
-    n0 = sb_add(n0, n1);
-    if(tail){
-        const uint64_t tail_limbs = tail + bn;
-        if(tail_limbs > 8) sb_store(r, n0, u52_limb_mask(tail_limbs - 8));
-    }else{
-        sb_store(r, n0, u52_limb_mask(bn));
-    }
-}
 
 #define mul_accum(a, b, ind) {\
     bx = sb_splat_load(b, ind); \
@@ -224,13 +72,32 @@ inline static void mul_u52_1(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, con
     n[8] = sb_add(n[8], n[ind], imask, n[8]); \
 }
 
-inline static void mul_u52_basecase(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, uint64_t bn){
-    assert(an >= bn);
-    if(bn <= 8) return mul_u52_1(r, a, b, an, bn);
-    sb_vec n[9], m[9], bx, ax;
+// 8 < bn <= an outside fixed::rows_shape: block-diagonal accumulation into nine
+// offset buckets, harvested once per output vector. Kept out of line so the short
+// dispatches in mul_u52_basecase do not pay its register saves and stack frame.
+//
+// SPLIT: the hi halves go to their own buckets h[1..8], added into n before each
+// harvest. A bucket then takes one IFMA per block pair instead of two, so a diagonal
+// of p pairs chains 4p cycles against its 8p cycles of IFMA throughput (8p against 8p
+// with one set). The merge costs 8 additions and 8 zeroings per output vector and pays
+// from about 56 rows (2-4.5% at 64..111, up to 8% slower below 32).
+#define mul_accum_s(a, b, ind) {\
+    bx = sb_splat_load(b, ind); \
+    n[ind] = sb_madd52lo(n[ind], a, bx); \
+    if constexpr (SPLIT) h[ind+1] = sb_madd52hi(h[ind+1], a, bx); \
+    else n[ind+1] = sb_madd52hi(n[ind+1], a, bx); \
+}
+#define merge_split { \
+    if constexpr (SPLIT) for(int k_ = 1; k_ < 9; ++k_){ n[k_] = sb_add(n[k_], h[k_]); h[k_] = sb_zero(); } \
+}
+
+template<bool SPLIT>
+__attribute__((noinline)) static void mul_u52_blocks(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, uint64_t bn){
+    sb_vec n[9], m[9], h[9], bx, ax;
     sb_cpvec bp, ap;
     n[0]=sb_zero(); n[1]=sb_zero(); n[2]=sb_zero(); n[3]=sb_zero(); n[4]=sb_zero();
     n[5]=sb_zero(); n[6]=sb_zero(); n[7]=sb_zero(); n[8]=sb_zero();
+    for(int k = 0; k < 9; ++k) h[k] = sb_zero();
     --an, --bn;
     const uint64_t au = an >> 3, bu = bn >> 3, su = au + bu;
     an &= 7, bn &= 7;
@@ -244,27 +111,27 @@ inline static void mul_u52_basecase(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t 
                 non_sat:
                 for(; j; ++ap, --bp, --j){
                     ax = sb_load(ap);
-                    case 7: mul_accum(ax, bp, 7);
-                    case 6: mul_accum(ax, bp, 6);
-                    case 5: mul_accum(ax, bp, 5);
-                    case 4: mul_accum(ax, bp, 4);
-                    case 3: mul_accum(ax, bp, 3);
-                    case 2: mul_accum(ax, bp, 2);
-                    case 1: mul_accum(ax, bp, 1);
-                    case 0: mul_accum(ax, bp, 0);
+                    case 7: mul_accum_s(ax, bp, 7);
+                    case 6: mul_accum_s(ax, bp, 6);
+                    case 5: mul_accum_s(ax, bp, 5);
+                    case 4: mul_accum_s(ax, bp, 4);
+                    case 3: mul_accum_s(ax, bp, 3);
+                    case 2: mul_accum_s(ax, bp, 2);
+                    case 1: mul_accum_s(ax, bp, 1);
+                    case 0: mul_accum_s(ax, bp, 0);
                 }
             }
             if(i >= au){
                 ax = sb_load(bp);
                 switch(an){
-                    case 7: mul_accum(ax, ap, 7);
-                    case 6: mul_accum(ax, ap, 6);
-                    case 5: mul_accum(ax, ap, 5);
-                    case 4: mul_accum(ax, ap, 4);
-                    case 3: mul_accum(ax, ap, 3);
-                    case 2: mul_accum(ax, ap, 2);
-                    case 1: mul_accum(ax, ap, 1);
-                    case 0: mul_accum(ax, ap, 0);
+                    case 7: mul_accum_s(ax, ap, 7);
+                    case 6: mul_accum_s(ax, ap, 6);
+                    case 5: mul_accum_s(ax, ap, 5);
+                    case 4: mul_accum_s(ax, ap, 4);
+                    case 3: mul_accum_s(ax, ap, 3);
+                    case 2: mul_accum_s(ax, ap, 2);
+                    case 1: mul_accum_s(ax, ap, 1);
+                    case 0: mul_accum_s(ax, ap, 0);
                 }
             }
         }else{
@@ -272,10 +139,12 @@ inline static void mul_u52_basecase(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t 
             ax = sb_load(a);
             goto non_sat;
         }
+        merge_split;
         if(i) harvest else harvest_z;
         sb_store(r, n[0]); ++r;
         n[0] = sb_zero();
     }
+    merge_split;
     const uint64_t an_tail = an, bn_tail = bn;
     const uint64_t tail_limbs = an_tail + bn_tail + 2;
     if(an_tail < bn_tail){
@@ -304,6 +173,18 @@ inline static void mul_u52_basecase(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t 
         sb_store(r+1, n[8], u52_limb_mask(tail_limbs - 8));
     }
 }
+#undef mul_accum_s
+#undef merge_split
+
+inline static void mul_u52_basecase(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, uint64_t bn){
+    assert(an >= bn);
+    uint64_t *rd = (uint64_t *)(void *)r;
+    const uint64_t *ad = (const uint64_t *)(const void *)a, *bd = (const uint64_t *)(const void *)b;
+    if(bn <= 8) return fixed::mul1(rd, ad, an, bd, bn);
+    if(fixed::rows_shape(an, bn)) return fixed::mul_rows(rd, ad, an, bd, bn);
+    if(bn >= 56) return mul_u52_blocks<true>(r, a, b, an, bn);
+    mul_u52_blocks<false>(r, a, b, an, bn);
+}
 
 // Returns the output class: 0 = canonical or non-negative redundant within
 // the basecase lane bound L0 (safe toom-point / fold-free input); 1 = nc
@@ -316,6 +197,156 @@ static inline int mul_u52_dispatch_canon(sb_pvec r, sb_cpvec a, sb_cpvec b, uint
     return 0;
 }
 // contract: caller guarantees a is larger
+
+// Karatsuba recomposition with both children class 0, in one pass over the middle.
+// r holds p0 = r[0,2s) and pinf = r[2s,2s+vinf); n1 = |a0-a1|*|b0-b1| (n1_len digits,
+// added when ADD, else subtracted). With t = p0_hi + pinf_lo:
+//   r[s,2s)  = t + p0_lo -/+ n1[0,s)        r[2s,3s) = t + pinf_hi -/+ n1[s,2s)
+// and the few digits of pinf_hi and n1 above 2s. Same lanes as the separate nc passes
+// (which read 10 and write 5 vectors per vector of s; this reads 6 and writes 2).
+template<bool ADD>
+static inline void u52_kara_combine_nc(uint64_t *r, uint64_t s, uint64_t vinf_len, const uint64_t *n1, uint64_t n1_len){
+    auto pm = [](sb_vec x, sb_vec y) __attribute__((always_inline)) { return ADD ? sb_add(x, y) : sb_sub(x, y); };
+    const int64_t S = (int64_t)s, hi = (int64_t)vinf_len - S, nl = (int64_t)n1_len;
+    uint64_t *q1 = r + s, *q2 = r + 2 * s;
+    const uint64_t *p0lo = r, *pihi = r + 3 * s;
+    int64_t full = S < hi ? S : hi;
+    if(nl - S < full) full = nl - S;
+    int64_t k = 0;
+    for(; k + 8 <= full; k += 8){
+        const sb_vec t = sb_add(sb_load(q1 + k), sb_load(q2 + k));
+        const sb_vec x = pm(sb_add(t, sb_load(p0lo + k)), sb_load(n1 + k));
+        const sb_vec y = pm(sb_add(t, sb_load(pihi + k)), sb_load(n1 + S + k));
+        sb_store(q1 + k, x);
+        sb_store(q2 + k, y);
+    }
+    for(; k < S; k += 8){
+        const __mmask8 m = fixed::lanes_below(S - k);
+        const sb_vec t = sb_add(sb_load(q1 + k, m), sb_load(q2 + k, m));
+        const sb_vec x = pm(sb_add(t, sb_load(p0lo + k, m)), sb_load(n1 + k, m & fixed::lanes_below(nl - k)));
+        const sb_vec y = pm(sb_add(t, sb_load(pihi + k, m & fixed::lanes_below(hi - k))),
+                            sb_load(n1 + S + k, m & fixed::lanes_below(nl - S - k)));
+        sb_store(q1 + k, x, m);
+        sb_store(q2 + k, y, m);
+    }
+    for(k = S; k < hi; k += 8){           // pinf above 3s: r[2s+k] += r[3s+k]
+        const __mmask8 m = fixed::lanes_below(hi - k);
+        sb_store(q2 + k, sb_add(sb_load(q2 + k, m), sb_load(pihi + k, m)), m);
+    }
+    for(k = 2 * S; k < nl; k += 8){       // n1 above 2s
+        const __mmask8 m = fixed::lanes_below(nl - k);
+        sb_store(q1 + k, pm(sb_load(q1 + k, m), sb_load(n1 + k, m)), m);
+    }
+}
+
+// Karatsuba square recomposition with a class-1 child, in one pass like
+// u52_kara_combine_nc<false> but reducing every summed lane on the fly to its low 52
+// bits plus the high part of the lane below, so the lanes stay near 2^52 instead of
+// growing with each level (which the canonicalizing fold otherwise pays for). Square
+// children lie in (-L0, 3*L0) (basecase, nc composite, or this one's output), so a summed
+// lane lies in (-6*L0, 10*L0) and x + K*2^52 in [0, 2^64): it splits by logical shifts,
+// the bias leaving as -K in each carry. A region's last carry enters the next region (x
+// at s.., y at 2s.., then the summed lanes above 3s); the first lane past the summed
+// ones is a pinf lane and takes the last carry unsplit. [0, s) keeps p0's lanes.
+static inline void u52_sqr_combine_reduce(uint64_t *r, uint64_t s, uint64_t vinf_len, const uint64_t *n1, uint64_t n1_len){
+    constexpr uint64_t K = 1536;
+    const sb_vec bias = sb_set1_64(K << 52), kv = sb_set1_64(K), M = SB_MASK52();
+    const int64_t S = (int64_t)s, hi = (int64_t)vinf_len - S, nl = (int64_t)n1_len;
+    uint64_t *q1 = r + s, *q2 = r + 2 * s;
+    const uint64_t *p0lo = r, *pihi = r + 3 * s;
+    using fixed::lanes_below;
+    auto xb = [&](int64_t k, __mmask8 m) __attribute__((always_inline)) {   // biased lane s+k
+        return sb_sub(sb_add(sb_add(sb_load(q1 + k, m), sb_load(q2 + k, m)), sb_add(sb_load(p0lo + k, m), bias)),
+                      sb_load(n1 + k, m & lanes_below(nl - k)));
+    };
+    auto yb = [&](int64_t k, __mmask8 m) __attribute__((always_inline)) {   // biased lane 2s+k
+        return sb_sub(sb_add(sb_add(sb_load(q1 + k, m), sb_load(q2 + k, m)),
+                             sb_add(sb_load(pihi + k, m & lanes_below(hi - k)), bias)),
+                      sb_load(n1 + S + k, m & lanes_below(nl - S - k)));
+    };
+    // carries out of the last x and y lanes (lane 7 of hx, hy below enters the next lane)
+    const int64_t kl = (S - 1) & ~int64_t(7);
+    const sb_vec at = sb_set1_64((S - 1) & 7);
+    sb_vec hx = kv, hy = sb_perm64(at, sb_srli(xb(kl, lanes_below(S - kl)), 52));
+    const sb_vec hu0 = sb_perm64(at, sb_srli(yb(kl, lanes_below(S - kl)), 52));
+    int64_t full = S < hi ? S : hi;
+    if(nl - S < full) full = nl - S;
+    int64_t k = 0;
+    for(; k + 8 <= full; k += 8){
+        const sb_vec t = sb_add(sb_load(q1 + k), sb_load(q2 + k));
+        const sb_vec x = sb_sub(sb_add(t, sb_add(sb_load(p0lo + k), bias)), sb_load(n1 + k));
+        const sb_vec y = sb_sub(sb_add(t, sb_add(sb_load(pihi + k), bias)), sb_load(n1 + S + k));
+        const sb_vec ux = sb_srli(x, 52), uy = sb_srli(y, 52);
+        sb_store(q1 + k, sb_add(sb_and(x, M), sb_sub(sb_alignr64(ux, hx, 7), kv)));
+        sb_store(q2 + k, sb_add(sb_and(y, M), sb_sub(sb_alignr64(uy, hy, 7), kv)));
+        hx = ux; hy = uy;
+    }
+    for(; k < S; k += 8){
+        const __mmask8 m = lanes_below(S - k);
+        const sb_vec x = xb(k, m), y = yb(k, m);
+        const sb_vec ux = sb_srli(x, 52), uy = sb_srli(y, 52);
+        sb_store(q1 + k, sb_add(sb_and(x, M), sb_sub(sb_alignr64(ux, hx, 7), kv)), m);
+        sb_store(q2 + k, sb_add(sb_and(y, M), sb_sub(sb_alignr64(uy, hy, 7), kv)), m);
+        hx = ux; hy = uy;
+    }
+    // lanes 3s+j: pinf[s+j] + pinf[2s+j] - n1[2s+j], summed for j < J, then lane J unsplit
+    int64_t J = hi - S > nl - 2 * S ? hi - S : nl - 2 * S;
+    J = J > 0 ? J + 1 : 1;
+    if(J > hi) J = hi;
+    sb_vec hu = hu0;
+    for(int64_t j = 0; j < J; j += 8){
+        const __mmask8 m = lanes_below(J - j);
+        const sb_vec u = sb_sub(sb_add(sb_load(pihi + j, m), sb_add(sb_load(pihi + S + j, m & lanes_below(hi - S - j)), bias)),
+                                sb_load(n1 + 2 * S + j, m & lanes_below(nl - 2 * S - j)));
+        const sb_vec uu = sb_srli(u, 52);
+        sb_vec o = sb_add(sb_and(u, M), sb_sub(sb_alignr64(uu, hu, 7), kv));
+        if(j + 8 >= J)                                 // lane J-1 keeps its high part
+            o = sb__fn(mask_add_epi64)(o, (__mmask8)(1u << (J - 1 - j)), o, sb_slli(sb_sub(uu, kv), 52));
+        sb_store(q2 + S + j, o, m);
+        hu = uu;
+    }
+}
+
+// Karatsuba recomposition: r = p0 + (p0 + pinf -/+ n1) B^s + pinf B^2s with p0 = r[0,2s),
+// pinf = r[2s, 2s+vinf), n1 (n1_len digits) added when add, else subtracted. cls is the
+// children's combined class, cls_p0 point_0's. Returns the result's class.
+static inline int u52_kara_recompose(sb_pvec r, uint64_t split_limbs, uint64_t vinf_len, sb_pvec point_n1,
+                                     uint64_t n1_len, bool add, int cls, int cls_p0, uint64_t total){
+    sb_pvec point_0   = r;
+    sb_pvec point_mid = u52_pvec_add(r, split_limbs);
+    sb_pvec point_inf = u52_pvec_add(r, split_limbs * 2);
+    // Alternating contract: fold only when a child is class-1 (its lanes can
+    // reach 3*L0, so one more nc level would breach the budget); class-0
+    // children allow pure nc recomposition, returning class 1. Either way the
+    // fold, when needed, is the final operand application over [split, top)
+    // -- never a standalone pass. Budget: fold internals <= 9*L0, which the
+    // tuner's T22 <= 112 clamp keeps under 2^63.
+    if(!cls){
+        uint64_t *rd = (uint64_t *)(void *)r;
+        const uint64_t *n1d = (const uint64_t *)(const void *)point_n1;
+        if(add) u52_kara_combine_nc<true>(rd, split_limbs, vinf_len, n1d, n1_len);
+        else    u52_kara_combine_nc<false>(rd, split_limbs, vinf_len, n1d, n1_len);
+        return 1;
+    }
+    // point_n1 = point_0 + point_inf - mid
+    // which means that mid = point_0 + point_inf - point_n1
+    // note that mid is guaranteed >= 0, so the subtraction doesn't need compare
+    add_nc_52(point_inf, point_mid, point_inf, split_limbs);
+    add_nc_52(point_mid, point_inf, point_0, split_limbs);
+    if(vinf_len > split_limbs){
+        add_nc_52(point_inf, point_inf, u52_pvec_add(point_inf, split_limbs), vinf_len - split_limbs);
+    }
+    if(n1_len && !add)
+        u52_fold_sub_canon(point_mid, (sb_cpvec)point_n1, n1_len, total - split_limbs);
+    else
+        u52_fold_add_canon(point_mid, (sb_cpvec)point_n1, n1_len, total - split_limbs);
+    // The fold canonicalizes [split, top) only; [0, split) keeps point_0's
+    // lanes, so the OUTPUT class is point_0's class. (At >= 3 composite
+    // levels point_0 is class-1: returning 0 here once sent signed lanes
+    // into the positive-chain boundary encode -- caught by the GMP
+    // differential at 532x426 u64 limbs.)
+    return cls_p0;
+}
 
 static inline int mul_u52_karatsuba(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t an, uint64_t bn, scratch *s) {
     assert(an >= bn); // contract: caller guarantees a is larger
@@ -332,7 +363,6 @@ static inline int mul_u52_karatsuba(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t 
     SCRATCH(s);
     sb_pvec point_n1  = SALLOC(s, sb_vec, u52_vec_count(eval_limbs * 2));
     sb_pvec point_0   = r;
-    sb_pvec point_mid = u52_pvec_add(r, split_limbs);
     sb_pvec point_inf = u52_pvec_add(r, split_limbs * 2);
 
     sb_pvec a_n1 = point_0, b_n1 = u52_pvec_add(point_0, eval_limbs);
@@ -356,40 +386,67 @@ static inline int mul_u52_karatsuba(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_t 
     const int cls_p0 = mul_u52_dispatch(point_0, a, b, split_limbs, split_limbs, s);
     cls |= cls_p0;
     cls |= mul_u52_dispatch(point_inf, a1, b1, a1_len, b1_len, s);
-    // point_n1 = point_0 + point_inf - mid
-    // which means that mid = point_0 + point_inf - point_n1
-    // note that mid is guaranteed >= 0, so the subtraction doesn't need compare
-    add_nc_52(point_inf, point_mid, point_inf, split_limbs);
-    add_nc_52(point_mid, point_inf, point_0, split_limbs);
-    const uint64_t vinf_len = a1_len + b1_len;
-    if(vinf_len > split_limbs){
-        add_nc_52(point_inf, point_inf, u52_pvec_add(point_inf, split_limbs), vinf_len - split_limbs);
-    }
-    // Alternating contract: fold only when a child is class-1 (its lanes can
-    // reach 3*L0, so one more nc level would breach the budget); class-0
-    // children allow pure nc recomposition, returning class 1. Either way the
-    // fold, when needed, is the final operand application over [split, top)
-    // -- never a standalone pass. Budget: fold internals <= 9*L0, which the
-    // tuner's T22 <= 112 clamp keeps under 2^63.
+    return u52_kara_recompose(r, split_limbs, a1_len + b1_len, point_n1, n1_len, flag, cls, cls_p0, an + bn);
+}
+
+// Squares: same digits and class contract as mul_u52_* on (a, a), from the square entry
+// only (the caller knows both operands are the same number).
+static int sqr_u52_dispatch(sb_pvec r, sb_cpvec a, uint64_t n, scratch *s);
+
+// n < MUL_U52_T22_THRESHOLD digits: parity-split kernels while a fits in registers (per
+// vector count, up to 40 digits), then block diagonal (pairs once, doubled, plus the
+// diagonal blocks). Squares of at most 8 digits never come from the planner (scalar).
+inline static void sqr_u52_basecase(sb_pvec r, sb_cpvec a, uint64_t n){
+    uint64_t *rd = (uint64_t *)(void *)r;
+    const uint64_t *ad = (const uint64_t *)(const void *)a;
+    if(n <= 8) return fixed::mul1(rd, ad, n, ad, n);   // short differences and unnormalized inputs only
+    if(n <= 16) return fixed::sqr_rows_eo<2, 2>(rd, ad, (int64_t)n);
+    if(n <= 24) return fixed::sqr_rows_eo<3, 2>(rd, ad, (int64_t)n);
+    if(n <= 32) return fixed::sqr_rows_eo<4, 2>(rd, ad, (int64_t)n);
+    if(n <= 40) return fixed::sqr_rows_eo<5, 2>(rd, ad, (int64_t)n);
+    fixed::sqr_blocks(rd, ad, (int64_t)n);
+}
+
+// Karatsuba square: (a0 - a1)^2 needs no sign, so the middle term is p0 + pinf - n1.
+// Scratch as for mul_u52_karatsuba on (a, a).
+static inline int sqr_u52_karatsuba(sb_pvec r, sb_cpvec a, uint64_t n, scratch *s) {
+    // split on a vector boundary: a1, the middle and the top of r stay aligned, so the
+    // children read the just-converted digits and the encoder reads the recomposed product
+    // with forwarded whole-vector accesses
+    const uint64_t split_limbs = n >= 32 ? (n >> 1) & ~uint64_t(7) : n >> 1;
+    const uint64_t a1_len = n - split_limbs;
+    sb_cpvec a1 = u52_cpvec_add(a, split_limbs);
+    SCRATCH(s);
+    sb_pvec point_n1  = SALLOC(s, sb_vec, u52_vec_count(a1_len * 2));
+    sb_pvec point_0   = r;
+    sb_pvec point_inf = u52_pvec_add(r, split_limbs * 2);
+    sb_pvec a_n1 = point_0;     // |a0 - a1| in point_0's space, used before point_0 is computed
+    int64_t sa_len = u52_cmp_and_sub(a_n1, a, a1, split_limbs, a1_len);
+    if(sa_len < 0) sa_len = -sa_len;
+    const uint64_t n1_len = sa_len ? 2 * (uint64_t)sa_len : 0;
+    int cls = 0;
+    if(n1_len) cls |= sqr_u52_dispatch(point_n1, a_n1, (uint64_t)sa_len, s);
+    const int cls_p0 = sqr_u52_dispatch(point_0, a, split_limbs, s);
+    cls |= cls_p0;
+    cls |= sqr_u52_dispatch(point_inf, a1, a1_len, s);
     if(cls){
-        if(n1_len && !flag)
-            u52_fold_sub_canon(point_mid, (sb_cpvec)point_n1, n1_len,
-                                   an + bn - split_limbs);
-        else
-            u52_fold_add_canon(point_mid, (sb_cpvec)point_n1, n1_len,
-                                   an + bn - split_limbs);
-        // The fold canonicalizes [split, top) only; [0, split) keeps point_0's
-        // lanes, so the OUTPUT class is point_0's class. (At >= 3 composite
-        // levels point_0 is class-1: returning 0 here once sent signed lanes
-        // into the positive-chain boundary encode -- caught by the GMP
-        // differential at 532x426 u64 limbs.)
-        return cls_p0;
+        u52_sqr_combine_reduce((uint64_t *)(void *)r, split_limbs, 2 * a1_len,
+                               (const uint64_t *)(const void *)point_n1, n1_len);
+        return 1;
     }
-    if(n1_len){
-        if(flag) add_nc_52(point_mid, point_mid, point_n1, n1_len);
-        else     sub_nc_52(point_mid, point_mid, point_n1, n1_len);
+    return u52_kara_recompose(r, split_limbs, 2 * a1_len, point_n1, n1_len, false, 0, 0, 2 * n);
+}
+
+// Karatsuba squares at every recursive size: through the u52 range they beat the
+// product's Toom-3 on (a, a) by about 2x (no Toom-3 square), and the transforms take
+// over above. Their temporaries are within the Karatsuba row of u52-workspace.md.
+static int sqr_u52_dispatch(sb_pvec r, sb_cpvec a, uint64_t n, scratch *s) {
+    if(!n) return 0;
+    if(n < MUL_U52_T22_THRESHOLD){
+        sqr_u52_basecase(r, a, n);
+        return 0;
     }
-    return 1;
+    return sqr_u52_karatsuba(r, a, n, s);
 }
 
 // mul_u52_dispatch: shape-aware band/ratio dispatcher, defined at end of file.

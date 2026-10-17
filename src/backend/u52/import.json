@@ -20,7 +20,8 @@
         "private namespace",
         "includes centralized",
         "Frame-backed scratch",
-        "native constants retained"
+        "native constants retained",
+        "class-1 encode biases lanes into the single positive canonicalisation chain; tail stores stay inside the page of the last byte, same bytes"
       ]
     },
     {
@@ -31,7 +32,8 @@
         "private namespace",
         "includes centralized",
         "Frame-backed scratch",
-        "native constants retained"
+        "native constants retained",
+        "u52_cmp_and_sub swaps by select instead of a data-dependent branch, same digits"
       ]
     },
     {
@@ -42,7 +44,11 @@
         "private namespace",
         "includes centralized",
         "Frame-backed scratch",
-        "native constants retained"
+        "native constants retained",
+        "1..8-row products in fixed-shape kernels (replacing the 1- and 2-row kernels) and 9..24-row products in output-stationary row kernels (mul_small.hpp), same digits",
+        "block kernel splits lo/hi buckets from 56 rows; Karatsuba recomposes class-0 children in one pass, same lanes",
+        "square entry: parity-split and block-diagonal square kernels and Karatsuba squares at every recursive size; class-1 square children recompose with on-the-fly lane reduction instead of the fold, same digits",
+        "short high half (mulhigh.hpp): the block kernel from the truncation column's vector, its first diagonal limited to the spill above the column, with a fused canonize/pack/window epilogue"
       ]
     },
     {
@@ -53,7 +59,8 @@
         "private namespace",
         "includes centralized",
         "Frame-backed scratch",
-        "native constants retained"
+        "native constants retained",
+        "tail loads stay inside the page of the last input byte, same digits"
       ]
     },
     {

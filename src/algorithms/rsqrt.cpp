@@ -9,7 +9,7 @@
 namespace sbn::v3 {
 namespace {
 uint64_t scaled_square(uint64_t *s, const uint64_t *r, size_t n, uint64_t a) {
-    mul_basecase_assumed(s, r, n, r, n);
+    sqr_basecase_assumed(s, r, n);
     return sbn3i_mul_1(s, s, long(2 * n), a);
 }
 } // namespace

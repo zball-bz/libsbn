@@ -192,6 +192,7 @@ static inline void u52_from_u64_lsh(sb_pvec r, const uint64_t* ap, uint64_t an, 
     const uint64_t n52 = (bits + 51) / 52;
     const uint8_t* p = (const uint8_t*)ap;
     int64_t rem = (int64_t)(an * 8);
+    const bool edge = u52_page_edge(ap + an);         // tail footprints may reach the next page
     const sb_vec perm = sb_load((sb_cpvec)u52_dec_perm);
     const sb_vec sh = sb_setr_64(0, 4, 0, 4, 0, 4, 0, 4);
     const sb_vec kbv = sb_set1_64(kb), k52 = sb_set1_64(52 - kb), M = SB_MASK52();
@@ -199,8 +200,8 @@ static inline void u52_from_u64_lsh(sb_pvec r, const uint64_t* ap, uint64_t an, 
     uint64_t blocks = (n52 + 7) >> 3, bi = 0;
     sb_vec prev = sb_zero();
     for(; blocks; --blocks, p += 52, rem -= 52, ++bi){
-        const sb_vec w = sb__fn(maskz_loadu_epi8)(
-            rem >= 64 ? ~0ull : (rem > 0 ? (~0ull >> (64 - rem)) : 0), p);
+        const sb_vec w = !edge ? sb__fn(maskz_loadu_epi8)(rem >= 64 ? ~0ull : (rem > 0 ? (~0ull >> (64 - rem)) : 0), p)
+                         : rem >= 64 ? sb_load((sb_cpvec)p) : rem > 0 ? u52_tail_loadu8(p, rem) : sb_zero();
         sb_vec dec = sb_and(sb_srlv(sb_permb(perm, w), sh), M);          // 8 u52 digits
         sb_vec o = kb ? sb_and(sb_or(sb_sllv(dec, kbv), sb_srlv(sb_alignr64(dec, prev, 7), k52)), M)
                     : dec;                                      // funnel by kb

@@ -51,7 +51,9 @@ sbn3_query_result finite_product(size_t an, size_t bn, const sbn3_mul_options &o
     // the prepared-execution winner and only then charging for its tables.
     // The selected shape is carried exactly by the transcript to bind.
     if(options.workers==1 && an+bn<=32768 && direct_rc==SBN3_SUPPORTED){
-        const double floor=double(applications)*query_bounds::fft_score(an,bn,1);
+        // The relaxed bound; the per-class floors of fft_score serve the AUTO query only and would
+        // move the mixed-search threshold below.
+        const double floor=double(applications)*query_bounds::relaxed_score(an,bn,1);
         out=direct;choice=direct_choice;
         if(direct_cost<=floor)return SBN3_SUPPORTED;
         double best=direct_cost;
@@ -128,7 +130,7 @@ sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductS
         const uint64_t e = transcript->next();
         choice = e & ((uint64_t(1) << product_choice_bits) - 1);
         replayed = choice && product_program_chosen(an, bn, o, choice, p) == SBN3_SUPPORTED &&
-                   PlanTranscript::check(an, bn, workers, p.info.arithmetic_id) == e >> product_choice_bits;
+                   PlanTranscript::check(an, bn, workers, identity::word(p.info.arithmetic_id, applications)) == e >> product_choice_bits;
     }
     if (!replayed) {
         p = {};
@@ -137,7 +139,7 @@ sbn3_query_result product_shape(size_t an, size_t bn, unsigned workers, ProductS
         if (transcript && transcript->replay)
             ++transcript->searched;
         if (transcript && !transcript->replay)
-            transcript->record(rc == SBN3_SUPPORTED ? choice : 0, PlanTranscript::check(an, bn, workers, p.info.arithmetic_id));
+            transcript->record(rc == SBN3_SUPPORTED ? choice : 0, PlanTranscript::check(an, bn, workers, identity::word(p.info.arithmetic_id, applications)));
         if (rc != SBN3_SUPPORTED)
             return rc;
     }
