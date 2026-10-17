@@ -43,6 +43,10 @@ def main():
     run(['python3', 'tools/generate_mul_basecase.py', '--check'])
     run(['python3', 'tools/generate_high_half.py', '--check'])
     run(['python3', 'tools/generate_full_fixed.py', '--check'])
+    run(['python3', 'tools/generate_fp_inv.py', '--check'])
+    run(['python3', 'tools/generate_fp_inv_engine.py', '--check'])
+    run(['python3', 'tools/generate_fp_rsqrt_rsp.py', '--check'])
+    run(['python3', 'tools/generate_fp_rsqrt_engine.py', '--check'])
     run(['python3', 'tools/check_native_variants.py'])
     config = json.loads((V3/'config/native.json').read_text())
     sources = json.loads((V3/'config/sources.json').read_text())['entries']

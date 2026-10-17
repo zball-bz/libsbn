@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Generate src/fp/x86_64/sqrt.S: the fp kernel square root and reciprocal square root entries (contract:
-src/fp/kernel.hpp; the grid and the cores' proofs: src/fp/x86_64/sqrt.cpp).
+"""Generate src/fp/x86_64/sqrt.S: the fp kernel square root entry (contract: src/fp/kernel.hpp).
 
   fxr sbn3f_sqrt(limb *z, const fx *x, int64_t leps)     rdi z, rsi x, rdx leps
-  fxr sbn3f_rsqrt(limb *z, const fx *x, int64_t leps)    rdi z, rsi x, rdx leps
   result: rax e, rdx ns
 
-The entry decodes x, computes e_top (sqrt: ceil(e/2), rsqrt: floor((2-e)/2)), k = e_top - L2, c = lzcnt(X's top limb)
-& ~1 and s = c/2 + 32 [e odd], and runs here:
+(The reciprocal square root, which shared this file and sqrt.cpp until 2026-10-17, is src/fp/x86_64/rsqrt.S now.)
+
+Grid. x = X B^(e - n) > 0 (X's top limb nonzero), c = lzcnt(X's top limb) & ~1, s = c/2 + 32 [e odd] <= 63. The radicand
+t = X 2^c / B^n lies in [1/4, 1), the range all of the research prototype's proofs assume (experiments/results/
+fp_roots_2026-10-09); Tf = floor(t B^(k+1)) is the top k + 1 limbs of X << c (zero below a shorter X) and drops < B^-(k+1)
+of t. sqrt: e_top = ceil(e/2), k = e_top - L2: sqrt(x) / B^L2 = B^k sqrt(t) / 2^s.
+The entry decodes x, computes e_top, k, c and s, and runs here:
   sqrt k = 1, s >= 14: z = floor(sqrt(T1) 2^(32-s)) in double, T1 = Tf's top limb (Tf = the top limbs of X << c,
     t = Tf / B^2 in [1/4, 1)): the value sqrt(t) B / 2^s < 2^(64-s) <= 2^50 carries a relative error < 2^-53 (the
     conversion and the square root's rounding) + 2^-62 (Tf's lower limb): < 2^-3 absolute; the floor < 1. Clamped up to
@@ -18,12 +21,8 @@ The entry decodes x, computes e_top (sqrt: ceil(e/2), rsqrt: floor((2-e)/2)), k 
   sqrt k = 2: the prototype's sqrt2 on Tf's top three limbs (isqrt128 of the top two, exact: q, R = A - q^2 <= 2q; one
     divq of (R B + Tf[0]) / 2q as (R >> 1, (R & 1) 2^63 + Tf[0] >> 1) / q; R = 2q: (q + 1) B), Z' within 2 of sqrt(t)
     B^2, z = Z' >> s.
-  rsqrt k = 1, s <= 46: z = floor(y 2^(32+s)), y ~ 1 / sqrt(T1) from vrsqrt14 and two Newton steps (relative error
-    < 2^-50 with the double's rounding): the value 2^s / sqrt(t) < 2^(s+1) has an absolute error < 2^-3, Tf's lower
-    limb < 2^-60. Clamped up to 2^s. s > 46: Zh >> (63 - s) from rsqrt k = 2's core (rsq2_core).
-  rsqrt k = 2: rsq2_core and Tf's third limb (rsqrt2 below). sqrt k = 3..KSB: the schoolbook root (core_sb below).
-Everything else (sqrt k > KSB, rsqrt k >= 3) calls sbn3f_root_core (sqrt.cpp) with the decoded values: (z, X, n, k, c,
-s | rsqrt << 8); it hands sqrt to the IFMA root sbn3f_sqrt_qv (div_qv.cpp).
+  sqrt k = 3..KSB: the schoolbook root (core_sb below; its cold fix-up sbn3f_sqrt_sb_fix in sqrt.cpp).
+Everything else (k > KSB) calls the IFMA root sbn3f_sqrt_qv (div_qv.cpp) with the decoded values (z, X, n, k, c, s).
 """
 import sys
 
@@ -53,7 +52,7 @@ def load_top(t, reg):
 def reg32(r):
     return {'rax': 'eax', 'rbx': 'ebx', 'rcx': 'ecx', 'rdx': 'edx', 'rsi': 'esi', 'rdi': 'edi', 'rbp': 'ebp'}.get(r, r + 'd')
 
-def entry(name, rsqrt):
+def entry(name):
     e('\t.globl\tSYM(%s)' % name)
     e('\t.type\tSYM(%s), @function' % name)
     e('\t.p2align\t5')
@@ -64,11 +63,7 @@ def entry(name, rsqrt):
     e('\tjz\t.Lzero')
     e('\tmovq\t8(%rsi), %rax')                    # e
     e('\tmovq\t(%rsi), %rsi')                     # X
-    if rsqrt:
-        e('\tmovl\t$2, %r9d')
-        e('\tsubq\t%rax, %r9')
-    else:
-        e('\tleaq\t1(%rax), %r9')
+    e('\tleaq\t1(%rax), %r9')
     e('\tsarq\t$1, %r9')                          # e_top
     e('\tsubq\t$2, %rdx')
     e('\tsarq\t$6, %rdx')                         # L2
@@ -85,18 +80,11 @@ def entry(name, rsqrt):
     e('\tshrl\t$1, %r11d')
     e('\taddl\t%eax, %r11d')                      # s
     e('\tcmpq\t$1, %rcx')
-    if rsqrt:
-        e('\tje\t.Lr1')
-        e('\tcmpq\t$2, %rcx')
-        e('\tje\t.Lr2')
-        e('\tmovl\t$256, %eax')                   # the rsqrt flag for the core
-    else:
-        e('\tje\t.Lq1')
-        e('\tcmpq\t$2, %rcx')
-        e('\tje\t.Lq2')
-        e(f'\tcmpq\t${KSB}, %rcx')
-        e('\tjbe\t.Lsb')
-        e('\txorl\t%eax, %eax')
+    e('\tje\t.Lq1')
+    e('\tcmpq\t$2, %rcx')
+    e('\tje\t.Lq2')
+    e(f'\tcmpq\t${KSB}, %rcx')
+    e('\tjbe\t.Lsb')
     e('\tjmp\t.Lcore')
     e('\t.size\tSYM(%s), .-SYM(%s)' % (name, name))
     e('')
@@ -132,18 +120,17 @@ def sat_add():
 COLD = []
 
 def common_tail():
-    # the slow paths: sbn3f_root_core(z, X, n, k, c, s | flag); e_top and k kept across the call
-    e('.Lcore:')                                  # rdi z, rsi X, r8 n, r9 e_top, rcx k, r10 c, r11 s, eax flag
+    # k > KSB: sbn3f_sqrt_qv(z, X, n, k, c, s); e_top and k kept across the call
+    e('.Lcore:')                                  # rdi z, rsi X, r8 n, r9 e_top, rcx k, r10 c, r11 s
     e('\tpushq\t%r9')
     e('\tpushq\t%rcx')
     e('\tsubq\t$8, %rsp')                         # rsp 16-aligned at the call
-    e('\torl\t%eax, %r11d')
     e('\tmovq\t%rcx, %rdx')                       # (k into rcx below, n into rdx)
     e('\tmovq\t%r8, %rcx')
     e('\txchgq\t%rdx, %rcx')                      # rdx = n, rcx = k
     e('\tmovl\t%r10d, %r8d')                      # c
-    e('\tmovl\t%r11d, %r9d')                      # s | flag
-    e('\tcall\tsbn3f_root_core')
+    e('\tmovl\t%r11d, %r9d')                      # s
+    e('\tcall\tsbn3f_sqrt_qv')
     e('\taddq\t$8, %rsp')
     e('\tpopq\t%rdx')                             # ns = k
     e('\tpopq\t%rax')                             # e_top
@@ -210,222 +197,6 @@ def sqrt1():
     e('\tmovl\t$1, %edx')
     e('\tret')
 
-def rsqrt1():
-    e('.Lr1:')
-    e('\tcmpl\t$46, %r11d')
-    e('\tja\t.Lr1s')
-    e('\tmovq\t%r9, -8(%rsp)')
-    e('\tmovq\t%r11, -16(%rsp)')
-    e('\tmovl\t%r10d, %ecx')
-    tf(['r9'])
-    e('\tmovq\t-16(%rsp), %r11')
-    e('\tvxorpd\t%xmm0, %xmm0, %xmm0')            # (the conversion merges: no dependency on the last call)
-    e('\tvcvtusi2sdq\t%r9, %xmm0, %xmm0')         # a
-    e('\tvrsqrt14sd\t%xmm0, %xmm0, %xmm1')        # y (relative 2^-14)
-    e('\tvmulsd\t.Lhalf(%rip), %xmm0, %xmm0')    # a/2
-    for _ in range(2):                            # y += y (1/2 - (a/2) y^2)
-        e('\tvmulsd\t%xmm1, %xmm0, %xmm2')
-        e('\tvmovsd\t.Lhalf(%rip), %xmm3')
-        e('\tvfnmadd231sd\t%xmm2, %xmm1, %xmm3')
-        e('\tvfmadd231sd\t%xmm3, %xmm1, %xmm1')
-    e('\tmovl\t$1055, %eax')                      # 2^(32+s)
-    e('\taddl\t%r11d, %eax')
-    e('\tshlq\t$52, %rax')
-    e('\tvmovq\t%rax, %xmm2')
-    e('\tvmulsd\t%xmm2, %xmm1, %xmm1')
-    e('\tvcvttsd2usi\t%xmm1, %rax')
-    e('\tmovl\t$1, %edx')
-    e('\tshlxq\t%r11, %rdx, %rdx')                # 2^s
-    e('\tcmpq\t%rdx, %rax')
-    e('\tcmovbq\t%rdx, %rax')
-    e('\tmovq\t%rax, (%rdi)')
-    e('\tmovq\t-8(%rsp), %rax')
-    e('\tmovl\t$1, %edx')
-    e('\tret')
-    e('.Lr1s:')                                   # s > 46: Z = rsq2_core(Tf's top two limbs) ~ 2^191 / sqrt(t), z =
-    e('\tmovq\t%r9, -8(%rsp)')                   # floor(Z / 2^(127 - s)) = Zh >> (63 - s) in [2^s, B - 1] (Z in
-    e('\tmovq\t%r11, -16(%rsp)')                 # [2^127, 2^128)); error < 1 + Z's 2 units / 2^64 + Tf's tail
-    e('\tmovq\t%rbp, -32(%rsp)')
-    e('\tmovq\t%r12, -40(%rsp)')
-    e('\tmovl\t%r10d, %ecx')
-    tf(['r9', 'r10'], discard='rcx')
-    rsq2_core('.Lr1c', False)
-    e('\tmovl\t$63, %ecx')
-    e('\tsubl\t-16(%rsp), %ecx')
-    e('\tshrxq\t%rcx, %r11, %rax')
-    e('\tmovq\t%rax, (%rdi)')
-    e('\tmovq\t-32(%rsp), %rbp')
-    e('\tmovq\t-40(%rsp), %r12')
-    e('\tmovq\t-8(%rsp), %rax')
-    e('\tmovl\t$1, %edx')
-    e('\tret')
-
-# rsqrt k = 2: R' = B^2 / sqrt(t) in (B^2, 2B^2], z = floor(R' 2^s / B). The prototype's rsq2_core on A = Tf's top two
-# limbs with the seed of rsqrt1 (vrsqrt14 and two Newton steps: |e0| < 2^-49, the bound its analysis assumes): z0 ~
-# 2^127 / sqrt(A), R'' = floor((2^254 - A z0^2) / 2^120) exact, c1 = floor(z0 R'' / 2^63), c2 = 3/8 e0^2 z0 2^72 in
-# double, Z = z0 2^64 + (c1 + c2) >> 8 within 1 + 2^-5 of 2^191 / sqrt(A), clamped into [2^127, 2^128 - 1]; R'(t_A) = 2Z.
-# Tf's third limb T0 lowers the target by T0 / (2 B t^1.5) < 4 units (first order; the second order < 2^-60): corr =
-# T0 r^3 / 2^65, r = 2^32 y ~ 1 / sqrt(t) from the seed. |R' - B^2 / sqrt(t)| < 2.1; z: error < 1 + 1.05. Clamped into [2^s B,
-# B^2 - 1]. Frame: the red zone (e_top, s, rbx, rbp, r12).
-def rsq2_core(tag, corr3, z0='rbp', c2='r12'):
-    """Z ~ 2^191 / sqrt(A) (rsqrt k = 2's core, the prototype's rsq2_core), A = r9 B + r10 in [2^126, 2^128): Zh in r11,
-    Zl in r8, saturated into [2^127, 2^128 - 1]; corr3 (k = 2): rbx = Tf's third limb in, its corr3 out. Clobbers rax,
-    rcx, rdx, rsi, z0, c2, xmm0 .. xmm7."""
-    # seed: y ~ 1 / sqrt(Thi) (relative 2^-50), z0 = y 2^95 (2^64 - 1 when it reaches 2^64)
-    e('\tvxorpd\t%xmm0, %xmm0, %xmm0')
-    e('\tvcvtusi2sdq\t%r9, %xmm0, %xmm0')
-    e('\tvrsqrt14sd\t%xmm0, %xmm0, %xmm1')
-    e('\tvmulsd\t.Lhalf(%rip), %xmm0, %xmm0')
-    for _ in range(2):
-        e('\tvmulsd\t%xmm1, %xmm0, %xmm2')
-        e('\tvmovsd\t.Lhalf(%rip), %xmm3')
-        e('\tvfnmadd231sd\t%xmm2, %xmm1, %xmm3')
-        e('\tvfmadd231sd\t%xmm3, %xmm1, %xmm1')
-    if corr3:
-        # corr3 = T0 r^3 / 2^65 with r = 2^32 y ~ 1 / sqrt(t) (relative 2^-50: < 2^-45 units), off the residual's chain
-        e('\tvmulsd\t%xmm1, %xmm1, %xmm6')
-        e('\tvmulsd\t%xmm1, %xmm6, %xmm6')            # y^3
-        e('\tvxorpd\t%xmm7, %xmm7, %xmm7')
-        e('\tvcvtusi2sdq\t%rbx, %xmm7, %xmm7')
-        e('\tvmulsd\t.Lp31(%rip), %xmm7, %xmm7')     # T0 2^31 (= T0 2^96 / 2^65)
-        e('\tvmulsd\t%xmm7, %xmm6, %xmm6')
-        e('\tvcvttsd2usi\t%xmm6, %rbx')               # corr3 < 4
-    e('\tvmulsd\t.Lp95(%rip), %xmm1, %xmm1')
-    e(f'\tvcvttsd2usi\t%xmm1, %{z0}')               # z0
-    # P = A z0^2 (4 limbs p3 p2 p1 p0): sq = s1 s0
-    e(f'\tmovq\t%{z0}, %rdx')
-    e(f'\tmulxq\t%{z0}, %r8, %r11')                 # s0 = r8, s1 = r11
-    e('\tmovq\t%r10, %rdx')                       # x0
-    e('\tmulxq\t%r8, %rax, %rcx')                 # x0 s0: p0 = rax, rcx
-    e('\tmulxq\t%r11, %rdx, %rsi')                # x0 s1: rdx, rsi
-    e('\taddq\t%rdx, %rcx')
-    e('\tadcq\t$0, %rsi')
-    e('\tmovq\t%r9, %rdx')                        # x1
-    e(f'\tmulxq\t%r8, %r8, %{c2}')                  # x1 s0: r8, r12
-    e('\tmulxq\t%r11, %r11, %rdx')                # x1 s1: r11, rdx
-    e('\taddq\t%r8, %rcx')                        # p1
-    e(f'\tadcq\t%{c2}, %rsi')
-    e('\tadcq\t$0, %rdx')
-    e('\taddq\t%r11, %rsi')                       # p2
-    e('\tadcq\t$0, %rdx')                         # p3
-    # R' = 2^254 - P: limbs r1 r2 r3 of the two's complement (r0 only feeds the borrow)
-    e('\tnegq\t%rax')                             # CF = p0 != 0
-    e('\tmovl\t$0, %eax')
-    e('\tsbbq\t%rcx, %rax')                       # r1
-    e('\tmovl\t$0, %ecx')
-    e('\tsbbq\t%rsi, %rcx')                       # r2
-    e('\tmovabsq\t$0x4000000000000000, %rsi')
-    e('\tsbbq\t%rdx, %rsi')                       # r3
-    # R'' = R' >> 120: L = (r1 >> 56) | (r2 << 8) (rax), H = (r2 >> 56) | (r3 << 8) (rcx, signed)
-    e('\tshrdq\t$56, %rcx, %rax')
-    e('\tshrdq\t$56, %rsi, %rcx')
-    # e0 = double(R'' >> 32) 2^-102, R'' >> 32 = (H << 32) | (L >> 32) (|R''| < 2^87: fits int64)
-    e('\tmovq\t%rcx, %r8')
-    e('\tmovq\t%rax, %r8')
-    e('\tshrdq\t$32, %rcx, %r8')                  # R'' >> 32
-    e('\tvxorpd\t%xmm4, %xmm4, %xmm4')
-    e('\tvcvtsi2sdq\t%r8, %xmm4, %xmm4')
-    e('\tvmulsd\t.Lm102(%rip), %xmm4, %xmm4')     # e0
-    e('\tvmulsd\t%xmm4, %xmm4, %xmm4')            # e0^2
-    e('\tvxorpd\t%xmm5, %xmm5, %xmm5')
-    e(f'\tvcvtusi2sdq\t%{z0}, %xmm5, %xmm5')
-    e('\tvmulsd\t.Lc38(%rip), %xmm5, %xmm5')      # 3/8 2^72 z0
-    e('\tvmulsd\t%xmm5, %xmm4, %xmm4')
-    e(f'\tvcvttsd2si\t%xmm4, %{c2}')                # c2 (int64, >= 0)
-    # c1 = 2 z0 H + ((z0 L) >> 63), signed 128-bit
-    e(f'\tmovq\t%{z0}, %rdx')
-    e('\tmulxq\t%rax, %r8, %r11')                 # z0 L: r11 r8
-    e('\tshrdq\t$63, %r11, %r8')                  # low limb of (z0 L) >> 63
-    e('\tshrq\t$63, %r11')                        # its high limb (0 or 1)
-    e('\tmovq\t%rcx, %rax')
-    e(f'\timulq\t%{z0}')                            # rdx:rax = H z0 signed x signed (z0 read as z0 - 2^64 when >= 2^63)
-    e('\tmovq\t%rcx, %rsi')
-    e(f'\tmovq\t%{z0}, %rsi')
-    e('\tsarq\t$63, %rsi')
-    e('\tandq\t%rcx, %rsi')
-    e('\taddq\t%rsi, %rdx')                       # + H 2^64 when z0 >= 2^63: H z0 with z0 unsigned
-    e('\taddq\t%rax, %rax')                       # 2 H z0
-    e('\tadcq\t%rdx, %rdx')
-    e('\taddq\t%r8, %rax')
-    e('\tadcq\t%r11, %rdx')                       # c1
-    e(f'\taddq\t%{c2}, %rax')                       # + c2
-    e('\tadcq\t$0, %rdx')
-    e('\tshrdq\t$8, %rdx, %rax')                  # corr = (c1 + c2) >> 8 (arithmetic): rdx:rax
-    e('\tsarq\t$8, %rdx')
-    # Z = z0 2^64 + corr: Zh = z0 + corr_hi + carry(corr_lo), Zl = corr_lo; saturate into [2^127, 2^128 - 1]
-    e('\tmovq\t%rax, %r8')                        # Zl
-    e(f'\tmovq\t%{z0}, %r11')
-    e('\tbtcq\t$63, %r11')                        # z0 - 2^63, signed
-    e('\taddq\t%rdx, %r11')                       # + corr_hi (|corr| < 2^80: no signed overflow but at the top)
-    e(f'\tjo\t{tag}s')
-    e(f'{tag}b:')
-    e('\ttestq\t%r11, %r11')
-    e(f'\tjs\t{tag}u')                              # Z < 2^127
-    e('\tbtcq\t$63, %r11')                        # Zh
-
-    COLD.extend([f'{tag}s:', '\tmovq\t$-1, %r8', '\tmovabsq\t$0x7fffffffffffffff, %r11', f'\tjmp\t{tag}b',
-                 f'{tag}u:', '\txorl\t%r8d, %r8d', '\txorl\t%r11d, %r11d', f'\tjmp\t{tag}b'])
-
-def rsqrt2():
-    e('.Lr2:')
-    e('\tmovq\t%r9, -8(%rsp)')
-    e('\tmovq\t%r11, -16(%rsp)')
-    e('\tmovq\t%rbx, -24(%rsp)')
-    e('\tmovq\t%rbp, -32(%rsp)')
-    e('\tmovq\t%r12, -40(%rsp)')
-    e('\tmovl\t%r10d, %ecx')
-    tf(['r9', 'r10', 'rbx'], discard='rcx')       # A = r9 r10, T0 = rbx
-    rsq2_core('.Lr2', True)
-    e('\tmovq\t%rbx, %rax')                       # corr3
-    # R' (3 limbs) = 2Z - corr3: R0 R1 R2
-    e('\tmovq\t%r8, %rcx')
-    e('\taddq\t%rcx, %rcx')                       # 2 Zl
-    e('\tmovq\t%r11, %rdx')
-    e('\tadcq\t%rdx, %rdx')                       # 2 Zh + carry
-    e('\tmovl\t$0, %esi')
-    e('\tadcq\t$0, %rsi')                         # R2 (1)
-    e('\tsubq\t%rax, %rcx')
-    e('\tsbbq\t$0, %rdx')
-    e('\tsbbq\t$0, %rsi')
-    # z = floor(R' 2^s / B) = (R2 R1 R0) >> (64 - s): z1 = shld(R2, R1, s), z0 = shld(R1, R0, s)
-    e('.Lr2o:')
-    e('\tmovq\t-16(%rsp), %r9')                   # s
-    e('\tmovl\t%r9d, %eax')
-    e('\tmovq\t%rcx, %r10')
-    e('\tmovl\t%eax, %ecx')
-    e('\tmovq\t%rsi, %r11')
-    e('\tshldq\t%cl, %rdx, %r11')                 # z1 (s = 0: R2, then the clamp below)
-    e('\tshldq\t%cl, %r10, %rdx')                 # z0
-    # (s = 0: z = R2 B + R1 = (r11 = R2, rdx = R1): shld by 0 leaves them; z >= B^2 needs R2 >= B: never)
-    # s > 0: z >= B^2 <=> R2 >> (64 - s) != 0
-    e('\tmovl\t$64, %eax')
-    e('\tsubl\t%ecx, %eax')
-    e('\tshrxq\t%rax, %rsi, %rax')                # R2 >> (64 - s) (count mod 64: s = 0 gives R2, masked below)
-    e('\ttestl\t%ecx, %ecx')
-    e('\tcmovzq\t%rcx, %rax')                     # s = 0: no overflow (rcx = 0)
-    e('\ttestq\t%rax, %rax')
-    e('\tjnz\t.Lr2f')
-    e('\tmovl\t$1, %eax')
-    e('\tshlxq\t%rcx, %rax, %rax')                # 2^s
-    e('\tcmpq\t%rax, %r11')
-    e('\tjb\t.Lr2l')
-    e('\tmovq\t%rdx, (%rdi)')
-    e('\tmovq\t%r11, 8(%rdi)')
-    e('.Lr2x:')
-    e('\tmovq\t-24(%rsp), %rbx')
-    e('\tmovq\t-32(%rsp), %rbp')
-    e('\tmovq\t-40(%rsp), %r12')
-    e('\tmovq\t-8(%rsp), %rax')
-    e('\tmovl\t$2, %edx')
-    e('\tret')
-    e('.Lr2f:')                                   # >= B^2: B^2 - 1
-    e('\tmovq\t$-1, (%rdi)')
-    e('\tmovq\t$-1, 8(%rdi)')
-    e('\tjmp\t.Lr2x')
-    e('.Lr2l:')                                   # < 2^s B: 2^s B
-    e('\tmovq\t$0, (%rdi)')
-    e('\tmovq\t%rax, 8(%rdi)')
-    e('\tjmp\t.Lr2x')
 def isqrt_exact(tag):
     """rcx = q = floor(sqrt(T)), r9 r10 = T - q^2 (<= 2q) for T = r9 B + r10 in [2^126, 2^128); clobbers rax, rdx, r8,
     r11, xmm0 .. xmm4. z0 = sqrtsd(r9 2^64) - 4096 (the double's error < 2^11.6 with r10 dropped: sqrt T - z0 in
@@ -946,9 +717,9 @@ def sqrt2():
     e('\tjmp\t.Lq2o')
 
 def main():
-    e('/* Generated by tools/generate_fp_sqrt.py; do not edit. fp kernel sqrt / rsqrt entries, x86-64 (AVX-512F scalar,')
-    e(' * BMI2, ADX, LZCNT): the decode, the k <= 2 paths of the research prototype\'s roots, the short schoolbook sqrt;')
-    e(' * the rest in sqrt.cpp. invert_pi1 and udiv_qr_2by1 arithmetic of GMP 6.3.0 (dual LGPLv3+ / GPLv2+; Copyright')
+    e('/* Generated by tools/generate_fp_sqrt.py; do not edit. fp kernel sqrt entry, x86-64 (AVX-512F scalar, BMI2, ADX,')
+    e(' * LZCNT): the decode, the k <= 2 paths of the research prototype\'s roots, the short schoolbook sqrt; k > 54 in')
+    e(' * sbn3f_sqrt_qv (div_qv.cpp). invert_pi1 and udiv_qr_2by1 arithmetic of GMP 6.3.0 (dual LGPLv3+ / GPLv2+; Copyright')
     e(' * 1991-2016 Free Software Foundation, Inc.; notice src/core/x86_64/scalar-donor-notice.txt). */')
     e('#ifndef FPK_PFX')
     e('#define FPK_PFX sbn3f_')
@@ -957,12 +728,9 @@ def main():
     e('#define FPK_CAT(a, b) FPK_CAT2(a, b)')
     e('#define SYM(x) FPK_CAT(FPK_PFX, x)')
     e('\t.text')
-    entry('sqrt', False)
-    entry('rsqrt', True)
+    entry('sqrt')
     sqrt1()
     sqrt2()
-    rsqrt1()
-    rsqrt2()
     core_sb()
     common_tail()
     out.extend(COLD)
@@ -974,9 +742,6 @@ def main():
     e('.L1p5:\t.quad\t0x3ff8000000000000')        # 1.5
     e('.Lbias:\t.quad\t0x3f50000000000000')       # 2^-10
     e('.Ly95:\t.quad\t0x45dffffe00000000')        # 2^95 (1 - 2^-20)
-    e('.Lp95:\t.quad\t0x45e0000000000000')        # 2^95
-    e('.Lm102:\t.quad\t0x3990000000000000')       # 2^-102
-    e('.Lc38:\t.quad\t0x4458000000000000')        # 3/8 2^72
 
     e('\t.section\t.note.GNU-stack,"",@progbits')
     open(sys.argv[1] if len(sys.argv) > 1 else OUT, 'w').write('\n'.join(x for x in out if x is not None) + '\n')

@@ -1805,10 +1805,11 @@
         "avx512bw",
         "avx512dq",
         "avx512vbmi",
-        "bmi2"
+        "bmi1",
+        "bmi2",
+        "lzcnt"
       ],
       "depends_on": [
-        "src/fp/x86_64/inv.S",
         "src/fp/x86_64/inv_engine.S"
       ],
       "provides_symbols": [
@@ -1828,13 +1829,12 @@
       "requires": [
         "avx512f",
         "avx512dq",
+        "avx512vl",
         "avx512ifma",
         "bmi2",
         "popcnt"
       ],
-      "depends_on": [
-        "src/fp/x86_64/inv_qv.cpp"
-      ],
+      "depends_on": [],
       "provides_symbols": [
         "sbn3f_inv_chain"
       ],
@@ -1855,14 +1855,14 @@
         "lzcnt"
       ],
       "depends_on": [
-        "src/fp/x86_64/sqrt.cpp"
+        "src/fp/x86_64/sqrt.cpp",
+        "src/fp/x86_64/div_qv.cpp"
       ],
       "provides_symbols": [
-        "sbn3f_sqrt",
-        "sbn3f_rsqrt"
+        "sbn3f_sqrt"
       ],
       "requires_symbols": [
-        "sbn3f_root_core",
+        "sbn3f_sqrt_qv",
         "sbn3f_sqrt_sb_fix"
       ],
       "donor_ids": [
@@ -1873,33 +1873,114 @@
       "path": "src/fp/x86_64/sqrt.cpp",
       "language": "cxx",
       "group": "native",
-      "requires": [
-        "avx512f",
-        "avx512vl",
-        "bmi2",
-        "adx"
-      ],
-      "depends_on": [
-        "src/core/x86_64/word.cpp",
-        "src/core/x86_64/high_fixed.S",
-        "src/kernels/x86v4ifma/mulhigh.cpp",
-        "src/fp/x86_64/mul_glue.cpp",
-        "src/fp/x86_64/div_qv.cpp"
-      ],
+      "requires": [],
+      "depends_on": [],
       "provides_symbols": [
-        "sbn3f_root_core",
         "sbn3f_sqrt_sb_fix"
       ],
-      "requires_symbols": [
-        "sbn3i_mulhigh_u52",
-        "sbn3f_full",
-        "sbn3f_sqrt_qv"
-      ],
+      "requires_symbols": [],
       "donor_ids": [],
       "extra_flags": [
         "-fno-vectorize",
         "-fno-slp-vectorize"
       ]
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/rsqrt_rsp.S",
+        "src/fp/x86_64/rsqrt_qv.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_rsqrt",
+        "sbn3f_rsqrt_seed",
+        "sbn3f_rsqrt_prefix23",
+        "sbn3f_rsqrt_prefix24",
+        "sbn3f_rsqrt_prefix25",
+        "sbn3f_rsqrt_prefix26"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_qv",
+        "sbn3f_rsqrt_rsp_k7",
+        "sbn3f_rsqrt_rsp_seed"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_rsp.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_rsqrt_rsp_k7",
+        "sbn3f_rsqrt_rsp_seed"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_qv.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vbmi",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/rsqrt_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_rsqrt_qv",
+        "sbn3f_rsqrt_qv_cs",
+        "sbn3f_rsqrt_fix"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_seed",
+        "sbn3f_rsqrt_chain_cu"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_engine.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "bmi2",
+        "popcnt"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_rsqrt_chain",
+        "sbn3f_rsqrt_chain_cu"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_fix"
+      ],
+      "donor_ids": []
     }
   ]
 }

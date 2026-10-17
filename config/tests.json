@@ -354,6 +354,18 @@
       "timeout_seconds": 60
     },
     {
+      "name": "fp_inv_rsqrt_test",
+      "sources": [
+        {
+          "path": "tests/native/fp_inv_rsqrt_test.cpp",
+          "language": "cxx",
+          "group": "native"
+        }
+      ],
+      "link_flags": [],
+      "timeout_seconds": 60
+    },
+    {
       "name": "square_basecase_test",
       "sources": [
         {

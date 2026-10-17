@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """Generate src/fp/x86_64/inv_engine.S: the IFMA level engine of the fp reciprocal (sbn3f_inv_chain, called by
-sbn3f_inv_qv in src/fp/x86_64/inv_qv.cpp). usage: generate_fp_inv_engine.py [OUT.S] [options]; without options it
-writes the shipped engine (PROD below: S4X of experiments/results/fpk_2026-10-12, frozen/inv_s4x_v1).
+sbn3f_inv_qv in src/fp/x86_64/inv_qv.cpp).
+  usage: generate_fp_inv_engine.py [--check] [OUT.S] [options]; without options it writes the shipped engine (PROD below)
+  to OUT (default src/fp/x86_64/inv_engine.S); --check generates in memory and compares with OUT (exit status 1 if they
+  differ).
+
+The shipped engine is the research kernel oz's (experiments/results/fpk_2026-10-12/ovh2_inv/inv/oz, OVH2-INV, accepted by
+the owner 2026-10-16): its oz_engine.S with the library's symbol names, so its machine code is oz_engine.o's. PROD: the
+S4X engine options without --xs (the exact carry pass through the frame, .Lexact, for every NV), the Karatsuba middle
+product of KARA512 on the levels of tools/fp_inv/kara_policy.txt (tools/fp_inv/kara_emit.py; the levels are enumerated
+from the schedule in src/fp/x86_64/inv_sched.hpp by tools/fp_inv/ksched.py), and OVH2-INV's small-level set-up (--ovh-ss)
+and shifted hi loads in the NV = 1 correction (--ovh-hc --ovh-hc-max 1). The generator is ovh2_inv/gen/gen_kara_engine.py
+with its fault-injection options removed; the other options are that research history's switches (not built).
 
 One shared register level body for the Newton levels of the reciprocal (research origin: newton_inv/bitprec/claude_impl,
 designs compact/des_shared, s4/s4 and s4x, 2026-10-14; the option notes below are that history).
@@ -68,6 +78,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument('out')
 ap.add_argument('--name', required=True)
 ap.add_argument('--U', type=int, default=4)
+ap.add_argument("--unarrow", type=int, default=0)    # SLIM-INV: segments 0 .. N - 1 unrolled by --unarrow-u (the narrow segments, where
+ap.add_argument("--unarrow-u", type=int, default=4)  # vector 0 needs 4 accumulator chains), the others by --U
 ap.add_argument('--gmap', default='4,2,2')           # row groups of vectors 0, 1, 2, ...; the rest 1
 ap.add_argument('--bench', action='store_true')       # no fix() call (as QV_BENCH)
 ap.add_argument('--align', type=int, default=0)       # .p2align of each segment loop head (0: none)
@@ -75,6 +87,20 @@ ap.add_argument('--force-exact', action='store_true') # test build: the exact ca
 ap.add_argument('--fixsym', default='qvs_fix')
 ap.add_argument('--force-fix', action='store_true')   # test build: fix() after every update (the call path; fix of canonical digits changes nothing)
 ap.add_argument('--tabstub', action='store_true')     # NV SMALL+1..10: one shared stub, its section entries from a 10-row table (indirect calls)
+ap.add_argument('--ovh-ss', action='store_true')      # OVH2-INV: levels with NV <= SMALL (the small stubs) take their own set-up right after e:
+                                                     # the same masks, pointers, MP count and Duff entry, without what only the per-NV / big
+                                                     # stubs and the Karatsuba path read (k1 / k3 to K_OFF, i0 in r9, MY to PY_OFF, the MP
+                                                     # count to IM_OFF, the G pointer in rbx: 12 instructions) and a direct jump instead of
+                                                     # the table; every level's arithmetic unchanged (outputs bit-identical)
+ap.add_argument('--ovh-hc', action='store_true')      # OVH2-INV: the small stubs' correction takes each row's hi products from the X window one
+                                                     # element lower (a second load; vector 0's lane 0 masked off: the half below the lowest
+                                                     # column stays dropped), so the hi sums are column-aligned and the reduction is one add
+                                                     # per vector instead of valignq + add (one valignq less on the level's critical path);
+                                                     # the same partial products in every lane sum (outputs bit-identical)
+ap.add_argument('--ovh-hc-max', type=int, default=10)  # OVH2-INV: --ovh-hc only in the small stubs NV <= this
+ap.add_argument('--stamps', action='store_true')       # OVH2-INV: KSQ-INV's stage stamps (timing builds only; ksq_inv/gen/gen_kara_engine.py's ST
+                                                     # records at the same places: 1 level start, 10..13 plain and small stubs, 2 epilogue;
+                                                     # none in the big stub or the Karatsuba path: the stamp runs stop at k 128)
 ap.add_argument('--chain', action='store_true')
 ap.add_argument('--inline', action='store_true')      # diagnostic: the straight-line sections inline in every stub (no calls)
 ap.add_argument('--inline-upto', type=int, default=0)  # the sections inline in the stubs of NV <= this (calls above)
@@ -92,10 +118,18 @@ ap.add_argument('--xreg', action='store_true')        # S4X exploration: the NV 
 ap.add_argument('--xpair', action='store_true')       # S4X exploration: --xreg with the masks of vector pairs joined by kunpckbw (fewer GPR ops)
 ap.add_argument('--xk', action='store_true')          # S4X exploration: --xreg with the masks and the carry chain in k registers (kaddq)
 ap.add_argument('--xs', action='store_true')          # S4X production: the exact pass as v1.1's serial per-vector chain in registers (.Lxs, one entry, exit after vector NV - 1)
+ap.add_argument('--kara-policy', default='')          # KARA512: file of "c nn" keys (kara_emit.py); '' = the shipped engine
+ap.add_argument('--kara-padmax', default='model')     # KARA512: pad rule ('model' or a constant cap)
+ap.add_argument('--kara-count', default='')           # KARA512 gate build: count the exact fallbacks in SYM_s / SYM_t
+ap.add_argument('--kara-dup', default='')             # KARA512 timing ablations: G,S,T,H,R run twice, C splits each leaf call
 ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
+FPINV = ROOT / 'tools/fp_inv'
 PROD = ['--name', 'sbn3f_inv_chain', '--fixsym', 'sbn3f_inv_fix', '--chain', '--U', '4', '--gmap', '4,2,2', '--duff',
-        '--small', '2', '--mpinit', '--hidden', '--prod-header', '--xs']   # the shipped engine
+        '--small', '2', '--mpinit', '--hidden', '--prod-header', '--ovh-ss', '--ovh-hc', '--ovh-hc-max', '1',
+        '--kara-policy', str(FPINV / 'kara_policy.txt')]   # the shipped engine (oz)
 argv = __import__('sys').argv[1:]
+CHECK = '--check' in argv
+argv = [x for x in argv if x != '--check']
 if not any(x.startswith('-') for x in argv):
     argv = (argv or [str(ROOT / 'src/fp/x86_64/inv_engine.S')]) + PROD
 a = ap.parse_args(argv)
@@ -110,7 +144,18 @@ assert U in (1, 2, 4, 8)
 LOGU = {1: 0, 2: 1, 4: 2, 8: 3}[U]
 gm = [int(x) for x in a.gmap.split(',')] if a.gmap else []
 GM = [gm[v] if v < len(gm) else 1 for v in range(NVMAX)]
-for g in GM: assert g >= 1 and U % g == 0, 'groups must divide U'
+SN, UN = a.unarrow, a.unarrow_u
+US = [UN if s < SN else U for s in range(NVMAX)]          # SLIM-INV: per-segment unroll (all U without --unarrow)
+LOGS = [{1: 0, 2: 1, 4: 2, 8: 3}[u] for u in US]
+LOGUN = {1: 0, 2: 1, 4: 2, 8: 3}[UN]
+DBASE = [4 * sum(US[:s]) for s in range(NVMAX)]          # byte offset of segment s in .Ldtab
+DTAB_EXTRA = 4 * SN * (UN - U)                           # the wide segments' offset beyond 4 U s (kara_emit)
+IMN_OFF = 1528                                           # SLIM-INV: MP iterations at the narrow U (big stub block 1)
+if not SN:
+    for g in GM: assert g >= 1 and U % g == 0, "groups must divide U"
+else:
+    assert 0 < SN <= 2 and UN in (2, 4, 8) and UN > U
+    for v in range(NVMAX): assert GM[v] >= 1 and all(US[s] % GM[v] == 0 or GM[v] > US[s] for s in range(v, NVMAX))
 
 # registers: lo groups, then hi groups; zmm30 = X (row broadcast) / PHI, zmm31 = T (row load) / CPHI
 LO, HI = {}, {}
@@ -128,6 +173,10 @@ free = [i for i in range(30) if i not in VR.values() and i not in HR.values()]
 assert len(free) >= 5, free
 T1, T2, T3, BADC, BADU = free[:5]
 z = lambda i: f'%zmm{i}'
+if a.kara_policy:                                     # KARA512: the Karatsuba path's emitters (tools/fp_inv/kara_emit.py, same namespace)
+    import sys as _sys
+    _sys.path.insert(0, str(FPINV))
+    exec(open(FPINV / 'kara_emit.py').read())
 
 FRAME = 2048
 F_OFF = 0             # F[0 .. 20) vectors: the exact pass / blocked levels (1280 B)
@@ -143,6 +192,11 @@ I0_OFF = 1524         # i0 (table stub)
 L = []
 def e(s=''): L.append(('\t' + s) if s and not s.endswith(':') and not s.startswith('.') else s)
 def lab(s): L.append(s + ':')
+def ST(i):                      # OVH2-INV --stamps (KSQ-INV's sequence): one stamp record (id i, APERF) at *ks_stp, ks_stp += 16
+    if not a.stamps: return
+    for x in ('pushfq', 'pushq %rax', 'pushq %rcx', 'pushq %rdx', 'lfence', 'movl $1, %ecx', 'rdpru', 'lfence',
+              'movq ks_stp(%rip), %rcx', 'movl %eax, (%rcx)', 'movl %edx, 4(%rcx)', f'movl ${i}, 8(%rcx)', 'addq $16, %rcx',
+              'movq %rcx, ks_stp(%rip)', 'popq %rdx', 'popq %rcx', 'popq %rax', 'popfq'): e(x)
 
 def ifma_row(rr, s):
     e(f'vpbroadcastq {-8 * rr}(%r10), {z(XR)}')
@@ -190,6 +244,7 @@ if a.chain:
     e('leal -1(%r9), %eax'); e(f'movl %eax, {CH_L}(%rsp)')            # l = L - 1
     e('movl (%r8,%rax,4), %eax'); e(f'movl %eax, {CH_H}(%rsp)')       # h = lv[L - 1] = m0
     lab('.Ldone')
+    ST(1)
     e(f'movl {CH_L}(%rsp), %eax'); e('testl %eax, %eax'); e('jz .Lepi')
     e('decl %eax'); e(f'movl %eax, {CH_L}(%rsp)')
     if a.debug_hook:                                                    # debug: SYM(X, n, lv, l, h) checks X = 0 below n - h
@@ -212,12 +267,15 @@ e('movl %r9d, %eax'); e('subl %r8d, %eax')    # w = nn - h
 e('leal 10(%rax), %r14d'); e('shrl $3, %r14d')  # NV = (w + 10) >> 3
 e('leal (,%r14,8), %r10d')
 e('subl %eax, %r10d'); e('decl %r10d')        # e = 8 NV - w - 1 (2..9)
+if a.ovh_ss:                                  # OVH2-INV: the small stubs' own set-up (.Lss, after the table jump)
+    assert a.small >= 1 and not SN and not a.small_mp and a.chain
+    e(f'cmpl ${a.small}, %r14d'); e('jbe .Lss')
 e('movl $0xffff, %eax'); e('shlxl %r10d, %eax, %eax'); e('kmovw %eax, %k1'); e('kshiftrw $8, %k1, %k2')   # lanes >= e
 e('negl %ebx'); e('movl $1, %eax'); e('shlxl %r10d, %eax, %eax'); e('andl %ebx, %eax')
 e('kmovw %eax, %k3'); e('kshiftrw $8, %k3, %k4')                       # lane e when mid
 e(f'kmovw %k1, {K_OFF}(%rsp)'); e(f'kmovw %k3, {K_OFF + 2}(%rsp)')
 # i0: iterations of segment 0 (its rows 7..0, U per iteration; rows below e add zero): max(1, (7 - e) / U + 1)
-e('movl $7, %r9d'); e('subl %r10d, %r9d'); e(f'sarl ${LOGU}, %r9d'); e('incl %r9d')
+e("movl $7, %r9d"); e("subl %r10d, %r9d"); e(f"sarl ${LOGS[0]}, %r9d"); e("incl %r9d")
 e('movl $1, %eax'); e('cmpl %eax, %r9d'); e('cmovll %eax, %r9d')
 if a.tabstub: e(f'movl %r9d, {I0_OFF}(%rsp)')
 # pointers (bytes)
@@ -231,13 +289,40 @@ e('leaq (%rdi,%rax,8), %r12')                 # correction y: X + n - 8 NV + 1
 e('movl %ecx, %eax'); e('subl %r8d, %eax'); e('incl %eax'); e('subl %ebx, %eax'); e('movslq %eax, %rax')
 e('leaq (%rdi,%rax,8), %r13')                 # update: X + n - h + 1 - 8 NV
 e('leaq -8(%rdx,%rbx,8), %rbx')               # correction x: G + 8 NV - 1, descending
-e(f'leal {U - MPI}(%r8), %ecx'); e(f'shrl ${LOGU}, %ecx')    # MP iterations ceil(rows / U), rows = h + 1 (h with --mpinit)
-e(f'movl %ecx, {IM_OFF}(%rsp)')
+e(f"leal {U - MPI}(%r8), %ecx"); e(f"shrl ${LOGU}, %ecx")    # MP iterations ceil(rows / U), rows = h + 1 (h with --mpinit)
+if SN:                                        # SLIM-INV: NV <= SN enters a narrow segment: its U (the count also kept for the big stub)
+    e(f"leal {UN - MPI}(%r8), %eax"); e(f"shrl ${LOGUN}, %eax"); e(f"movl %eax, {IMN_OFF}(%rsp)")
+    e(f"cmpl ${SN}, %r14d"); e("cmovbel %eax, %ecx")
+e(f"movl %ecx, {IM_OFF}(%rsp)")
 if a.duff:                                    # r0 = -rows mod U
-    if not MPI: e('leal 1(%r8), %r8d')
-    e('negl %r8d'); e(f'andl ${U - 1}, %r8d')
+    if not MPI: e("leal 1(%r8), %r8d")
+    e("negl %r8d")
+    if SN: e("movl %r8d, %eax"); e(f"andl ${UN - 1}, %eax")
+    e(f"andl ${U - 1}, %r8d")
+    if SN: e(f"cmpl ${SN}, %r14d"); e("cmovbel %eax, %r8d")
 e('movl $1, %eax')                            # MP: one segment
 e('leaq .Lst_tab(%rip), %rsi'); e('movslq (%rsi,%r14,4), %rdi'); e('addq %rsi, %rdi'); e('jmpq *%rdi')
+if a.ovh_ss:
+    # OVH2-INV: NV <= SMALL: the lines above that the small stubs read, in the same order (k1..k4, r10, r11, r12, r13, ecx, r8, eax)
+    lab('.Lss')
+    e('movl $0xffff, %eax'); e('shlxl %r10d, %eax, %eax'); e('kmovw %eax, %k1'); e('kshiftrw $8, %k1, %k2')
+    e('negl %ebx'); e('movl $1, %eax'); e('shlxl %r10d, %eax, %eax'); e('andl %ebx, %eax')
+    e('kmovw %eax, %k3'); e('kshiftrw $8, %k3, %k4')
+    e(f'leaq {"-8" if MPI else ""}(%rdi,%rcx,8), %r10')
+    e('movl %ecx, %eax'); e('subl %r8d, %eax'); e(f'addl ${2 + MPI}, %eax'); e('leal (,%r14,8), %ebx'); e('subl %ebx, %eax')
+    e('movslq %eax, %rax'); e('leaq (%rsi,%rax,8), %r11')
+    e('movl %ecx, %eax'); e('subl %ebx, %eax'); e('incl %eax'); e('movslq %eax, %rax')
+    e('leaq (%rdi,%rax,8), %r12')
+    e('movl %ecx, %eax'); e('subl %r8d, %eax'); e('incl %eax'); e('subl %ebx, %eax'); e('movslq %eax, %rax')
+    e('leaq (%rdi,%rax,8), %r13')
+    e(f"leal {U - MPI}(%r8), %ecx"); e(f"shrl ${LOGU}, %ecx")
+    if a.duff:
+        if not MPI: e("leal 1(%r8), %r8d")
+        e("negl %r8d")
+        e(f"andl ${U - 1}, %r8d")
+    e('movl $1, %eax')
+    for N in range(1, a.small): e(f'cmpl ${N}, %r14d'); e(f'je .Lst{N}')
+    e(f'jmp .Lst{a.small}')
 
 def icall(i): e(f'call *{TGT_OFF + 8 * i}(%rsp)')       # 0 Z, 1 SEG, 2 RCP, 3 GZ, 4 UPD (row: block 1's nb - 1, or NV - 1)
 # ---------------------------------------------------------------- per-vector blocks of the straight-line sections
@@ -249,9 +334,9 @@ def zib(v):                     # the MP's start of vector v: zero, or (--mpinit
 def zb(v):                      # zero the accumulators of vector v
     for g in range(GM[v]):
         e(f'vpxord {z(LO[v, g])}, {z(LO[v, g])}, {z(LO[v, g])}'); e(f'vpxord {z(HI[v, g])}, {z(HI[v, g])}, {z(HI[v, g])}')
-def rcb(v):                     # reduction of vector v - 1, fast canon round of vector v
+def rcb(v, red_=True):          # reduction of vector v - 1, fast canon round of vector v (OVH2-INV red_=False: v - 1 already reduced)
     if v >= 1:
-        red(v - 1)
+        if red_: red(v - 1)
         e(f'vpsrlq $52, {z(VR[v])}, {z(T1)}')
         e(f'vpsrlq $52, {z(VR[v - 1])}, {z(T2)}')
         e(f'valignq $7, {z(T2)}, {z(T1)}, {z(T1)}')
@@ -284,7 +369,7 @@ def sec(name, s):               # a straight-line section from vector s down: a 
 def mpcall(s):                  # the MP: segment s, padded to whole iterations, or entered at row r0 (--duff)
     if a.duff:
         e('leaq (%r10,%r8,8), %r10'); e('leaq (,%r8,8), %rdi'); e('subq %rdi, %r11')
-        e('leaq .Ldtab(%rip), %rsi'); e(f'movslq {4 * U * s}(%rsi,%r8,4), %rdi'); e('addq %rsi, %rdi'); e('call *%rdi')
+        e('leaq .Ldtab(%rip), %rsi'); e(f"movslq {DBASE[s]}(%rsi,%r8,4), %rdi"); e('addq %rsi, %rdi'); e('call *%rdi')
     else: e(f'call .Lseg{s}')
 
 # ---------------------------------------------------------------- stubs NV = 1..10
@@ -313,21 +398,26 @@ for N in range(1, NVMAX + 1):
     lab(f'.Lst{N}')
     sec('z', s)
     mpcall(s)
+    ST(10)
+    if a.kara_policy: lab(f'.Lst{N}_m')               # KARA512: the Karatsuba path joins here (raw window in VR, HR zero)
     e(f'vpxord {z(PHI)}, {z(PHI)}, {z(PHI)}'); e(f'vpxord {z(CPHI)}, {z(CPHI)}, {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
     red(s)
     sec('rc', s)
     if a.force_exact: xcall(N)
     else: tst(BADC, f'.Lst{N}_xa')
     lab(f'.Lst{N}_a')
+    ST(11)
     sec('gz', s)
-    e('movq %rbx, %r10'); e('movq %r12, %r11'); e(f'movl ${8 // U}, %ecx'); e(f'movl ${N}, %eax')
+    e("movq %rbx, %r10"); e("movq %r12, %r11"); e(f"movl ${8 // US[s]}, %ecx"); e(f"movl ${N}, %eax")
     e(f'call .Lseg{s}')
+    ST(12)
     e(f'vpxord {z(PHI)}, {z(PHI)}, {z(PHI)}'); e(f'vpxord {z(CPHI)}, {z(CPHI)}, {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
     red(s)
     sec('rc', s)
     if a.force_exact: xcall(N)
     else: tst(BADC, f'.Lst{N}_xb')
     lab(f'.Lst{N}_b')
+    ST(13)
     e(f'vpxord {z(BADU)}, {z(BADU)}, {z(BADU)}')
     sec('upd', s)
     tst(BADU, '.Lfix')
@@ -346,8 +436,12 @@ if a.small:
     spare = [i for i in range(30) if i not in used]
     assert len(spare) >= 10, spare
     SMALLREG = {'G0': spare[0], 'G1': spare[1], 'I': spare[2:10], 'rest': spare[2:]}
+    if a.ovh_hc:                                                    # OVH2-INV: the shifted row load's register, untouched by .Lsx / .Lz / .Lseg
+        SMALLREG['HC'] = spare[10]
+        assert not a.small_cg4 and spare[10] not in {LO[v, g] for v in range(3) for g in range(GM[v])} | {HI[v, g] for v in range(3) for g in range(GM[v])}
 def small_stub(N):
     G = [SMALLREG['G0'], SMALLREG['G1']]; I = SMALLREG['I']
+    HCN = a.ovh_hc and N <= a.ovh_hc_max                           # OVH2-INV: this stub's correction with the shifted hi loads
     s_ = N - 1
     e('.p2align 4')
     lab(f'.Lst{N}')
@@ -376,12 +470,14 @@ def small_stub(N):
         e('call .Lsx')
     else:
         mpcall(s_)
+    ST(10)
     e(f'vpxord {z(PHI)}, {z(PHI)}, {z(PHI)}'); e(f'vpxord {z(CPHI)}, {z(CPHI)}, {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
     red(s_)
     for v in range(s_, -1, -1): rcb(v)
     if a.force_exact: xcall(N)
     else: tst(BADC, f'.Lst{N}_xa')
     lab(f'.Lst{N}_a')
+    ST(11)
     for v in range(s_, -1, -1):                                   # G in registers, lanes below e zeroed
         msk = '{%k1}{z}' if v == 0 else '{%k2}{z}'
         e(f'vpxorq .Lm52(%rip){{1to8}}, {z(VR[v])}, {z(G[v])}{msk}')
@@ -397,6 +493,7 @@ def small_stub(N):
     else:
         for r in range(2, 8): e(f'vpbroadcastq .Lidx+{8 * r}(%rip), {z(I[r])}')
         if N == 2: e(f'vpbroadcastq .Lidx(%rip), {z(I[0])}'); e(f'vpbroadcastq .Lidx+8(%rip), {z(I[1])}')
+    if HCN: e('movl $254, %eax'); e('kmovb %eax, %k5')   # OVH2-INV: lanes 1..7 of vector 0's shifted load
     # e = 8 N - w - 1 was in r10d during setup; recompute from the masks: e = number of zero bits of k1 (16-bit)
     e('kmovw %k1, %eax'); e('notl %eax'); e('movzwl %ax, %eax'); e('popcntl %eax, %eax')
     e(f'leaq .Lsm{N}_tab(%rip), %rsi'); e('movslq -8(%rsi,%rax,4), %rdi'); e('addq %rsi, %rdi'); e('jmpq *%rdi')
@@ -409,24 +506,32 @@ def small_stub(N):
             e(f'vpermq {z(G[t // 8])}, {z(I[t % 8])}, {z(XR)}')
         for v in range(t // 8, -1, -1):
             e(f'vmovdqu64 {8 * (8 * N - 1 - t) + 64 * v}(%r12), {z(TR)}')
+            if HCN:                                         # OVH2-INV: the row's hi products from the window one element lower
+                e(f'vmovdqu64 {8 * (8 * N - 1 - t) + 64 * v - 8}(%r12), {z(SMALLREG["HC"])}' + ('{%k5}{z}' if v == 0 else ''))
             if a.small_cg4:
                 g = t % 4
                 lo_, hi_ = (LO[v, g], HI[v, g]) if g < GM[v] else EXC[v, g]
             else:
                 g = t % GM[v]; lo_, hi_ = LO[v, g], HI[v, g]
             e(f'vpmadd52luq {z(TR)}, {z(XR)}, {z(lo_)}')
-            e(f'vpmadd52huq {z(TR)}, {z(XR)}, {z(hi_)}')
+            e(f'vpmadd52huq {z(SMALLREG["HC"] if HCN else TR)}, {z(XR)}, {z(hi_)}')
     lab(f'.Lsm{N}_t{8 * N}')
     if a.small_cg4:
         for (v, g), (lo_, hi_) in EXC.items():
             e(f'vpaddq {z(lo_)}, {z(LO[v, g % GM[v]])}, {z(LO[v, g % GM[v]])}'); e(f'vpaddq {z(hi_)}, {z(HI[v, g % GM[v]])}, {z(HI[v, g % GM[v]])}')
     e('call .Lsx')                                                # group sums
+    ST(12)
     e(f'vpxord {z(PHI)}, {z(PHI)}, {z(PHI)}'); e(f'vpxord {z(CPHI)}, {z(CPHI)}, {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
-    red(s_)
-    for v in range(s_, -1, -1): rcb(v)
+    if HCN:                                                       # OVH2-INV: column-aligned hi sums: one add per vector, then rcb's canon
+        for v in range(s_, -1, -1): e(f'vpaddq {z(HR[v])}, {z(VR[v])}, {z(VR[v])}')
+        for v in range(s_, -1, -1): rcb(v, red_=False)
+    else:
+        red(s_)
+        for v in range(s_, -1, -1): rcb(v)
     if a.force_exact: xcall(N)
     else: tst(BADC, f'.Lst{N}_xb')
     lab(f'.Lst{N}_b')
+    ST(13)
     e(f'vpxord {z(BADU)}, {z(BADU)}, {z(BADU)}')
     for v in range(s_, -1, -1): upb(v)
     tst(BADU, '.Lfix')
@@ -496,6 +601,7 @@ e(f'vptestmq .Lb52(%rip){{1to8}}, {z(BADC)}, %k0')         # block 0's lanes lef
 # MP block 1
 e(f'movl {N_OFF}(%rsp), %ecx'); e(f'leaq {"-8" if MPI else ""}(%r15,%rcx,8), %r10'); e(f'movq {PY_OFF}(%rsp), %r11'); e('addq $640, %r11')
 e(f'movl {IM_OFF}(%rsp), %ecx'); e('movl $1, %eax')
+if SN: e(f'movl {IMN_OFF}(%rsp), %edi'); e(f'cmpl ${SN + 10}, %r14d'); e('cmovbel %edi, %ecx')   # SLIM-INV: block 1's segment NV - 11 narrow
 icall(0); icall(1)
 e(f'vmovdqu64 {H9_OFF}(%rsp), {z(PHI)}'); e(f'vmovdqu64 {C9_OFF}(%rsp), {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
 icall(2)
@@ -507,13 +613,14 @@ e('addq $640, %rdx'); icall(3); e('subq $640, %rdx')
 load_v(F_OFF); e(f'kmovw {K_OFF}(%rsp), %k1'); e('kshiftrw $8, %k1, %k2')
 e('call .Lgz9')
 # correction block 0: rows 8 NV - 1 .. 0 on vectors 0..9 (segment 9 takes every row t >= 72)
-e('movq %rbx, %r10'); e('movq %r12, %r11'); e(f'leal -9(%r14), %ecx'); e(f'shll ${3 - LOGU}, %ecx'); e('movl $10, %eax')
+e("movq %rbx, %r10"); e("movq %r12, %r11"); e("leal -9(%r14), %ecx"); e(f"shll ${3 - LOGS[9]}, %ecx"); e("movl $10, %eax")
 e('call .Lseg9')
 e(f'vpxord {z(PHI)}, {z(PHI)}, {z(PHI)}'); e(f'vpxord {z(CPHI)}, {z(CPHI)}, {z(CPHI)}'); e(f'vpxord {z(BADC)}, {z(BADC)}, {z(BADC)}')
 red(9); save_b0(); e('call .Lrc9'); store_v(F_OFF)
 e(f'vptestmq .Lb52(%rip){{1to8}}, {z(BADC)}, %k0')
 # correction block 1: rows 8 NV - 1 .. 80 on vectors 10 .. NV - 1 (local staircase, every row real)
-e('movq %rbx, %r10'); e('leaq 640(%r12), %r11'); e(f'movl ${8 // U}, %ecx'); e('leal -10(%r14), %eax'); e(f'movl ${8 // U}, %r9d')
+e("movq %rbx, %r10"); e("leaq 640(%r12), %r11"); e(f"movl ${8 // U}, %ecx"); e("leal -10(%r14), %eax"); e(f"movl ${8 // US[0]}, %r9d")
+if SN: e(f"movl ${8 // UN}, %edi"); e(f"cmpl ${SN + 10}, %r14d"); e("cmovbel %edi, %ecx")   # SLIM-INV: block 1's first local segment NV - 11 narrow
 if a.mpinit:                    # Z is the MP's init with --mpinit: the correction's accumulators are zeroed here instead
     for v in range(NVMAX - 1, -1, -1): zb(v)
 else: icall(0)
@@ -544,6 +651,7 @@ if not a.bench:
 if not a.chain: lab('.Ldone')
 else: e('jmp .Ldone')
 lab('.Lepi')
+ST(2)
 e('leaq -40(%rbp), %rsp')
 e('popq %r15'); e('popq %r14'); e('popq %r13'); e('popq %r12'); e('popq %rbx'); e('popq %rbp')
 e('vzeroupper')
@@ -560,14 +668,14 @@ e('ret')
 for s_ in range(NVMAX - 1, -1, -1):
     if a.align: e(f'.p2align {a.align}')
     lab(f'.Lseg{s_}')
-    for rr in range(U):
-        if rr: lab(f'.Lseg{s_}_r{rr}')
+    for rr in range(US[s_]):
+        if rr: lab(f".Lseg{s_}_r{rr}")
         ifma_row(rr, s_)
-    e(f'subq ${8 * U}, %r10'); e(f'addq ${8 * U}, %r11')
+    e(f"subq ${8 * US[s_]}, %r10"); e(f"addq ${8 * US[s_]}, %r11")
     e('decl %ecx'); e(f'jnz .Lseg{s_}')
     if s_ >= 1:
         e('decl %eax'); e('jz .Lsx')
-        e('movl %r9d, %ecx' if s_ == 1 else f'movl ${8 // U}, %ecx')
+        e("movl %r9d, %ecx" if s_ == 1 else f"movl ${8 // US[s_ - 1]}, %ecx")
 lab('.Lsx')
 groupsum()
 e('ret')
@@ -589,6 +697,7 @@ e('ret')
 # UPD: X[r13 + 64 v] += C (lanes >= e: k1 / k2; -2 at lane e when mid: k3 / k4); bit 52 of any result -> BADU
 for v in range(NVMAX - 1, -1, -1): lab(f'.Lupd{v}'); upb(v)
 e('ret')
+if a.kara_policy: kara_hot()                          # KARA512: appended after every shipped section
 lab('.Lend')
 
 # ---------------------------------------------------------------- cold: the exact canon pass
@@ -620,7 +729,7 @@ e(f'vmovdqa64 {z(T2)}, {z(T3)}')
 e(f'vpcmpuq $6, .Lm52(%rip){{1to8}}, {z(T1)}, %k5')   # g: lane > M52
 e(f'vpcmpeqq .Lm52(%rip){{1to8}}, {z(T1)}, %k6')      # p: lane == M52
 e('kmovb %k5, %ecx'); e('kmovb %k6, %r11d')
-e('leal (%rax,%rcx,2), %ecx')                  # (g << 1) | sig  (sig in {0, 1}; bit 0 of g << 1 is 0)
+e("leal (%rax,%rcx,2), %ecx")   # (g << 1) | sig  (sig in {0, 1}; bit 0 of g << 1 is 0)
 e('addl %r11d, %ecx')                          # chain = p + ((g << 1) | sig)
 e('movl %ecx, %eax'); e('shrl $8, %eax')       # sig = chain >> 8
 e('xorl %r11d, %ecx')                          # p ^ chain: the lanes that take a carry
@@ -750,6 +859,7 @@ elif a.xreg:
             e(f'vpsubq {z(XM)}, {z(VR[v])}, {z(VR[v])}{{{k_}}}')    # carry in: W + 1 - 2^52 (mod 2^52 after the and)
             e(f'vpandq {z(XM)}, {z(VR[v])}, {z(VR[v])}')
         e('ret')
+if a.kara_policy: kara_cold()                         # KARA512: the exact S / t' fallbacks
 e('.text')
 
 # ---------------------------------------------------------------- tables, constants
@@ -757,18 +867,20 @@ e('.section .rodata')
 e('.p2align 2')
 lab('.Lst_tab')
 e('.long 0')
-for N in range(1, NVMAX + 1): e(f'.long .Lst{N} - .Lst_tab' if (N <= a.small or not a.tabstub) else '.long .Lsttab - .Lst_tab')
-for N in range(NVMAX + 1, 21): e('.long .Lstbig - .Lst_tab')
+KNV_ = KNV if a.kara_policy else set()                # KARA512: these NV go through the (level class, nn) check
+for N in range(1, NVMAX + 1): e('.long .Lkchk - .Lst_tab' if N in KNV_ else f'.long .Lst{N} - .Lst_tab' if (N <= a.small or not a.tabstub) else '.long .Lsttab - .Lst_tab')
+for N in range(NVMAX + 1, 21): e('.long .Lkchk - .Lst_tab' if N in KNV_ else '.long .Lstbig - .Lst_tab')
 if a.duff:
     lab('.Ldtab')
     for s_ in range(NVMAX):
-        for rr in range(U): e(f'.long .Lseg{s_}' + (f'_r{rr}' if rr else '') + ' - .Ldtab')
+        for rr in range(US[s_]): e(f".long .Lseg{s_}" + (f"_r{rr}" if rr else "") + " - .Ldtab")
 for N in range(1, a.small + 1):
     lab(f'.Lsm{N}_tab')
     for ee in range(2, 10): e(f'.long .Lsm{N}_t{min(ee, 8 * N)} - .Lsm{N}_tab')
 lab('.Lbig_tab')
 for sec in ('z', 'seg', 'rcp', 'gz', 'upd'):
     for nb in range(1, 11): e(f'.long .L{sec}{nb - 1} - .Lbig_tab')
+if a.kara_policy: kara_rodata()
 e('.section .rodata.cst8,"aM",@progbits,8')
 e('.p2align 3')
 lab('.Lm52'); e('.quad 0xfffffffffffff')
@@ -860,4 +972,44 @@ if a.prod_header and a.xs and a.name == 'sbn3f_inv_chain':     # the library's e
            ' * (caller-saved). The exact carry passes are in .text.unlikely: NV 1..10 in the window registers (.Lxs),\n'
            ' * NV 11..20 through the frame (.Lexact).\n'
            ' */\n')
-open(a.out, 'w').write(hdr + src)
+if a.prod_header and not a.xs and a.name == 'sbn3f_inv_chain' and a.kara_policy:     # the library's engine (oz): its own header
+    hdr = (f'/* Generated by tools/generate_fp_inv_engine.py; do not edit. {a.name}: the IFMA level engine of the fp\n'
+           ' * reciprocal (sbn3f_inv_qv, src/fp/x86_64/inv_qv.cpp). Research kernel: oz (experiments/results/fpk_2026-10-12/\n'
+           ' * ovh2_inv/inv/oz; this file is its oz_engine.S with the library\'s symbol names and this header).\n'
+           f' * Options: U {U}, row groups {GM}, duff {a.duff}, small {a.small}, mpinit {a.mpinit}, Karatsuba policy\n'
+           f' * tools/fp_inv/kara_policy.txt ({len(KBITS)} level keys, NV {sorted(KNV)}), small-level set-up {a.ovh_ss},\n'
+           f' * shifted hi loads in the correction of NV <= {a.ovh_hc_max if a.ovh_hc else 0}.\n'
+           ' *\n'
+           f' * void {a.name}(uint64_t *X, const uint64_t *D, uint64_t *G, unsigned n, const unsigned *lv, unsigned L):\n'
+           ' * runs every level lv[L-1] = m0 -> lv[L-2] -> .. -> lv[0] = n of one reciprocal on the digit array X (beta = 2^52,\n'
+           ' * X_m has its digit 0 at X[n - m] and its leading digit at X[n]), reading D (y in n + 1 digits) and using G as\n'
+           ' * scratch. Level h -> nn: MP of X_h by D over NV = (nn - h + 10) >> 3 vectors, canon, G = complement, correction\n'
+           ' * X_h G_hi, X[n - nn ..] += C (-2 at the bottom kept digit below the last level), fix() when a digit leaves\n'
+           ' * [0, 2^52); the partial products of every lane sum are those of the error proof in inv_qv.cpp. The levels whose\n'
+           ' * (last level or not, nn) key is in the policy compute the same MP window by a one-level Karatsuba middle product\n'
+           ' * (.Lkchk / .Lkara; tools/fp_inv/kara_emit.py): the same canonical digits, then the stub\'s own canon, G,\n'
+           ' * correction and update.\n'
+           ' *\n'
+           ' * Preconditions (every level h -> nn), established by sbn3f_inv_qv (the seed digits and its zero stores) and\n'
+           ' * kept by every level (which changes only X[n - nn .. n]): X[i] = 0 for i < n - h (the level reads up to 9 digits\n'
+           ' * below X_h[0]: the correction\'s lowest rows and the NV 11..20 path\'s MP pad rows, whose products the proof\n'
+           ' * takes as zero); X[n] = 1 (the MP\'s init row is the leading digit times 1); X[n - h .. n) canonical (IFMA reads\n'
+           ' * 52 bits); X = 0 on (n, n + 15] (read by the correction and the encode); D zero outside its n + 1 digits from\n'
+           ' * D[-8] to D[n + 8].\n'
+           ' *\n'
+           ' * Memory: X, D, G are the driver\'s disjoint stack buffers. Reads D[-8 .. n + 8] at most (the Karatsuba path\'s\n'
+           ' * bound is asserted by the generator for every policy level), X[-8 .. n + 7] and G[0 .. 8 NV); writes X[-8 .. n]\n'
+           ' * (lanes below the update written back unchanged; a level h -> nn changes only X[n - nn .. n]) and G[0 .. 8 NV);\n'
+           ' * nothing outside these and its own stack frame.\n'
+           ' * ABI (SysV x86-64): saves and restores rbx, rbp, r12..r15; 2048 + 64 B frame, 64-byte aligned, no red zone; the\n'
+           ' * Karatsuba path takes 21,056 B more below the level\'s frame (subq / addq around it); the internal sections are\n'
+           ' * entered by call/ret inside the frame; the only external call (fix) is made at the 64-byte aligned frame after\n'
+           ' * vzeroupper; vzeroupper before the return; zmm0..31 and k0..k7 are clobbered (caller-saved). The exact carry\n'
+           ' * pass (.Lexact, through the frame) and the Karatsuba path\'s exact S / t\' fallbacks are in .text.unlikely.\n'
+           ' */\n')
+if CHECK:
+    if open(a.out).read() != hdr + src:
+        raise SystemExit(f'{a.out} differs from tools/generate_fp_inv_engine.py\'s output')
+    print(f'OK: {a.out} is tools/generate_fp_inv_engine.py\'s output')
+else:
+    open(a.out, 'w').write(hdr + src)
