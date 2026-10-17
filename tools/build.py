@@ -42,6 +42,7 @@ def main():
     run(['python3', 'tools/generate_radix_powers.py', '--check'])
     run(['python3', 'tools/generate_mul_basecase.py', '--check'])
     run(['python3', 'tools/generate_high_half.py', '--check'])
+    run(['python3', 'tools/generate_fp_mul.py', '--check'])
     run(['python3', 'tools/generate_full_fixed.py', '--check'])
     run(['python3', 'tools/generate_fp_inv.py', '--check'])
     run(['python3', 'tools/generate_fp_inv_engine.py', '--check'])

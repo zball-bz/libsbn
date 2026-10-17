@@ -20,9 +20,13 @@ High products, the kept terms of tools/generate_high_half.py (every product a_i 
 i + j >= k - 1, the high limb of those with i + j = k - 2; the same terms for squares):
   k <= KRM (products) / KRQ (squares): generate_high_half.py's register columns (mul_regs,
     sqr_regs: columns k-1 .. 2k-1 in registers, MULX + ADOX + ADCX per product), with this file's
-    red-zone layout: ns -8, e_top -16, callee-saved -24 .., b -72, z -80 (products beyond 8, squares
-    of 11).
+    red-zone layout (generate_high_half.FP_SLOTS, FP_SAVE): ns -8, e_top -16, callee-saved -24 ..,
+    b -72, z -80 (products beyond 8, squares of 11).
   then to KM (products) / KQ (squares): generate_high_half.py's rows with memory columns.
+  The bodies of k < KS are here. Those of KS..KM / KS..KQ are the integer layer's (one copy:
+    src/core/x86_64/high_fixed.S, generate_high_half.py): the tables jump to the hidden
+    sbn3i_mulhigh_fp_<k> / sbn3i_sqrhigh_fp_<k>, past the heads of sbn3i_mulhigh_<k> / sbn3i_sqrhigh_<k>,
+    and those bodies end in this file's exit (generate_high_half.fp_exit) with their own strip.
   beyond: the u52 kernels (the integer layer's sbn3i_mulhigh_u52), 40k + 256 bytes of scratch on the
     stack below an rbp frame.
 Full products: sbn3f_full (the integer layer's scalar / u52 choice, scratch on the stack).
@@ -35,36 +39,28 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 import generate_high_half as hh  # noqa: E402
 OUT = ROOT / 'src/fp/x86_64/mul.S'
-KRM, KRQ, KM, KQ, KTAB = 10, 11, 14, 20, 234
+KRM, KRQ, KM, KQ, KTAB = hh.REGM, hh.REGQ, hh.MUL[-1], hh.SQR[-1], 234   # 10, 11, 14, 20
+KS = hh.MUL[0]                 # 5: the first k whose bodies are high_fixed.S's
+assert hh.SQR[0] == KS and KS <= min(KRM, KRQ)
 X1_INLINE = 16                 # one-limb windows: the leaf mul_1 loop to this length, the integer mul_1 beyond
 ZERO = '.Lfz(%rip)'
 
 
-def mul_body(k):
+def mul_body(k):                # k < KS (register columns)
     if k == 1:
         return ['    movq    (%rcx), %rdx', '    mulxq   (%rsi), %rax, %r8', '    movq    %r8, (%rdi)'], '%r8', []
-    if k <= KRM:
-        return hh.mul_regs(k, ZERO, -24, 'S_B', 'S_Z')
-    e = hh.Emit(False)
-    hh.mulhigh_rows(e, k)                                               # top limb in r8
-    return e.lines, '%r8', []
+    return hh.mul_regs(k, ZERO, hh.FP_SAVE, 'S_B', 'S_Z')
 
 
 def sqr_body(k):
     if k == 1:
         return ['    movq    (%rsi), %rdx', '    mulxq   %rdx, %rax, %r9', '    movq    %r9, (%rdi)'], '%r9', []
-    if k <= KRQ:
-        return hh.sqr_regs(k, ZERO, -24, 'S_Z')
-    e = hh.Emit(False)
-    hh.sqrhigh_rows(e, k)                                               # top limb in r9
-    return e.lines, '%r9', []
+    return hh.sqr_regs(k, ZERO, hh.FP_SAVE, 'S_Z')
 
 
 def block(L, label, body):
     lines, top, restore = body
-    L += ['    .p2align 4', f'{label}:'] + lines
-    L += [f'    testq   {top}, {top}'] + restore
-    L += ['    movq    S_ETOP, %rax', '    movq    S_NS, %rdx', '    jz      .Lstrip', '    ret']
+    L += ['    .p2align 4', f'{label}:'] + lines + hh.fp_exit(top, restore, '.Lstrip')
 
 
 def text():
@@ -72,7 +68,7 @@ def text():
          ' * See the generator for the paths; the contract is src/fp/kernel.hpp\'s. */',
          '#ifndef FPK_PFX', '#define FPK_PFX sbn3f_', '#endif',
          '#define FPK_CAT2(a, b) a##b', '#define FPK_CAT(a, b) FPK_CAT2(a, b)', '#define SYM(x) FPK_CAT(FPK_PFX, x)',
-         '#define S_NS -8(%rsp)', '#define S_ETOP -16(%rsp)', '#define S_B -72(%rsp)', '#define S_Z -80(%rsp)', '',
+         *hh.fp_defines(), '',
          '    .section .rodata', '    .p2align 3', '.Lfz:', '    .quad   0', '',
          '    .text', '    .p2align 5', '    .globl SYM(mul)', '    .type SYM(mul), @function', 'SYM(mul):',
          '    movq    16(%rsi), %r10', '    movq    16(%rdx), %r11',     # a.ns, b.ns
@@ -90,7 +86,7 @@ def text():
          '    movq    (%rdx), %rcx', '    leaq    (%rcx,%r11,4), %rcx',
          '    movq    %rax, S_ETOP', '    movq    %r8, S_NS',
          '    leaq    .Lm_tab(%rip), %rdx', '    jmp     *-8(%rdx,%r9,8)']
-    for k in range(1, KM + 1):
+    for k in range(1, KS):
         block(L, f'.Lm_{k}', mul_body(k))
     L += ['.Lm_u52:                                    # rsi, rcx windows, r9 = k; e_top, ns in the red zone',
           '    movq    %rcx, %rdx',
@@ -159,7 +155,7 @@ def text():
           '    movq    (%rsi), %rsi', '    leaq    (%rsi,%r10,4), %rsi',
           '    movq    %rax, S_ETOP', '    movq    %r9, S_NS',
           '    leaq    .Ls_tab(%rip), %rdx', '    jmp     *-8(%rdx,%r9,8)']
-    for k in range(1, KQ + 1):
+    for k in range(1, KS):
         block(L, f'.Ls_{k}', sqr_body(k))
     L += ['.Ls_u52:',
           '    movq    %rsi, %rdx', '    jmp     .Lu52',
@@ -174,9 +170,11 @@ def text():
           '    jmp     .Lafter',
           '    .size SYM(sqr), .-SYM(sqr)', '',
           '    .section .data.rel.ro.local, "aw"', '    .p2align 3', '.Lm_tab:']
-    L += [f'    .quad   .Lm_{k}' if k <= KM else '    .quad   .Lm_u52' for k in range(1, KTAB + 1)]
+    L += [f'    .quad   .Lm_{k}' if k < KS else f'    .quad   sbn3i_mulhigh_fp_{k}' if k <= KM else '    .quad   .Lm_u52'
+          for k in range(1, KTAB + 1)]
     L += ['.Ls_tab:']
-    L += [f'    .quad   .Ls_{k}' if k <= KQ else '    .quad   .Ls_u52' for k in range(1, KTAB + 1)]
+    L += [f'    .quad   .Ls_{k}' if k < KS else f'    .quad   sbn3i_sqrhigh_fp_{k}' if k <= KQ else '    .quad   .Ls_u52'
+          for k in range(1, KTAB + 1)]
     L += ['', '    .section .note.GNU-stack,"",@progbits']
     return '\n'.join(L) + '\n'
 
@@ -190,7 +188,7 @@ def main():
     if args.check:
         if not OUT.exists() or OUT.read_text() != t:
             raise SystemExit(f'{OUT.relative_to(ROOT)} is stale')
-        print(f'OK: fp mul / sqr, register columns to {KRM} / {KRQ}, rows to {KM} / {KQ}')
+        print(f'OK: fp mul / sqr, register columns to {KRM} / {KRQ}, rows to {KM} / {KQ} (from {KS}: high_fixed.S)')
     else:
         Path(args.out or OUT).write_text(t)
 
