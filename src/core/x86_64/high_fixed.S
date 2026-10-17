@@ -27,6 +27,9 @@ sbn3i_mulhigh_fp_5:
     movq    %rbx, -24(%rsp)
     movq    %rbp, -32(%rsp)
     movq    %r12, -40(%rsp)
+    .globl sbn3i_mulhigh_reg_5
+    .hidden sbn3i_mulhigh_reg_5
+sbn3i_mulhigh_reg_5:
     movq    0(%rcx), %rdx
     xorl    %r8d, %r8d
     mulxq   24(%rsi), %r8, %rax
@@ -89,6 +92,8 @@ sbn3i_mulhigh_fp_5:
     adoxq   %r8, %rbp
     adcxq   .Lhz(%rip), %r12
     adoxq   .Lhz(%rip), %r12
+    testq   %rdi, %rdi
+    jz      .Lhrx5
     movq    %r10, 0(%rdi)
     movq    %r11, 8(%rdi)
     movq    %rbx, 16(%rdi)
@@ -101,6 +106,8 @@ sbn3i_mulhigh_fp_5:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx5:
     ret
     .size sbn3i_mulhigh_fp_5, .-sbn3i_mulhigh_fp_5
     .size sbn3i_mulhigh_5, .-sbn3i_mulhigh_5
@@ -120,6 +127,9 @@ sbn3i_mulhigh_fp_6:
     movq    %rbp, -32(%rsp)
     movq    %r12, -40(%rsp)
     movq    %r13, -48(%rsp)
+    .globl sbn3i_mulhigh_reg_6
+    .hidden sbn3i_mulhigh_reg_6
+sbn3i_mulhigh_reg_6:
     movq    0(%rcx), %rdx
     xorl    %r8d, %r8d
     mulxq   32(%rsi), %r8, %rax
@@ -127,6 +137,9 @@ sbn3i_mulhigh_fp_6:
     adcxq   %r8, %rax
     adcxq   .Lhz(%rip), %r10
     movq    8(%rcx), %rdx
+    .globl sbn3i_mulhigh_reg_6_r1
+    .hidden sbn3i_mulhigh_reg_6_r1
+sbn3i_mulhigh_reg_6_r1:
     mulxq   24(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   32(%rsi), %r8, %r9
@@ -137,6 +150,9 @@ sbn3i_mulhigh_fp_6:
     adcxq   .Lhz(%rip), %r11
     adoxq   .Lhz(%rip), %r11
     movq    16(%rcx), %rdx
+    .globl sbn3i_mulhigh_reg_6_r2
+    .hidden sbn3i_mulhigh_reg_6_r2
+sbn3i_mulhigh_reg_6_r2:
     mulxq   16(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   24(%rsi), %r8, %r9
@@ -204,6 +220,8 @@ sbn3i_mulhigh_fp_6:
     adoxq   %r8, %r12
     adcxq   .Lhz(%rip), %r13
     adoxq   .Lhz(%rip), %r13
+    testq   %rdi, %rdi
+    jz      .Lhrx6
     movq    %r10, 0(%rdi)
     movq    %r11, 8(%rdi)
     movq    %rbx, 16(%rdi)
@@ -218,6 +236,8 @@ sbn3i_mulhigh_fp_6:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx6:
     ret
     .size sbn3i_mulhigh_fp_6, .-sbn3i_mulhigh_fp_6
     .size sbn3i_mulhigh_6, .-sbn3i_mulhigh_6
@@ -238,6 +258,9 @@ sbn3i_mulhigh_fp_7:
     movq    %r12, -40(%rsp)
     movq    %r13, -48(%rsp)
     movq    %r14, -56(%rsp)
+    .globl sbn3i_mulhigh_reg_7
+    .hidden sbn3i_mulhigh_reg_7
+sbn3i_mulhigh_reg_7:
     movq    0(%rcx), %rdx
     xorl    %r8d, %r8d
     mulxq   40(%rsi), %r8, %rax
@@ -246,6 +269,9 @@ sbn3i_mulhigh_fp_7:
     adcxq   .Lhz(%rip), %r10
     movq    8(%rcx), %rdx
     xorl    %r8d, %r8d
+    .globl sbn3i_mulhigh_reg_7_r1
+    .hidden sbn3i_mulhigh_reg_7_r1
+sbn3i_mulhigh_reg_7_r1:
     mulxq   32(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   40(%rsi), %r8, %r9
@@ -271,6 +297,9 @@ sbn3i_mulhigh_fp_7:
     adoxq   .Lhz(%rip), %rbx
     movq    24(%rcx), %rdx
     xorl    %r8d, %r8d
+    .globl sbn3i_mulhigh_reg_7_r3
+    .hidden sbn3i_mulhigh_reg_7_r3
+sbn3i_mulhigh_reg_7_r3:
     mulxq   16(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   24(%rsi), %r8, %r9
@@ -353,6 +382,8 @@ sbn3i_mulhigh_fp_7:
     adoxq   %r8, %r13
     adcxq   .Lhz(%rip), %r14
     adoxq   .Lhz(%rip), %r14
+    testq   %rdi, %rdi
+    jz      .Lhrx7
     movq    %r10, 0(%rdi)
     movq    %r11, 8(%rdi)
     movq    %rbx, 16(%rdi)
@@ -369,6 +400,8 @@ sbn3i_mulhigh_fp_7:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx7:
     ret
     .size sbn3i_mulhigh_fp_7, .-sbn3i_mulhigh_fp_7
     .size sbn3i_mulhigh_7, .-sbn3i_mulhigh_7
@@ -390,6 +423,9 @@ sbn3i_mulhigh_fp_8:
     movq    %r13, -48(%rsp)
     movq    %r14, -56(%rsp)
     movq    %r15, -64(%rsp)
+    .globl sbn3i_mulhigh_reg_8
+    .hidden sbn3i_mulhigh_reg_8
+sbn3i_mulhigh_reg_8:
     movq    0(%rcx), %rdx
     xorl    %r8d, %r8d
     mulxq   48(%rsi), %r8, %rax
@@ -398,6 +434,9 @@ sbn3i_mulhigh_fp_8:
     adcxq   .Lhz(%rip), %r10
     movq    8(%rcx), %rdx
     xorl    %r8d, %r8d
+    .globl sbn3i_mulhigh_reg_8_r1
+    .hidden sbn3i_mulhigh_reg_8_r1
+sbn3i_mulhigh_reg_8_r1:
     mulxq   40(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   48(%rsi), %r8, %r9
@@ -534,6 +573,8 @@ sbn3i_mulhigh_fp_8:
     adoxq   %r8, %r14
     adcxq   .Lhz(%rip), %r15
     adoxq   .Lhz(%rip), %r15
+    testq   %rdi, %rdi
+    jz      .Lhrx8
     movq    %r10, 0(%rdi)
     movq    %r11, 8(%rdi)
     movq    %rbx, 16(%rdi)
@@ -552,6 +593,8 @@ sbn3i_mulhigh_fp_8:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx8:
     ret
     .size sbn3i_mulhigh_fp_8, .-sbn3i_mulhigh_fp_8
     .size sbn3i_mulhigh_8, .-sbn3i_mulhigh_8
@@ -572,6 +615,9 @@ sbn3i_mulhigh_fp_9:
     movq    %r12, -40(%rsp)
     movq    %r13, -48(%rsp)
     movq    %r14, -56(%rsp)
+    .globl sbn3i_mulhigh_reg_9
+    .hidden sbn3i_mulhigh_reg_9
+sbn3i_mulhigh_reg_9:
     movq    %rcx, S_B
     movq    %rdi, S_Z
     movq    0(%rcx), %rdx
@@ -582,6 +628,9 @@ sbn3i_mulhigh_fp_9:
     adcxq   .Lhz(%rip), %r10
     movq    8(%rcx), %rdx
     xorl    %r8d, %r8d
+    .globl sbn3i_mulhigh_reg_9_r1
+    .hidden sbn3i_mulhigh_reg_9_r1
+sbn3i_mulhigh_reg_9_r1:
     mulxq   48(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   56(%rsi), %r8, %r9
@@ -757,6 +806,8 @@ sbn3i_mulhigh_fp_9:
     adcxq   .Lhz(%rip), %r14
     adoxq   .Lhz(%rip), %r14
     movq    S_Z, %r9
+    testq   %r9, %r9
+    jz      .Lhrx9
     movq    %r10, 0(%r9)
     movq    %r11, 8(%r9)
     movq    %rcx, 16(%r9)
@@ -776,6 +827,8 @@ sbn3i_mulhigh_fp_9:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx9:
     ret
     .size sbn3i_mulhigh_fp_9, .-sbn3i_mulhigh_fp_9
     .size sbn3i_mulhigh_9, .-sbn3i_mulhigh_9
@@ -797,6 +850,9 @@ sbn3i_mulhigh_fp_10:
     movq    %r13, -48(%rsp)
     movq    %r14, -56(%rsp)
     movq    %r15, -64(%rsp)
+    .globl sbn3i_mulhigh_reg_10
+    .hidden sbn3i_mulhigh_reg_10
+sbn3i_mulhigh_reg_10:
     movq    %rcx, S_B
     movq    %rdi, S_Z
     movq    0(%rcx), %rdx
@@ -818,6 +874,9 @@ sbn3i_mulhigh_fp_10:
     adoxq   .Lhz(%rip), %r11
     movq    16(%rcx), %rdx
     xorl    %r8d, %r8d
+    .globl sbn3i_mulhigh_reg_10_r2
+    .hidden sbn3i_mulhigh_reg_10_r2
+sbn3i_mulhigh_reg_10_r2:
     mulxq   48(%rsi), %r8, %r9
     adcxq   %r9, %rax
     mulxq   56(%rsi), %r8, %r9
@@ -1018,6 +1077,8 @@ sbn3i_mulhigh_fp_10:
     adcxq   .Lhz(%rip), %r15
     adoxq   .Lhz(%rip), %r15
     movq    S_Z, %r9
+    testq   %r9, %r9
+    jz      .Lhrx10
     movq    %r10, 0(%r9)
     movq    %r11, 8(%r9)
     movq    %rcx, 16(%r9)
@@ -1039,6 +1100,8 @@ sbn3i_mulhigh_fp_10:
     movq    S_ETOP, %rax
     movq    S_NS, %rdx
     jz      .Lhstrip
+    ret
+.Lhrx10:
     ret
     .size sbn3i_mulhigh_fp_10, .-sbn3i_mulhigh_fp_10
     .size sbn3i_mulhigh_10, .-sbn3i_mulhigh_10

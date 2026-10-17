@@ -238,7 +238,20 @@
         "sbn3i_sqrhigh_fp_17",
         "sbn3i_sqrhigh_fp_18",
         "sbn3i_sqrhigh_fp_19",
-        "sbn3i_sqrhigh_fp_20"
+        "sbn3i_sqrhigh_fp_20",
+        "sbn3i_mulhigh_reg_5",
+        "sbn3i_mulhigh_reg_6",
+        "sbn3i_mulhigh_reg_6_r1",
+        "sbn3i_mulhigh_reg_6_r2",
+        "sbn3i_mulhigh_reg_7",
+        "sbn3i_mulhigh_reg_7_r1",
+        "sbn3i_mulhigh_reg_7_r3",
+        "sbn3i_mulhigh_reg_8",
+        "sbn3i_mulhigh_reg_8_r1",
+        "sbn3i_mulhigh_reg_9",
+        "sbn3i_mulhigh_reg_9_r1",
+        "sbn3i_mulhigh_reg_10",
+        "sbn3i_mulhigh_reg_10_r2"
       ],
       "requires_symbols": [],
       "donor_ids": []
@@ -1835,7 +1848,8 @@
       ],
       "depends_on": [
         "src/fp/x86_64/inv_qv.cpp",
-        "src/fp/x86_64/div.S"
+        "src/fp/x86_64/div.S",
+        "src/core/x86_64/high_fixed.S"
       ],
       "provides_symbols": [
         "sbn3f_inv",
@@ -1843,7 +1857,18 @@
       ],
       "requires_symbols": [
         "sbn3f_inv_qv",
-        "sbn3f_inv_base"
+        "sbn3f_inv_base",
+        "sbn3i_mulhigh_reg_6",
+        "sbn3i_mulhigh_reg_6_r1",
+        "sbn3i_mulhigh_reg_6_r2",
+        "sbn3i_mulhigh_reg_7",
+        "sbn3i_mulhigh_reg_7_r1",
+        "sbn3i_mulhigh_reg_7_r3",
+        "sbn3i_mulhigh_reg_8",
+        "sbn3i_mulhigh_reg_8_r1",
+        "sbn3i_mulhigh_reg_9",
+        "sbn3i_mulhigh_reg_9_r1",
+        "sbn3i_mulhigh_reg_10_r2"
       ],
       "donor_ids": [
         "word_asm"

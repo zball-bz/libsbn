@@ -99,7 +99,8 @@ FEAT_LIB = 'clean2,dead,hot,k9,rt3,k9all,tz,seed,s25L,rtm,k10d,zt'   # frozen/in
 #        hi-only i + j = n - 2), so the operands swap (a = rsi = G, b = rcx = x_top) and the zero limbs become the whole
 #        multiplier rows j < z, which are skipped: entry .Lc_mh<n>z<z> zeroes the columns n - 1 .. n + z - 1 that those rows
 #        would have started (xor: also clears CF / OF), loads row z's multiplier and jumps past row z's load (and its flag
-#        xor, n >= 7). The entry is chosen by (w, m): .Lc_mhitab is indexed by w + 4m (one lea more on every generic path).
+#        xor, n >= 7; since MULSHARE T3 it calls the library body's row entry sbn3i_mulhigh_reg_<n>_r<z> instead, see the
+#        generic step below). The entry is chosen by (w, m): .Lc_mhitab is indexed by w + 4m (one lea more on every generic path).
 #        x_top's zero limbs are then never read, so .Lc_gflags drops their stores (and the &x_0 computation that only fed
 #        them: 5 instructions on every generic path) and .Lc_k10 its third zero store. The products removed are exactly
 #        zero and the kept sum is the same, so r and every output are bit-identical. mh10 is reached only with z = 2
@@ -501,7 +502,9 @@ e(' * sbn3f_inv_base (div.S); the hidden seed entry fpkc_seed(x, b, ns, m0) of t
 e(' * (experiments/results/fpk_2026-10-12/ovh2_inv/inv/oz; this file is its oz_inv.S with the library\'s symbol names).')
 e(' * The two-limb seed (w3, tools/fp_inv/fix_w3.py) is original code; the generator\'s earlier form of it, a port of GMP 6.3.0')
 e(' * invert_pi1 arithmetic (dual LGPLv3+ / GPLv2+; Copyright 1991-2016 Free Software Foundation, Inc.; notice')
-e(' * src/core/x86_64/scalar-donor-notice.txt), is replaced before output and not part of this file. */')
+e(' * src/core/x86_64/scalar-donor-notice.txt), is replaced before output and not part of this file. Unlike oz_inv.S,')
+e(' * the generic steps\' corrections call the library\'s register-column high products (src/core/x86_64/high_fixed.S, hidden')
+e(' * sbn3i_mulhigh_reg_<n>[_r<j>], rdi = 0: r returned in the column registers). */')
 e('\t.text')
 e('\t.globl\tfpkc_inv')
 e('\t.type\tfpkc_inv, @function')
@@ -1107,81 +1110,55 @@ if ZT:
 else:
     e('\tmovslq\t-16(%rax,%r10,4), %rdx')
 e('\taddq\t%rdx, %rax')
+e('\txorl\t%edi, %edi')                       # T3: rdi = 0, the library body's register-result exit
 e('\tjmp\t*%rax')
-# the library's register-column high product (tools/generate_high_half.py mul_regs), n = w + 1 = 5..10, inlined: a = rsi,
-# b = rcx, r = rdi; no saves (the frame saved every register at entry), the pointer slots in the frame (n = 9)
+# the library's register-column high product (tools/generate_high_half.py mul_regs), n = w + 1 = 5..10: a = rsi, b = rcx; until
+# MULSHARE T3 (2026-10-18) inlined here (no saves, r left in the column registers), now called (below)
 # the slots the per-n tails use (computed before any carry chain): ENT = phase 2's entry by m, END = z + 8(k - 8)
 for nh in range(5, 11):
     body, _, _ = hh.mul_regs(nh, '.Lc_hz(%rip)', -8, f'{SLOTB}(%rsp)', f'{SLOTZ}(%rsp)')
     spill = nh + 1 > 3 + len(hh.CALLEE)
     ncallee = nh + 1 - 3 - (2 if spill else 0)
-    # the result r[0..n) = the registers of the final stores, which are dropped: r stays in the columns
+    # the result r[0..n) = the registers of the final stores, which the register-result exit skips: r stays in the columns
     stores = [re.match(r'\s*movq\s+(%\w+),\s+(\d+)\((%rdi|%r9)\)', l) for l in body]
     Rr = [None] * nh
-    keep = []
-    for l, mt in zip(body[ncallee:], stores[ncallee:]):
+    for mt in stores[ncallee:]:
         if mt:
             Rr[int(mt.group(2)) // 8] = mt.group(1).lstrip('%')
-            continue
-        if spill and (l.strip().startswith(f'movq    {SLOTZ}(%rsp), %r9') or l.strip() == 'movq    %r9, %rdi'):
-            continue
-        if 'dead' in FEAT and spill and l.strip() == f'movq    %rdi, {SLOTZ}(%rsp)':
-            continue                                   # dead: the r pointer's spill (never reloaded)
-        keep.append(l)
     assert None not in Rr
     if nh == 5:
         MID5['Rr'] = list(Rr)
-    fmt = lambda line: '\t' + ' '.join(line.split()).replace(' ', '\t', 1)
-    if not ZT:
+    # MULSHARE T3 (2026-10-18): the body is the library's (src/core/x86_64/high_fixed.S, tools/generate_high_half.py), called
+    # with rdi = 0 (set at the dispatch): its register-result exit returns right after the last column, r in the column
+    # registers Rr (the same mul_regs layout as parsed above), before any store or restore. Full products enter at
+    # sbn3i_mulhigh_reg_<n> (after the library's saves of the callee-saved registers, which this frame saved at entry); zt's
+    # zero rows: this entry zeroes the columns n - 1 .. n + z - 1 that rows 0 .. z - 1 would have started (xor: also clears
+    # CF / OF), loads row z's multiplier and calls the row entry sbn3i_mulhigh_reg_<n>_r<z> (n = 9, 10 also the red-zone slots
+    # S_B / S_Z as the body sees them, 8 bytes lower after the call). Every path then continues at .Lc_mht<n>.
+    assert ZT and 'dead' in FEAT, 'T3: the zt / dead feature set (rdi free at the dispatch)'
+    pool = ['%rax', '%r10', '%r11'] + (['%rcx', '%rdi'] if spill else []) + list(hh.CALLEE)
+    colr = {nh - 1 + i: pool[i] for i in range(nh + 1)}
+    zs = sorted(ZT_Z[nh])
+    full = 0 in zs
+    assert full or len(zs) == 1, (nh, zs)
+    slot = dict(hh.FP_SLOTS)
+    for z in [x for x in zs if x > 0]:
+        assert z in hh.REG_ROWS.get(nh, ()), (nh, z)
+        assert z <= 2 or not spill                      # rcx is still the b pointer
+        e(f'.Lc_mh{nh}z{z}:')
+        if spill:
+            e(f'\tmovq\t%rcx, {slot["S_B"] - 8}(%rsp)')
+            e(f'\tmovq\t%rdi, {slot["S_Z"] - 8}(%rsp)')
+        e(f'\tmovq\t{8 * z}(%rcx), %rdx')
+        for c in range(nh - 1, nh + z):
+            e(f'\txorl\t{hh.r32(colr[c])}, {hh.r32(colr[c])}')
+        e(f'\tcall\tsbn3i_mulhigh_reg_{nh}_r{z}')
+        if full or z != zs[-1]:
+            e(f'\tjmp\t.Lc_mht{nh}')
+    if full:
         e(f'.Lc_mh{nh}:')
-        for line in keep:
-            e(fmt(line))
-    else:
-        # zt: split the body into its preamble (n = 9, 10: the b pointer's slot store) and rows; row j = [load (1 line from
-        # rcx, or 2 through the slot for j >= 3 at n = 9, 10)] [xorl %r8d, %r8d (n >= XOR_MUL, j >= 1)] products
-        rx = re.compile(r'\s*movq\s+(\d+\(%rcx\)|' + str(SLOTB) + r'\(%rsp\)),\s+%rdx$')
-        starts = [i for i, l in enumerate(keep) if rx.match(l)]
-        assert len(starts) == nh, (nh, starts)
-        pre = keep[:starts[0]]
-        assert pre == ([f'    movq    %rcx, {SLOTB}(%rsp)'] if spill else []), pre
-        rows = [keep[starts[j]:starts[j + 1] if j + 1 < nh else len(keep)] for j in range(nh)]
-        def head(j):
-            h = 2 if rows[j][0].strip().startswith(f'movq    {SLOTB}') else 1
-            if j >= 1 and nh >= hh.XOR_MUL:
-                assert rows[j][h].strip() == 'xorl    %r8d, %r8d'
-                h += 1
-            return h
-        pool = ['%rax', '%r10', '%r11'] + (['%rcx', '%rdi'] if spill else []) + list(hh.CALLEE)
-        colr = {nh - 1 + i: pool[i] for i in range(nh + 1)}
-        zs = sorted(ZT_Z[nh])
-        full = 0 in zs
-        assert full or len(zs) == 1, (nh, zs)
-        for z in [x for x in zs if x > 0]:
-            # rows 0 .. z-1 multiply b_j = 0: their columns n - 1 .. n + z - 1 start at zero; row z's load, then its products
-            assert z <= 2 or not spill                  # rcx is still the b pointer (column n + 2 is first written by row 2)
-            assert rows[z][0].strip() == f'movq    {8 * z}(%rcx), %rdx'
-            e(f'.Lc_mh{nh}z{z}:')
-            for line in pre + [rows[z][0]]:
-                e(fmt(line))
-            for c in range(nh - 1, nh + z):
-                assert colr[c] != '%rcx' or not spill
-                e(f'\txorl\t{hh.r32(colr[c])}, {hh.r32(colr[c])}')
-            if full:
-                e(f'\tjmp\t.Lc_mh{nh}r{z}')
-        if full:
-            e(f'.Lc_mh{nh}:')
-            for line in pre:
-                e(fmt(line))
-        for j in range(0 if full else zs[0], nh):
-            h = head(j)
-            if not full and j == zs[0]:
-                lines = rows[j][h:]                     # its head is in the entry above (fall through)
-            else:
-                lines = rows[j]
-            for i, line in enumerate(lines):
-                if full and j in zs and j > 0 and i == h:
-                    e(f'.Lc_mh{nh}r{j}:')
-                e(fmt(line))
+        e(f'\tcall\tsbn3i_mulhigh_reg_{nh}')
+    e(f'.Lc_mht{nh}:')
     # the tail, n = w + 1: X_n[i] = G[i] + r[i] + bias + carry (i < w), X_n[w] = X_m[0] + C[w], packed on the fly
     # (z[i-1] = hi(X_n[i-1] p) + lo(X_n[i] p): lea, no flags); then phase 2 (shared) and the leading limb
     w = nh - 1
@@ -1521,9 +1498,7 @@ if ZT:                                          # zt: by the key w + 4m, ZT_KLO 
 else:
     for w in range(4, 10):
         e(f'\t.long\t.Lc_mh{w + 1} - .Lc_mhitab')
-e('\t.p2align\t3')
-e('.Lc_hz:')
-e('\t.quad\t0')
+# (T3: the zero constant .Lc_hz of the inlined products went with them)
 e('\t.section\t.note.GNU-stack,"",@progbits')
 
 # ---- claude_impl F1 / F2 (gen_claude_d.py, 2026-10-13): post-processing of the emitted lines. Without the features
@@ -1870,6 +1845,10 @@ if 's26g' in OVH:
 # library symbols: the base path (the division kernel's reciprocal) first, then this kernel's own names
 LIBSYM = [(r'\bsbn3f_inv\b', 'sbn3f_inv_base'), (r'\bfpkc_inv_qv\b', PFX + '_inv_qv'), (r'\bfpkc_seed\b', PFX + '_inv_seed'),
           (r'\bfpkc_inv\b', PFX + '_inv')]
+# T3: the library entries this file calls are hidden (resolved inside the library, no PLT / GOT)
+T3SYM = sorted({l.split('\t')[2] for l in out if l.startswith('\tcall\tsbn3i_mulhigh_reg_')})
+i = out.index('\t.text')
+out[i + 1:i + 1] = [f'\t.hidden\t{x}' for x in T3SYM]
 text = '\n'.join(out) + '\n'
 for pat, rep in LIBSYM:
     text = re.sub(pat, rep, text)

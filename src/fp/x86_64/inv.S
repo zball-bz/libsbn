@@ -4,8 +4,21 @@
  * (experiments/results/fpk_2026-10-12/ovh2_inv/inv/oz; this file is its oz_inv.S with the library's symbol names).
  * The two-limb seed (w3, tools/fp_inv/fix_w3.py) is original code; the generator's earlier form of it, a port of GMP 6.3.0
  * invert_pi1 arithmetic (dual LGPLv3+ / GPLv2+; Copyright 1991-2016 Free Software Foundation, Inc.; notice
- * src/core/x86_64/scalar-donor-notice.txt), is replaced before output and not part of this file. */
+ * src/core/x86_64/scalar-donor-notice.txt), is replaced before output and not part of this file. Unlike oz_inv.S,
+ * the generic steps' corrections call the library's register-column high products (src/core/x86_64/high_fixed.S, hidden
+ * sbn3i_mulhigh_reg_<n>[_r<j>], rdi = 0: r returned in the column registers). */
 	.text
+	.hidden	sbn3i_mulhigh_reg_10_r2
+	.hidden	sbn3i_mulhigh_reg_6
+	.hidden	sbn3i_mulhigh_reg_6_r1
+	.hidden	sbn3i_mulhigh_reg_6_r2
+	.hidden	sbn3i_mulhigh_reg_7
+	.hidden	sbn3i_mulhigh_reg_7_r1
+	.hidden	sbn3i_mulhigh_reg_7_r3
+	.hidden	sbn3i_mulhigh_reg_8
+	.hidden	sbn3i_mulhigh_reg_8_r1
+	.hidden	sbn3i_mulhigh_reg_9
+	.hidden	sbn3i_mulhigh_reg_9_r1
 	.globl	sbn3f_inv
 	.type	sbn3f_inv, @function
 	.p2align	5
@@ -2269,105 +2282,24 @@ sbn3f_inv:
 	leaq	(%r10,%r8,4), %rdx
 	movslq	-84(%rax,%rdx,4), %rdx
 	addq	%rdx, %rax
+	xorl	%edi, %edi
 	jmp	*%rax
 .Lc_mh6z1:
 	movq	8(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
-	jmp	.Lc_mh6r1
+	call	sbn3i_mulhigh_reg_6_r1
+	jmp	.Lc_mht6
 .Lc_mh6z2:
 	movq	16(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
 	xorl	%r11d, %r11d
-	jmp	.Lc_mh6r2
+	call	sbn3i_mulhigh_reg_6_r2
+	jmp	.Lc_mht6
 .Lc_mh6:
-	movq	0(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	32(%rsi), %r8, %rax
-	mulxq	40(%rsi), %r8, %r10
-	adcxq	%r8, %rax
-	adcxq	.Lc_hz(%rip), %r10
-	movq	8(%rcx), %rdx
-.Lc_mh6r1:
-	mulxq	24(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	40(%rsi), %r8, %r11
-	adoxq	%r8, %r10
-	adcxq	.Lc_hz(%rip), %r11
-	adoxq	.Lc_hz(%rip), %r11
-	movq	16(%rcx), %rdx
-.Lc_mh6r2:
-	mulxq	16(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	40(%rsi), %r8, %rbx
-	adoxq	%r8, %r11
-	adcxq	.Lc_hz(%rip), %rbx
-	adoxq	.Lc_hz(%rip), %rbx
-	movq	24(%rcx), %rdx
-	mulxq	8(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	40(%rsi), %r8, %rbp
-	adoxq	%r8, %rbx
-	adcxq	.Lc_hz(%rip), %rbp
-	adoxq	.Lc_hz(%rip), %rbp
-	movq	32(%rcx), %rdx
-	mulxq	0(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	40(%rsi), %r8, %r12
-	adoxq	%r8, %rbp
-	adcxq	.Lc_hz(%rip), %r12
-	adoxq	.Lc_hz(%rip), %r12
-	movq	40(%rcx), %rdx
-	mulxq	0(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	40(%rsi), %r8, %r13
-	adoxq	%r8, %r12
-	adcxq	.Lc_hz(%rip), %r13
-	adoxq	.Lc_hz(%rip), %r13
+	call	sbn3i_mulhigh_reg_6
+.Lc_mht6:
 	movq	72(%rsp), %rcx
 	addq	%rcx, 864(%rsp)
 	jc	.Lc_tb6
@@ -2412,132 +2344,19 @@ sbn3f_inv:
 	movq	8(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
-	jmp	.Lc_mh7r1
+	call	sbn3i_mulhigh_reg_7_r1
+	jmp	.Lc_mht7
 .Lc_mh7z3:
 	movq	24(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
 	xorl	%r11d, %r11d
 	xorl	%ebx, %ebx
-	jmp	.Lc_mh7r3
+	call	sbn3i_mulhigh_reg_7_r3
+	jmp	.Lc_mht7
 .Lc_mh7:
-	movq	0(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	40(%rsi), %r8, %rax
-	mulxq	48(%rsi), %r8, %r10
-	adcxq	%r8, %rax
-	adcxq	.Lc_hz(%rip), %r10
-	movq	8(%rcx), %rdx
-	xorl	%r8d, %r8d
-.Lc_mh7r1:
-	mulxq	32(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	48(%rsi), %r8, %r11
-	adoxq	%r8, %r10
-	adcxq	.Lc_hz(%rip), %r11
-	adoxq	.Lc_hz(%rip), %r11
-	movq	16(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	24(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	48(%rsi), %r8, %rbx
-	adoxq	%r8, %r11
-	adcxq	.Lc_hz(%rip), %rbx
-	adoxq	.Lc_hz(%rip), %rbx
-	movq	24(%rcx), %rdx
-	xorl	%r8d, %r8d
-.Lc_mh7r3:
-	mulxq	16(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	48(%rsi), %r8, %rbp
-	adoxq	%r8, %rbx
-	adcxq	.Lc_hz(%rip), %rbp
-	adoxq	.Lc_hz(%rip), %rbp
-	movq	32(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	8(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	48(%rsi), %r8, %r12
-	adoxq	%r8, %rbp
-	adcxq	.Lc_hz(%rip), %r12
-	adoxq	.Lc_hz(%rip), %r12
-	movq	40(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	48(%rsi), %r8, %r13
-	adoxq	%r8, %r12
-	adcxq	.Lc_hz(%rip), %r13
-	adoxq	.Lc_hz(%rip), %r13
-	movq	48(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	48(%rsi), %r8, %r14
-	adoxq	%r8, %r13
-	adcxq	.Lc_hz(%rip), %r14
-	adoxq	.Lc_hz(%rip), %r14
+	call	sbn3i_mulhigh_reg_7
+.Lc_mht7:
 	movq	72(%rsp), %rcx
 	addq	%rcx, 856(%rsp)
 	jc	.Lc_tb7
@@ -2587,153 +2406,11 @@ sbn3f_inv:
 	movq	8(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
-	jmp	.Lc_mh8r1
+	call	sbn3i_mulhigh_reg_8_r1
+	jmp	.Lc_mht8
 .Lc_mh8:
-	movq	0(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	48(%rsi), %r8, %rax
-	mulxq	56(%rsi), %r8, %r10
-	adcxq	%r8, %rax
-	adcxq	.Lc_hz(%rip), %r10
-	movq	8(%rcx), %rdx
-	xorl	%r8d, %r8d
-.Lc_mh8r1:
-	mulxq	40(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	56(%rsi), %r8, %r11
-	adoxq	%r8, %r10
-	adcxq	.Lc_hz(%rip), %r11
-	adoxq	.Lc_hz(%rip), %r11
-	movq	16(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	32(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	56(%rsi), %r8, %rbx
-	adoxq	%r8, %r11
-	adcxq	.Lc_hz(%rip), %rbx
-	adoxq	.Lc_hz(%rip), %rbx
-	movq	24(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	24(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	56(%rsi), %r8, %rbp
-	adoxq	%r8, %rbx
-	adcxq	.Lc_hz(%rip), %rbp
-	adoxq	.Lc_hz(%rip), %rbp
-	movq	32(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	16(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	56(%rsi), %r8, %r12
-	adoxq	%r8, %rbp
-	adcxq	.Lc_hz(%rip), %r12
-	adoxq	.Lc_hz(%rip), %r12
-	movq	40(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	8(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	56(%rsi), %r8, %r13
-	adoxq	%r8, %r12
-	adcxq	.Lc_hz(%rip), %r13
-	adoxq	.Lc_hz(%rip), %r13
-	movq	48(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	56(%rsi), %r8, %r14
-	adoxq	%r8, %r13
-	adcxq	.Lc_hz(%rip), %r14
-	adoxq	.Lc_hz(%rip), %r14
-	movq	56(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rbx
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r13
-	adcxq	%r9, %r14
-	mulxq	56(%rsi), %r8, %r15
-	adoxq	%r8, %r14
-	adcxq	.Lc_hz(%rip), %r15
-	adoxq	.Lc_hz(%rip), %r15
+	call	sbn3i_mulhigh_reg_8
+.Lc_mht8:
 	movq	72(%rsp), %rcx
 	addq	%rcx, 848(%rsp)
 	jc	.Lc_tb8
@@ -2785,196 +2462,16 @@ sbn3f_inv:
 	movq	56(%rsp), %r14
 	jmp	*48(%rsp)
 .Lc_mh9z1:
-	movq	%rcx, 128(%rsp)
+	movq	%rcx, -80(%rsp)
+	movq	%rdi, -88(%rsp)
 	movq	8(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
-	jmp	.Lc_mh9r1
+	call	sbn3i_mulhigh_reg_9_r1
+	jmp	.Lc_mht9
 .Lc_mh9:
-	movq	%rcx, 128(%rsp)
-	movq	0(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	56(%rsi), %r8, %rax
-	mulxq	64(%rsi), %r8, %r10
-	adcxq	%r8, %rax
-	adcxq	.Lc_hz(%rip), %r10
-	movq	8(%rcx), %rdx
-	xorl	%r8d, %r8d
-.Lc_mh9r1:
-	mulxq	48(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	64(%rsi), %r8, %r11
-	adoxq	%r8, %r10
-	adcxq	.Lc_hz(%rip), %r11
-	adoxq	.Lc_hz(%rip), %r11
-	movq	16(%rcx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	40(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	64(%rsi), %r8, %rcx
-	adoxq	%r8, %r11
-	adcxq	.Lc_hz(%rip), %rcx
-	adoxq	.Lc_hz(%rip), %rcx
-	movq	128(%rsp), %rdx
-	movq	24(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	32(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	64(%rsi), %r8, %rdi
-	adoxq	%r8, %rcx
-	adcxq	.Lc_hz(%rip), %rdi
-	adoxq	.Lc_hz(%rip), %rdi
-	movq	128(%rsp), %rdx
-	movq	32(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	24(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	64(%rsi), %r8, %rbx
-	adoxq	%r8, %rdi
-	adcxq	.Lc_hz(%rip), %rbx
-	adoxq	.Lc_hz(%rip), %rbx
-	movq	128(%rsp), %rdx
-	movq	40(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	16(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	64(%rsi), %r8, %rbp
-	adoxq	%r8, %rbx
-	adcxq	.Lc_hz(%rip), %rbp
-	adoxq	.Lc_hz(%rip), %rbp
-	movq	128(%rsp), %rdx
-	movq	48(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	8(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	64(%rsi), %r8, %r12
-	adoxq	%r8, %rbp
-	adcxq	.Lc_hz(%rip), %r12
-	adoxq	.Lc_hz(%rip), %r12
-	movq	128(%rsp), %rdx
-	movq	56(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	64(%rsi), %r8, %r13
-	adoxq	%r8, %r12
-	adcxq	.Lc_hz(%rip), %r13
-	adoxq	.Lc_hz(%rip), %r13
-	movq	128(%rsp), %rdx
-	movq	64(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	64(%rsi), %r8, %r14
-	adoxq	%r8, %r13
-	adcxq	.Lc_hz(%rip), %r14
-	adoxq	.Lc_hz(%rip), %r14
+	call	sbn3i_mulhigh_reg_9
+.Lc_mht9:
 	movq	72(%rsp), %rsi
 	addq	%rsi, 840(%rsp)
 	jc	.Lc_tb9
@@ -3031,210 +2528,14 @@ sbn3f_inv:
 	movq	56(%rsp), %r14
 	jmp	*48(%rsp)
 .Lc_mh10z2:
-	movq	%rcx, 128(%rsp)
+	movq	%rcx, -80(%rsp)
+	movq	%rdi, -88(%rsp)
 	movq	16(%rcx), %rdx
 	xorl	%eax, %eax
 	xorl	%r10d, %r10d
 	xorl	%r11d, %r11d
-	mulxq	48(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	72(%rsi), %r8, %rcx
-	adoxq	%r8, %r11
-	adcxq	.Lc_hz(%rip), %rcx
-	adoxq	.Lc_hz(%rip), %rcx
-	movq	128(%rsp), %rdx
-	movq	24(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	40(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	72(%rsi), %r8, %rdi
-	adoxq	%r8, %rcx
-	adcxq	.Lc_hz(%rip), %rdi
-	adoxq	.Lc_hz(%rip), %rdi
-	movq	128(%rsp), %rdx
-	movq	32(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	32(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	72(%rsi), %r8, %rbx
-	adoxq	%r8, %rdi
-	adcxq	.Lc_hz(%rip), %rbx
-	adoxq	.Lc_hz(%rip), %rbx
-	movq	128(%rsp), %rdx
-	movq	40(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	24(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	72(%rsi), %r8, %rbp
-	adoxq	%r8, %rbx
-	adcxq	.Lc_hz(%rip), %rbp
-	adoxq	.Lc_hz(%rip), %rbp
-	movq	128(%rsp), %rdx
-	movq	48(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	16(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	72(%rsi), %r8, %r12
-	adoxq	%r8, %rbp
-	adcxq	.Lc_hz(%rip), %r12
-	adoxq	.Lc_hz(%rip), %r12
-	movq	128(%rsp), %rdx
-	movq	56(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	8(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	72(%rsi), %r8, %r13
-	adoxq	%r8, %r12
-	adcxq	.Lc_hz(%rip), %r13
-	adoxq	.Lc_hz(%rip), %r13
-	movq	128(%rsp), %rdx
-	movq	64(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adcxq	%r9, %rax
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	72(%rsi), %r8, %r14
-	adoxq	%r8, %r13
-	adcxq	.Lc_hz(%rip), %r14
-	adoxq	.Lc_hz(%rip), %r14
-	movq	128(%rsp), %rdx
-	movq	72(%rdx), %rdx
-	xorl	%r8d, %r8d
-	mulxq	0(%rsi), %r8, %r9
-	adoxq	%r8, %rax
-	adcxq	%r9, %r10
-	mulxq	8(%rsi), %r8, %r9
-	adoxq	%r8, %r10
-	adcxq	%r9, %r11
-	mulxq	16(%rsi), %r8, %r9
-	adoxq	%r8, %r11
-	adcxq	%r9, %rcx
-	mulxq	24(%rsi), %r8, %r9
-	adoxq	%r8, %rcx
-	adcxq	%r9, %rdi
-	mulxq	32(%rsi), %r8, %r9
-	adoxq	%r8, %rdi
-	adcxq	%r9, %rbx
-	mulxq	40(%rsi), %r8, %r9
-	adoxq	%r8, %rbx
-	adcxq	%r9, %rbp
-	mulxq	48(%rsi), %r8, %r9
-	adoxq	%r8, %rbp
-	adcxq	%r9, %r12
-	mulxq	56(%rsi), %r8, %r9
-	adoxq	%r8, %r12
-	adcxq	%r9, %r13
-	mulxq	64(%rsi), %r8, %r9
-	adoxq	%r8, %r13
-	adcxq	%r9, %r14
-	mulxq	72(%rsi), %r8, %r15
-	adoxq	%r8, %r14
-	adcxq	.Lc_hz(%rip), %r15
-	adoxq	.Lc_hz(%rip), %r15
+	call	sbn3i_mulhigh_reg_10_r2
+.Lc_mht10:
 	movq	72(%rsp), %rsi
 	addq	%rsi, 832(%rsp)
 	jc	.Lc_tb10
@@ -3689,7 +2990,4 @@ sbn3f_inv_seed:
 	.long	.Lc_mhbad - .Lc_mhitab
 	.long	.Lc_mhbad - .Lc_mhitab
 	.long	.Lc_mh9 - .Lc_mhitab
-	.p2align	3
-.Lc_hz:
-	.quad	0
 	.section	.note.GNU-stack,"",@progbits

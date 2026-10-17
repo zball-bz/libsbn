@@ -37,6 +37,12 @@ src/core/x86_64/high_fixed.S: sbn3i_mulhigh_<n>(rp, ap, bp) for n in MUL and
   movq %rdx, %rcx for products, then ns = 1, so that a zero top limb leaves the strip at once (it reads
   no memory); rax and rdx are clobbered. The heads sit just below the 16-byte aligned bodies (padding
   before the head, not executed). Until 2026-10-17 both files carried a copy of every body (40 KB).
+  Register-result exit (products n = 5..10, MULSHARE T3, 2026-10-18): right after the last column the body
+  tests its r pointer (rdi; n = 9, 10 the S_Z slot as it reloads it) and returns at once when it is zero,
+  r in the column registers, before any store or restore. The fp reciprocal enters there through the
+  hidden sbn3i_mulhigh_reg_<n> (after the saves: the callee-saved registers are the caller's to keep) and
+  the row entries sbn3i_mulhigh_reg_<n>_r<j> (REG_ROWS: multiplier limbs below j are zero); see REG_ROWS.
+  Every other caller passes a nonzero rdi and pays one not-taken branch.
 Aliasing: r must not overlap a or b; a may equal b.
 """
 import argparse
@@ -166,18 +172,22 @@ def reg_row(L, load, hi_only, prods, top_col, col, zero, xor):
                   f'    adcxq   {zero}, {col[c + 1]}', f'    adoxq   {zero}, {col[c + 1]}']
 
 
-def mul_regs(n, zero, save_base, slot_b, slot_z):
+def mul_regs(n, zero, save_base, slot_b, slot_z, marks=None):
     """register-column high product, 2 <= n <= 10: a = rsi, b = rcx, r = rdi; returns (lines, the top
     column's register, the restore lines). n = 9, 10: the b and r pointers go to the red-zone slots
     and rcx, rdi hold columns n+2, n+3; rows 0..2 still read b through rcx (column n+2 is first
     written by row 2's top product, after its multiplier load). Copying the windows into a stack frame
     to free rsi for n = 11 was rejected (2026-10-12, fp mul: thr -6%, lat +18 cycles: the 32-byte
-    copies read the previous call's 8-byte stores, no forwarding)."""
+    copies read the previous call's 8-byte stores, no forwarding). marks (a dict, optional) receives the
+    line indices of the register-result entries (fixed()): 'reg' after the saves, 'row' {j: after row j's
+    multiplier load and flag clear}, 'store' the first line after the last column (the stores)."""
     spill = n + 1 > 3 + len(CALLEE)
     pool = ['%rax', '%r10', '%r11'] + (['%rcx', '%rdi'] if spill else []) + list(CALLEE)
     col = {n - 1 + i: pool[i] for i in range(n + 1)}
     sv, rs = saves(col.values(), save_base)
     L, zslot = list(sv), slot_z
+    if marks is not None:
+        marks['reg'], marks['row'] = len(L), {}
     if spill:
         L += [f'    movq    %rcx, {slot_b}', f'    movq    %rdi, {slot_z}']
     a = lambda i: f'{8 * i}(%rsi)'
@@ -189,8 +199,12 @@ def mul_regs(n, zero, save_base, slot_b, slot_z):
                     f'    adcxq   %r8, {col[n - 1]}', f'    adcxq   {zero}, {col[n]}']
     for j in range(1, n):
         i0 = n - 2 - j
+        if marks is not None:
+            marks['row'][j] = len(L) + len(load(j)) + (n >= XOR_MUL)
         reg_row(L, load(j), (a(i0), n - 1) if i0 >= 0 else None,
                 [(a(i), i + j) for i in range(n - 1 - j, n)], n + j, col, zero, n >= XOR_MUL)
+    if marks is not None:
+        marks['store'] = len(L)
     if spill:
         L += [f'    movq    {zslot}, %r9'] + [f'    movq    {col[n + i]}, {8 * i}(%r9)' for i in range(n)] + ['    movq    %r9, %rdi']
     else:
@@ -323,6 +337,12 @@ def header():
 
 # the integer entries' heads: (line, its encoded bytes)
 HEAD_B = ('    movq    %rdx, %rcx', 3)      # products: bp to rcx (rdx is the MULX source)
+# the register-result entries of the register-column products (MULSHARE T3, 2026-10-18): the fp reciprocal (tools/generate_fp_inv.py,
+# its generic steps' correction r = mulhigh_n(G, x_top), n = 6..10) calls the bodies with rdi = 0 and takes r in the column
+# registers. sbn3i_mulhigh_reg_<n> is the body after the callee-saved saves, sbn3i_mulhigh_reg_<n>_r<j> row j after its
+# multiplier load and flag clear (the caller zeroed columns n-1 .. n+j-1, loaded rdx = b_j, cleared CF / OF and, n = 9, 10, set
+# the red-zone slots S_B / S_Z as the body sees them): rows 0 .. j-1 multiply zero limbs. REG_ROWS: the rows entered.
+REG_ROWS = {6: (1, 2), 7: (1, 3), 8: (1,), 9: (1,), 10: (2,)}
 HEAD_NS = ('    movq    $1, S_NS', 9)        # ns = 1 for fp_exit's strip (REX.W C7 /0, disp8, imm32)
 
 
@@ -333,7 +353,7 @@ def fixed():
            ' * also the fp kernel\'s (src/fp/x86_64/mul.S enters at the hidden sbn3i_mulhigh_fp_<n> / sbn3i_sqrhigh_fp_<n>);',
            ' * see the generator. */'] + fp_defines() + [
            '    .section .rodata', '    .p2align 3', '.Lhz:', '    .quad   0', '    .text']
-    def fn(kind, n, head, body):
+    def fn(kind, n, head, body, rx=False):
         name, fp = f'sbn3i_{kind}high_{n}', f'sbn3i_{kind}high_fp_{n}'
         lines, top, rs = body
         # the head ends where the 16-byte aligned body starts (the padding before the entry; the second .p2align adds
@@ -341,15 +361,27 @@ def fixed():
         pad = -sum(b for _, b in head) % 16
         out.extend(['    .p2align 4', f'    .skip   {pad}, 0xcc', f'    .globl {name}', f'    .type {name}, @function', f'{name}:']
                    + [h for h, _ in head] + ['    .p2align 4', f'    .globl {fp}', f'    .hidden {fp}', f'    .type {fp}, @function', f'{fp}:']
-                   + lines + fp_exit(top, rs, '.Lhstrip') + [f'    .size {fp}, .-{fp}', f'    .size {name}, .-{name}'])
+                   + lines + fp_exit(top, rs, '.Lhstrip') + ([f'.Lhrx{n}:', '    ret'] if rx else [])
+                   + [f'    .size {fp}, .-{fp}', f'    .size {name}, .-{name}'])
+    def sym(s):
+        return [f'    .globl {s}', f'    .hidden {s}', f'{s}:']
     for n in MUL:
         if n <= REGM:
-            body = mul_regs(n, '.Lhz(%rip)', FP_SAVE, 'S_B', 'S_Z')
+            marks = {}
+            lines, top, rs = mul_regs(n, '.Lhz(%rip)', FP_SAVE, 'S_B', 'S_Z', marks)
+            spill = lines[marks['store']].strip() == 'movq    S_Z, %r9'
+            ins = {marks['reg']: sym(f'sbn3i_mulhigh_reg_{n}')}
+            for j in REG_ROWS.get(n, ()):
+                ins[marks['row'][j]] = sym(f'sbn3i_mulhigh_reg_{n}_r{j}')
+            ptr = '%r9' if spill else '%rdi'        # n = 9, 10: the r pointer as the stores reload it from S_Z
+            ins[marks['store'] + spill] = [f'    testq   {ptr}, {ptr}', f'    jz      .Lhrx{n}']
+            for i in sorted(ins, reverse=True):
+                lines[i:i] = ins[i]
+            fn('mul', n, [HEAD_B, HEAD_NS], (lines, top, rs), rx=True)
         else:
             e = Emit(False)
             mulhigh_rows(e, n)                      # top limb in r8
-            body = e.lines, '%r8', []
-        fn('mul', n, [HEAD_B, HEAD_NS], body)
+            fn('mul', n, [HEAD_B, HEAD_NS], (e.lines, '%r8', []))
     for n in SQR:
         if n <= REGQ:
             body = sqr_regs(n, '.Lhz(%rip)', FP_SAVE, 'S_Z')
