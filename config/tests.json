@@ -366,6 +366,18 @@
       "timeout_seconds": 60
     },
     {
+      "name": "fp_div_test",
+      "sources": [
+        {
+          "path": "tests/native/fp_div_test.cpp",
+          "language": "cxx",
+          "group": "native"
+        }
+      ],
+      "link_flags": [],
+      "timeout_seconds": 60
+    },
+    {
       "name": "square_basecase_test",
       "sources": [
         {

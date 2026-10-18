@@ -49,6 +49,7 @@ def main():
     run(['python3', 'tools/generate_fp_rsqrt_rsp.py', '--check'])
     run(['python3', 'tools/generate_fp_rsqrt_engine.py', '--check'])
     run(['python3', 'tools/generate_fp_qv_kit.py', '--check'])
+    run(['python3', 'tools/generate_fp_div.py', '--check'])
     run(['python3', 'tools/check_native_variants.py'])
     config = json.loads((V3/'config/native.json').read_text())
     sources = json.loads((V3/'config/sources.json').read_text())['entries']

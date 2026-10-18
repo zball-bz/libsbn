@@ -1788,14 +1788,16 @@
         "lzcnt"
       ],
       "depends_on": [
-        "src/fp/x86_64/div_qv.cpp"
+        "src/fp/x86_64/div_qv.cpp",
+        "src/fp/x86_64/div_km.cpp"
       ],
       "provides_symbols": [
         "sbn3f_div",
         "sbn3f_inv_base"
       ],
       "requires_symbols": [
-        "sbn3f_div_qv"
+        "sbn3f_div_qv",
+        "sbn3f_div_km"
       ],
       "donor_ids": [
         "word_asm"
@@ -1835,6 +1837,35 @@
         "-Wno-unused-parameter",
         "-Wno-unused-variable"
       ]
+    },
+    {
+      "path": "src/fp/x86_64/div_km.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_qv.cpp",
+        "src/fp/x86_64/inv_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_div_km"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_seed",
+        "sbn3f_inv_chain",
+        "sbn3f_inv_fix"
+      ],
+      "donor_ids": []
     },
     {
       "path": "src/fp/x86_64/inv.S",
