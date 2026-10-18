@@ -41,6 +41,17 @@ def main():
     run(['python3', 'tools/generate_tuning.py', '--check'])
     run(['python3', 'tools/generate_radix_bounds.py', '--check'])
     run(['python3', 'tools/generate_radix_powers.py', '--check'])
+    run(['python3', 'tools/generate_mul_basecase.py', '--check'])
+    run(['python3', 'tools/generate_high_half.py', '--check'])
+    run(['python3', 'tools/generate_fp_mul.py', '--check'])
+    run(['python3', 'tools/generate_full_fixed.py', '--check'])
+    run(['python3', 'tools/generate_fp_inv.py', '--check'])
+    run(['python3', 'tools/generate_fp_inv_engine.py', '--check'])
+    run(['python3', 'tools/generate_fp_rsqrt_rsp.py', '--check'])
+    run(['python3', 'tools/generate_fp_rsqrt_engine.py', '--check'])
+    run(['python3', 'tools/generate_fp_qv_kit.py', '--check'])
+    run(['python3', 'tools/generate_fp_div.py', '--check'])
+    run(['python3', 'tools/generate_fp_sqrt.py', '--check'])
     run(['python3', 'tools/check_native_variants.py'])
     config = json.loads((V3/'config/native.json').read_text())
     sources = json.loads((V3/'config/sources.json').read_text())['entries']
@@ -151,8 +162,9 @@ def main():
     archive=build/'libsbn_v3.a'
     membership={'objects':{str(p.relative_to(V3)):digest(p) for p in objects},'archiver':versions['ar']}
     membership_file=build/'archive-members.json'
-    if not archive.exists() or not membership_file.exists() or json.loads(membership_file.read_text())!=membership:
-        # Recreate the archive so retired manifest entries cannot survive inside it.
+    if not archive.exists() or not membership_file.exists() or membership_file.read_text()!=json.dumps(membership,indent=2)+'\n':
+        # Recreate the archive so retired manifest entries cannot survive inside it, and when the manifest order changes
+        # (the member order can change where the linker places the library's objects).
         temporary=build/'libsbn_v3.next.a'
         if temporary.exists(): temporary.unlink()
         run([compiler['ar'],'rcs',temporary,*objects]);os.replace(temporary,archive)

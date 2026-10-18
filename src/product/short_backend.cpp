@@ -263,6 +263,8 @@ template <unsigned algorithm>
 void fast_mul(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 template <unsigned n>
 void fast_equal_size(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
+template <unsigned n>
+void fast_square(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 void execute_ptrs_checked(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 void fast_window(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 void idle(const Binding &b) {
@@ -343,6 +345,15 @@ void bind_product_impl(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &
                     b->kernel = fast_equal_size<6>;
                     break;
                 }
+            // An SQR plan names its square at bind time: the straight-line squares of 2..14
+            // limbs, with no pointer test in the plain products.
+            using kernel_fn = decltype(b->kernel);
+            static constexpr kernel_fn squares[13] = {
+                fast_square<2>,  fast_square<3>,  fast_square<4>,  fast_square<5>,  fast_square<6>,
+                fast_square<7>,  fast_square<8>,  fast_square<9>,  fast_square<10>, fast_square<11>,
+                fast_square<12>, fast_square<13>, fast_square<14>};
+            if (q.kind == SBN3_PRODUCT_SQR && q.an >= 2 && q.an <= 14)
+                b->kernel = squares[q.an - 2];
         }
     }
     b->header.execute_fast = SBN3_CHECK_SMALL || b->owner.scoped() || !b->kernel ? execute_ptrs_checked : b->kernel;
@@ -543,6 +554,22 @@ void fast_equal_size(sbn3_mul_binding *p, const uint64_t *a, const uint64_t *b, 
         out[3] = uint64_t(t >> 64);
     } else
         sbn3i_mul_basecase_le6(out, a, n, b, n);
+    if constexpr (SBN3_SHORT_STATS) {
+        auto &v = get(p);
+        v.last_ns = now() - start;
+        ++v.executions;
+    }
+}
+template <unsigned n>
+void fast_square(sbn3_mul_binding *p, const uint64_t *a, const uint64_t *, uint64_t *out) {
+    (void)p;
+    [[maybe_unused]] const auto start = now();
+    using sqr_fn = void (*)(uint64_t *, const uint64_t *);
+    static constexpr sqr_fn rows[13] = {sbn3i_sqr_basecase_2, sbn3i_sqr_basecase_3, sbn3i_sqr_basecase_4,
+        sbn3i_sqr_basecase_5, sbn3i_sqr_basecase_6, sbn3i_sqr_basecase_7, sbn3i_sqr_basecase_8,
+        sbn3i_sqr_basecase_9, sbn3i_sqr_basecase_10, sbn3i_sqr_basecase_11, sbn3i_sqr_basecase_12,
+        sbn3i_sqr_basecase_13, sbn3i_sqr_basecase_14};
+    rows[n - 2](out, a);
     if constexpr (SBN3_SHORT_STATS) {
         auto &v = get(p);
         v.last_ns = now() - start;

@@ -270,6 +270,148 @@
       "timeout_seconds": 180
     },
     {
+      "name": "high_half_test",
+      "sources": [
+        {
+          "path": "tests/native/high_half_test.cpp",
+          "language": "cxx",
+          "group": "native",
+          "extra_flags": [
+            "-Wno-unused-function",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+            "-Wno-vla-cxx-extension",
+            "-Wno-deprecated-anon-enum-enum-conversion",
+            "-Wno-constant-logical-operand"
+          ]
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "full_fixed_test",
+      "sources": [
+        {
+          "path": "tests/native/full_fixed_test.cpp",
+          "language": "cxx",
+          "group": "native",
+          "extra_flags": [
+            "-Wno-unused-function",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+            "-Wno-vla-cxx-extension",
+            "-Wno-deprecated-anon-enum-enum-conversion",
+            "-Wno-constant-logical-operand"
+          ]
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "fp_inv_rsqrt_test",
+      "sources": [
+        {
+          "path": "tests/native/fp_inv_rsqrt_test.cpp",
+          "language": "cxx",
+          "group": "native"
+        }
+      ],
+      "link_flags": [],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "fp_div_test",
+      "sources": [
+        {
+          "path": "tests/native/fp_div_test.cpp",
+          "language": "cxx",
+          "group": "native"
+        }
+      ],
+      "link_flags": [],
+      "timeout_seconds": 60
+    },
+    {
+      "name": "square_basecase_test",
+      "sources": [
+        {
+          "path": "tests/integration/square_basecase_test.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/allocation_watch.cpp",
+          "language": "cxx",
+          "group": "reference"
+        },
+        {
+          "path": "tests/oracle/oracle.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ],
+      "link_flags": [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=aligned_alloc",
+        "-Wl,--wrap=posix_memalign",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=mlock",
+        "-Wl,--wrap=munlock",
+        "-Wl,--wrap=madvise"
+      ],
+      "timeout_seconds": 120
+    },
+    {
       "name": "local_inverse_test",
       "tier": "extended",
       "sources": [

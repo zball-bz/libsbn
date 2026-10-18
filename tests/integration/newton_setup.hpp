@@ -20,7 +20,7 @@ struct PreparedInverse {
             auto *product=f.product(req,o,info,plan,cache);f.unbind(producer);f.retire(first+1);f.retire(first);
             handles.push_back(cache);steps.push_back({m,n,req.cyclic_limbs,product,cache,f.guarded(req.cyclic_limbs),f.guarded(req.cyclic_limbs)});m=n;
         }
-        program.rung_count=steps.size();program.rungs=steps.data();program.values[0]=f.guarded(target+1);program.values[1]=f.guarded(target+1);
+        program.rung_count=steps.size();program.rungs=steps.data();
     }
     ~PreparedInverse(){for(auto *h:handles)sbn3_spectrum_release(h);}
     void execute(const uint64_t *D,uint64_t *U){sbn::v3::inverse_program(program,D,U);}

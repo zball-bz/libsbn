@@ -1,4 +1,5 @@
-/* Imported from libsbn/include/sbn/detail/mulmid/mulmid_kara.h; kernel arithmetic retained. */
+/* Imported from libsbn/include/sbn/detail/mulmid/mulmid_kara.h; kernel arithmetic retained.
+ * mulmid_dc sends short a over long bands to mulmid_rows (mulmid.hpp). */
 #pragma once
 namespace sbn::v3::u52 {
 
@@ -489,6 +490,14 @@ static void mulmid_kara_n(sb_plimb r, const sb_limb *a, const sb_limb *b, int64_
 // Output: rn+1 raw signed limbs, same value contract as mulmid_kara_n.
 static inline void mulmid_dc(sb_plimb r, const sb_limb *a, const sb_limb *b, int64_t an, int64_t bn, scratch *sc){
     const int64_t rn = bn - an + 1;
+    // Row stream for short a and long bands: it pays MY-1 warm-up steps per call, then
+    // runs closer to the madd bound than the basecase's per-block harvest (measured
+    // 0.58..0.75 of it at 9..12 digits, 0.86..0.91 at 17..20 on long bands).
+    if(an >= 9 && an <= 20 && rn >= (an <= 12 ? 16 : an <= 16 ? 3 * an : 6 * an)){
+        if(an <= 16) mulmid_rows<2, 2>(r, a, an, b, bn);
+        else mulmid_rows<3, 2>(r, a, an, b, bn);
+        return;
+    }
     if(an < MULMID_KARA_THRESHOLD || rn < an){
         mulmid_basecase(r, a, b, an, bn);
         return;

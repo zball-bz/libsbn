@@ -276,6 +276,36 @@ static inline sb_vec u52_sub_rsh1_canon(sb_pvec r, sb_cpvec a, sb_cpvec b, uint6
     sb_madd52lo(sb_zero(), sb_and(sb_sub((v), u52_d3_mod3(sb_add(sb_sub((P), (ax)),            \
                                                     sb_sub((P), (ax))))), SB_MASK52()), (vd))
 
+// ---- byte tails in caller memory ----------------------------------------
+
+// A byte-masked access at p has a 64-byte footprint past its rem live bytes; a
+// masked-off byte in a not-present or read-only page (a fresh allocation's next
+// page) costs a microcode assist of ~500 cycles. When the footprint leaves the
+// page and the live bytes do not, the page's last 64 bytes cover them: access
+// that aligned window and rotate by the offset s. rem in [1, 64].
+SB_ALIGN64 static const uint8_t u52_byte_iota[64] = {
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+};
+static inline uint64_t u52_page_window(const void *p, int64_t rem){
+    const uint64_t o = (uintptr_t)p & 4095;
+    return __builtin_expect(o > 4096 - 64 && o + (uint64_t)rem <= 4096, 0) ? o - (4096 - 64) : 0;
+}
+static inline sb_vec u52_tail_loadu8(const uint8_t *p, int64_t rem){
+    const uint64_t m = ~0ull >> (64 - rem), s = u52_page_window(p, rem);
+    if(!s) return sb__fn(maskz_loadu_epi8)(m, p);
+    const sb_vec w = sb__fn(maskz_loadu_epi8)(m << s, p - s);
+    return sb_permb(sb__fn(add_epi8)(sb_load((sb_cpvec)u52_byte_iota), sb__fn(set1_epi8)((char)s)), w);
+}
+static inline void u52_tail_storeu8(uint8_t *p, sb_vec v, int64_t rem){
+    const uint64_t m = ~0ull >> (64 - rem), s = u52_page_window(p, rem);
+    if(!s) return sb__fn(mask_storeu_epi8)(p, m, v);
+    sb__fn(mask_storeu_epi8)(p - s, m << s,
+        sb_permb(sb__fn(sub_epi8)(sb_load((sb_cpvec)u52_byte_iota), sb__fn(set1_epi8)((char)s)), v));
+}
+
 // ---- fused canonicalize + encode --------------------------------------
 
 // pack52: canonical digit vector -> 52 packed bytes (reference pack52_vec;
@@ -299,45 +329,66 @@ SB_ALIGN64 static const uint8_t u52_enc_lperm[64] = {
     sb_or(sb_srlv(sb_permb(sb_load((sb_cpvec)u52_enc_rperm), (d)), sb_setr_64(0, 4, 0, 4, 0, 0, 4, 0)), \
          sb_sllv(sb_permb(sb_load((sb_cpvec)u52_enc_lperm), (d)), sb_setr_64(4, 0, 4, 0, 4, 4, 0, 0)))
 
-// signed-encode variant for a class-1 (signed redundant) top-level product:
-// the dual-chain canonneg rides the packing pass, absorbing what would
-// otherwise be the top level's fold -- the largest single canon span.
+// Encode body. NEG: signed-encode variant for a class-1 (signed redundant)
+// top-level product, absorbing what would otherwise be the top level's fold.
+// Class-1 lanes are within 3*L0 < 2^62 in magnitude: every lane gets 2^62 and
+// gives 2^10 (= 2^62 over one digit) back to the lane above, which keeps the
+// value and leaves lanes in [0, 2^63), so the single-chain positive
+// canonicalisation applies (the dual borrow/carry chain cost up to twice as
+// much per vector). The bias leaves through the top lane's carry, above
+// out_limbs; zero padding lanes come out as zero digits.
+// EDGE: the output ends in the last 64 bytes of a page, where store footprints
+// (up to 63 bytes past the end) may reach the next page: full stores only while
+// their footprint stays in the output, then at most two page-safe tail stores.
+template<bool NEG, bool EDGE>
+static inline void u64_from_u52_encode(uint8_t *p, sb_cpvec a, int64_t rem){
+    int sig = 0;
+    sb_vec _c = sb_zero();
+    const sb_vec bias = sb_set1_64((1ull << 62) - (1ull << 10));
+    sb_vec b = sb_setr_64(1ull << 62, (1ull << 62) - (1ull << 10), (1ull << 62) - (1ull << 10),
+                          (1ull << 62) - (1ull << 10), (1ull << 62) - (1ull << 10), (1ull << 62) - (1ull << 10),
+                          (1ull << 62) - (1ull << 10), (1ull << 62) - (1ull << 10));
+    auto next = [&]() __attribute__((always_inline)) {
+        sb_vec t = sb_load(a++);
+        if constexpr(NEG){ t = sb_add(t, b); b = bias; }
+        canonize(t, _c, sig);
+        return u52_pack52(t);
+    };
+    for(; rem >= (EDGE ? 64 : 52); rem -= 52, p += 52)
+        sb__fn(mask_storeu_epi8)(p, (1ull << 52) - 1, next());
+    if constexpr(EDGE)
+        for(; rem > 0; rem -= 52, p += 52) u52_tail_storeu8(p, next(), rem < 52 ? rem : 52);
+    else if(rem > 0)
+        sb__fn(mask_storeu_epi8)(p, ~0ull >> (64 - rem), next());
+}
+
+// the last byte before end lies in a page's last 64 bytes
+static inline bool u52_page_edge(const void *end){
+    return (((uintptr_t)end - 1) & 4095) > 4096 - 64;
+}
+
+template<bool NEG>
+__attribute__((noinline, cold)) static void u64_from_u52_edge(uint8_t *p, sb_cpvec a, int64_t rem){
+    u64_from_u52_encode<NEG, true>(p, a, rem);
+}
+
+// pack the class-1 redundant u52 product {a, vector-padded} into out_limbs u64
+// limbs at rp (see u64_from_u52_encode)
 static inline void u64_from_u52_canonneg(uint64_t *rp, sb_cpvec a, uint64_t out_limbs){
-    canonneg_init(sb_zero())
-    uint8_t *p = (uint8_t *)rp;
-    int64_t rem = (int64_t)(out_limbs * 8);
-    for(; rem >= 52; rem -= 52, p += 52, ++a){
-        sb_vec t = sb_load(a);
-        canonneg(t);
-        sb__fn(mask_storeu_epi8)(p, (1ull << 52) - 1, u52_pack52(t));
-    }
-    if(rem > 0){
-        sb_vec t = sb_load(a);
-        canonneg(t);
-        sb__fn(mask_storeu_epi8)(p, ~0ull >> (64 - rem), u52_pack52(t));
-    }
+    if(__builtin_expect(u52_page_edge(rp + out_limbs), 0))
+        return u64_from_u52_edge<true>((uint8_t *)rp, a, (int64_t)(out_limbs * 8));
+    u64_from_u52_encode<true, false>((uint8_t *)rp, a, (int64_t)(out_limbs * 8));
 }
 
 // canonicalize the NON-NEGATIVE redundant u52 product {a, vector-padded} and
 // pack it into out_limbs u64 limbs at rp in one pass. Composite muls return
 // canonical lanes already (canonize is then a cheap no-op pass); the basecase
 // returns non-negative redundant lanes, which the positive canonize chain
-// resolves. Only the peeled final block uses a masked store.
+// resolves.
 static inline void u64_from_u52_canon(uint64_t *rp, sb_cpvec a, uint64_t out_limbs){
-    int sig = 0;
-    sb_vec _c = sb_zero();
-    uint8_t *p = (uint8_t *)rp;
-    int64_t rem = (int64_t)(out_limbs * 8);
-    for(; rem >= 52; rem -= 52, p += 52, ++a){
-        sb_vec t = sb_load(a);
-        canonize(t, _c, sig);
-        sb__fn(mask_storeu_epi8)(p, (1ull << 52) - 1, u52_pack52(t));
-    }
-    if(rem > 0){
-        sb_vec t = sb_load(a);
-        canonize(t, _c, sig);
-        sb__fn(mask_storeu_epi8)(p, ~0ull >> (64 - rem), u52_pack52(t));
-    }
+    if(__builtin_expect(u52_page_edge(rp + out_limbs), 0))
+        return u64_from_u52_edge<false>((uint8_t *)rp, a, (int64_t)(out_limbs * 8));
+    u64_from_u52_encode<false, false>((uint8_t *)rp, a, (int64_t)(out_limbs * 8));
 }
 
 // r = p0 + 2*p1 + 4*p2 (+ 8*p3), composed lanewise (12-bit headroom: at most

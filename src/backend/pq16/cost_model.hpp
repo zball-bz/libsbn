@@ -6,7 +6,8 @@ namespace sbn::v3::pq16 {
 // 2026-09-08 1/16-octave calibration only; odd indices are held out.
 // Kernel delta (even 1/16 indices): results/fft_efficiency_2026-09-08/cost-update.json.
 // Source and fit receipt: results/variable_fft_2026-09-08/fit.json.
-inline double native_cost(Shape s,size_t an,size_t bn) noexcept {
+// constexpr: evaluated at compile time for shapes up to 8192 points (no logarithm), e.g. the query floor table.
+constexpr double native_cost(Shape s,size_t an,size_t bn) noexcept {
     // Right-angle (2026-09-08): costed as CT/PQ times the measured geomean, 0.955
     // for 16-bit odd radix (N<=20480) and 0.97 for the wide codec inside its
     // envelope (results/rac_2026-09-08); refit pending.

@@ -36,10 +36,14 @@ static inline int64_t u52_cmp_and_sub(sb_pvec r, sb_cpvec a, sb_cpvec b, uint64_
         const uint8_t ne = (uint8_t)sb_neq(ax, bx);
         if(ne){
             const uint8_t lt = (uint8_t)sb_ltu(ax, bx);
-            /* lt/gt lane-masks are disjoint, so lt>gt iff the top differing lane has a<b */
-            if(lt > (uint8_t)(ne ^ lt)){
-                SB_SWAP(sb_cpvec,a,b); SB_SWAP(uint64_t,na,nb); SB_SWAP(uint8_t,at,bt); sig ^= 1;
-            }
+            /* lt/gt lane-masks are disjoint, so lt>gt iff the top differing lane has a<b.
+               The swap is a select: on Karatsuba operands it is a coin flip (na == nb here). */
+            const bool sw = __builtin_unpredictable(lt > (uint8_t)(ne ^ lt));
+            const sb_cpvec a0 = a, b0 = b;
+            const uint8_t at0 = at, bt0 = bt;
+            a = sw ? b0 : a0; b = sw ? a0 : b0;
+            at = sw ? bt0 : at0; bt = sw ? at0 : bt0;
+            sig ^= (uint8_t)sw;
             goto compared;
         }
         if(!na) return 0;                     /* every lane equal -> a == b */

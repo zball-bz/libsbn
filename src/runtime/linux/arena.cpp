@@ -46,7 +46,7 @@ sbn3_status Arena::prepare(size_t offset, size_t bytes, sbn3_error *e) noexcept 
     if(computations) return error(e,SBN3_EBUSY,"prepare during compute");
     Span requested;
     if(!page_span(offset,bytes,requested)) return error(e,SBN3_ECAPACITY,"prepare range",0,bytes,virtual_bytes);
-    for(const auto &l:leases) if(l.references && l.guard && l.begin<requested.end && requested.begin<l.end)
+    if(any_live([&](const Lease &l){return l.guard && l.begin<requested.end && requested.begin<l.end;}))
         return error(e,SBN3_EBUSY,"prepare protected guard");
     Span next[max_regions+1];
     for(size_t i=0;i<region_count;++i) next[i]=regions[i];
@@ -105,7 +105,7 @@ sbn3_status Arena::trim(size_t offset, size_t bytes, sbn3_error *e) noexcept {
     if(computations) return error(e,SBN3_EBUSY,"trim during compute");
     Span s;
     if(!page_span(offset,bytes,s)) return error(e,SBN3_ECAPACITY,"trim range",0,bytes,virtual_bytes);
-    for(const auto &l:leases) if(l.references && l.begin<s.end && s.begin<l.end)
+    if(any_live([&](const Lease &l){return l.begin<s.end && s.begin<l.end;}))
         return error(e,SBN3_EBUSY,"trim live lease");
     Span next[max_regions+1], removed[max_regions];size_t nn=0,nr=0;
     for(size_t i=0;i<region_count;++i) {
@@ -149,9 +149,9 @@ sbn3_lease Arena::acquire(size_t offset,size_t bytes) noexcept {
     ArenaLock lock(*this);size_t end;
     require(bytes && add_size(offset,bytes,end) && end<=virtual_bytes && contains(offset,end),
             SBN3_FATAL_WORKSPACE,"lease unprepared range",bytes,virtual_bytes);
-    for(size_t i=0;i<max_leases;++i) if(!leases[i].references) {
+    if(const size_t i=free_slot();i<max_leases) {
         auto &l=leases[i];require(l.generation<UINT64_MAX>>16,SBN3_FATAL_LIFETIME,"lease generation overflow");
-        ++l.generation;l.begin=offset;l.end=end;l.references=1;l.guard=false;
+        ++l.generation;l.begin=offset;l.end=end;l.references=1;l.guard=false;set_live(i,true);
         return {base+offset,bytes,(l.generation<<16)|i};
     }
     fatal(SBN3_FATAL_WORKSPACE,"lease descriptors",max_leases+1,max_leases);
@@ -159,8 +159,7 @@ sbn3_lease Arena::acquire(size_t offset,size_t bytes) noexcept {
 bool Arena::unleased(size_t offset,size_t bytes) noexcept {
     ArenaLock lock(*this);size_t end;
     if(computations || !add_size(offset,bytes,end) || end>virtual_bytes)return false;
-    for(const auto &l:leases)if(l.references && l.begin<end && offset<l.end)return false;
-    return true;
+    return !any_live([&](const Lease &l){return l.begin<end && offset<l.end;});
 }
 sbn3_status Arena::reserve_guard(size_t offset,size_t bytes,sbn3_lease &out) noexcept {
     if(borrowed)return SBN3_EBUSY;
@@ -168,10 +167,10 @@ sbn3_status Arena::reserve_guard(size_t offset,size_t bytes,sbn3_lease &out) noe
     if(computations)return SBN3_EBUSY;
     if(!page_span(offset,bytes,s) || s.begin!=offset || s.end-offset!=bytes)return SBN3_ECAPACITY;
     for(size_t i=0;i<region_count;++i)if(regions[i].begin<s.end && s.begin<regions[i].end)return SBN3_EBUSY;
-    for(const auto &l:leases)if(l.references && l.begin<s.end && s.begin<l.end)return SBN3_EBUSY;
-    for(size_t i=0;i<max_leases;++i)if(!leases[i].references) {
+    if(any_live([&](const Lease &l){return l.begin<s.end && s.begin<l.end;}))return SBN3_EBUSY;
+    if(const size_t i=free_slot();i<max_leases) {
         auto &l=leases[i];require(l.generation<UINT64_MAX>>16,SBN3_FATAL_LIFETIME,"guard generation overflow");
-        ++l.generation;l.begin=s.begin;l.end=s.end;l.references=1;l.guard=true;
+        ++l.generation;l.begin=s.begin;l.end=s.end;l.references=1;l.guard=true;set_live(i,true);
         out={base+s.begin,bytes,(l.generation<<16)|i};return SBN3_OK;
     }
     return SBN3_ECAPACITY;
@@ -179,17 +178,20 @@ sbn3_status Arena::reserve_guard(size_t offset,size_t bytes,sbn3_lease &out) noe
 void Arena::claim_unshared(const sbn3_lease &l) noexcept {
     ArenaLock lock(*this);auto &r=find(l);
     require(r.references==1 && !r.guard,SBN3_FATAL_LIFETIME,"storage already in use");
-    for(const auto &other:leases)if(&other!=&r && other.references)
-        require(other.end<=r.begin || r.end<=other.begin,SBN3_FATAL_LIFETIME,"aliased storage lease");
+    require(!any_live([&](const Lease &other){return &other!=&r && !(other.end<=r.begin || r.end<=other.begin);}),
+            SBN3_FATAL_LIFETIME,"aliased storage lease");
     ++r.references;
 }
 void Arena::retain(const sbn3_lease &l) noexcept { ArenaLock lock(*this);auto &r=find(l);require(r.references<SIZE_MAX,SBN3_FATAL_LIFETIME,"lease ref overflow");++r.references; }
-void Arena::release(const sbn3_lease &l) noexcept { ArenaLock lock(*this);--find(l).references; }
+void Arena::release(const sbn3_lease &l) noexcept {
+    ArenaLock lock(*this);auto &r=find(l);
+    if(!--r.references)set_live(size_t(&r-leases),false);
+}
 void Arena::enter_compute() noexcept { ArenaLock lock(*this);++computations; }
 void Arena::leave_compute() noexcept { ArenaLock lock(*this);require(computations,SBN3_FATAL_LIFETIME,"compute ref underflow");--computations; }
 void Arena::stats(sbn3_arena_stats &s) noexcept {
     ArenaLock lock(*this);s={virtual_bytes,budget,resident_bytes,control_bytes,peak_bytes,0,0,computations,prepares,trims};
-    for(const auto &l:leases) if(l.references) {++s.active_leases;s.lease_references+=l.references;}
+    any_live([&](const Lease &l){++s.active_leases;s.lease_references+=l.references;return false;});
 }
 
 extern "C" sbn3_status sbn3_arena_create(const sbn3_arena_config *cfg,sbn3_arena **out,sbn3_error *e) {

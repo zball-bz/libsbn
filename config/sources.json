@@ -135,6 +135,129 @@
       ]
     },
     {
+      "path": "src/core/x86_64/mul_basecase_le16.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mul_basecase_le16"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/core/x86_64/sqr_basecase_fixed.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_sqr_basecase_2",
+        "sbn3i_sqr_basecase_3",
+        "sbn3i_sqr_basecase_4",
+        "sbn3i_sqr_basecase_5",
+        "sbn3i_sqr_basecase_6",
+        "sbn3i_sqr_basecase_7",
+        "sbn3i_sqr_basecase_8",
+        "sbn3i_sqr_basecase_9",
+        "sbn3i_sqr_basecase_10",
+        "sbn3i_sqr_basecase_11",
+        "sbn3i_sqr_basecase_12",
+        "sbn3i_sqr_basecase_13",
+        "sbn3i_sqr_basecase_14"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/core/x86_64/high_fixed.S",
+      "language": "asm_cpp",
+      "group": "common",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3i_mulhigh_5",
+        "sbn3i_mulhigh_6",
+        "sbn3i_mulhigh_7",
+        "sbn3i_mulhigh_8",
+        "sbn3i_mulhigh_9",
+        "sbn3i_mulhigh_10",
+        "sbn3i_mulhigh_11",
+        "sbn3i_mulhigh_12",
+        "sbn3i_mulhigh_13",
+        "sbn3i_mulhigh_14",
+        "sbn3i_sqrhigh_5",
+        "sbn3i_sqrhigh_6",
+        "sbn3i_sqrhigh_7",
+        "sbn3i_sqrhigh_8",
+        "sbn3i_sqrhigh_9",
+        "sbn3i_sqrhigh_10",
+        "sbn3i_sqrhigh_11",
+        "sbn3i_sqrhigh_12",
+        "sbn3i_sqrhigh_13",
+        "sbn3i_sqrhigh_14",
+        "sbn3i_sqrhigh_15",
+        "sbn3i_sqrhigh_16",
+        "sbn3i_sqrhigh_17",
+        "sbn3i_sqrhigh_18",
+        "sbn3i_sqrhigh_19",
+        "sbn3i_sqrhigh_20",
+        "sbn3i_mulhigh_fp_5",
+        "sbn3i_mulhigh_fp_6",
+        "sbn3i_mulhigh_fp_7",
+        "sbn3i_mulhigh_fp_8",
+        "sbn3i_mulhigh_fp_9",
+        "sbn3i_mulhigh_fp_10",
+        "sbn3i_mulhigh_fp_11",
+        "sbn3i_mulhigh_fp_12",
+        "sbn3i_mulhigh_fp_13",
+        "sbn3i_mulhigh_fp_14",
+        "sbn3i_sqrhigh_fp_5",
+        "sbn3i_sqrhigh_fp_6",
+        "sbn3i_sqrhigh_fp_7",
+        "sbn3i_sqrhigh_fp_8",
+        "sbn3i_sqrhigh_fp_9",
+        "sbn3i_sqrhigh_fp_10",
+        "sbn3i_sqrhigh_fp_11",
+        "sbn3i_sqrhigh_fp_12",
+        "sbn3i_sqrhigh_fp_13",
+        "sbn3i_sqrhigh_fp_14",
+        "sbn3i_sqrhigh_fp_15",
+        "sbn3i_sqrhigh_fp_16",
+        "sbn3i_sqrhigh_fp_17",
+        "sbn3i_sqrhigh_fp_18",
+        "sbn3i_sqrhigh_fp_19",
+        "sbn3i_sqrhigh_fp_20",
+        "sbn3i_mulhigh_reg_5",
+        "sbn3i_mulhigh_reg_6",
+        "sbn3i_mulhigh_reg_6_r1",
+        "sbn3i_mulhigh_reg_6_r2",
+        "sbn3i_mulhigh_reg_7",
+        "sbn3i_mulhigh_reg_7_r1",
+        "sbn3i_mulhigh_reg_7_r3",
+        "sbn3i_mulhigh_reg_8",
+        "sbn3i_mulhigh_reg_8_r1",
+        "sbn3i_mulhigh_reg_9",
+        "sbn3i_mulhigh_reg_9_r1",
+        "sbn3i_mulhigh_reg_10",
+        "sbn3i_mulhigh_reg_10_r2"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
       "path": "src/common/base.cpp",
       "language": "cxx",
       "group": "common",
@@ -160,6 +283,8 @@
         "src/core/x86_64/addmul_1_adx.s",
         "src/core/x86_64/addmul_2_adx.s",
         "src/core/x86_64/mul_basecase_le6.S",
+        "src/core/x86_64/mul_basecase_le16.S",
+        "src/core/x86_64/sqr_basecase_fixed.S",
         "src/core/x86_64/addmul_1.s",
         "src/core/x86_64/addmul_2.s"
       ],
@@ -637,6 +762,47 @@
       "provides_symbols": [
         "sbn::v3::u52::high_prefix_scratch_bytes",
         "sbn::v3::u52::high_prefix"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-vla-cxx-extension",
+        "-Wno-deprecated-anon-enum-enum-conversion",
+        "-Wno-constant-logical-operand"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/mulhigh.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/core/x86_64/high_fixed.S"
+      ],
+      "provides_symbols": [
+        "sbn::v3::u52::mulhigh_scratch_bytes",
+        "sbn::v3::u52::mulhigh",
+        "sbn::v3::u52::sqrhigh_scratch_bytes",
+        "sbn::v3::u52::sqrhigh",
+        "sbn::v3::u52::mulhigh_u52_bytes",
+        "sbn::v3::u52::mulhigh_u52",
+        "sbn3i_mulhigh_u52"
       ],
       "requires_symbols": [],
       "donor_ids": [
@@ -1572,6 +1738,769 @@
       "requires": [],
       "depends_on": [],
       "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/addsub.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::fp::portable::add",
+        "sbn::v3::fp::portable::sub"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/mul.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::fp::portable::mul",
+        "sbn::v3::fp::portable::sqr"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/addsub.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_add",
+        "sbn3f_sub"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/mul.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/core/x86_64/high_fixed.S",
+        "src/core/x86_64/mul_1.s",
+        "src/kernels/x86v4ifma/mulhigh.cpp",
+        "src/fp/x86_64/mul_glue.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_mul",
+        "sbn3f_sqr"
+      ],
+      "requires_symbols": [
+        "sbn3i_mul_1",
+        "sbn3i_mulhigh_u52",
+        "sbn3f_full",
+        "sbn3i_mulhigh_fp_5",
+        "sbn3i_mulhigh_fp_6",
+        "sbn3i_mulhigh_fp_7",
+        "sbn3i_mulhigh_fp_8",
+        "sbn3i_mulhigh_fp_9",
+        "sbn3i_mulhigh_fp_10",
+        "sbn3i_mulhigh_fp_11",
+        "sbn3i_mulhigh_fp_12",
+        "sbn3i_mulhigh_fp_13",
+        "sbn3i_mulhigh_fp_14",
+        "sbn3i_sqrhigh_fp_5",
+        "sbn3i_sqrhigh_fp_6",
+        "sbn3i_sqrhigh_fp_7",
+        "sbn3i_sqrhigh_fp_8",
+        "sbn3i_sqrhigh_fp_9",
+        "sbn3i_sqrhigh_fp_10",
+        "sbn3i_sqrhigh_fp_11",
+        "sbn3i_sqrhigh_fp_12",
+        "sbn3i_sqrhigh_fp_13",
+        "sbn3i_sqrhigh_fp_14",
+        "sbn3i_sqrhigh_fp_15",
+        "sbn3i_sqrhigh_fp_16",
+        "sbn3i_sqrhigh_fp_17",
+        "sbn3i_sqrhigh_fp_18",
+        "sbn3i_sqrhigh_fp_19",
+        "sbn3i_sqrhigh_fp_20"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/mul_glue.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/core/x86_64/word.cpp",
+        "src/instances/x86v4ifma/u52.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_full",
+        "sbn::v3::fp::mul_m_need",
+        "sbn::v3::fp::mul_m",
+        "sbn::v3::fp::sqr_m"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/div.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512vbmi2",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/div_km.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_div",
+        "sbn3f_inv_base"
+      ],
+      "requires_symbols": [
+        "sbn3f_div_km"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/div_qv.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/common/base.cpp",
+        "src/core/x86_64/recip_u1024.s"
+      ],
+      "provides_symbols": [
+        "sbn3f_sqrt_qv"
+      ],
+      "requires_symbols": [
+        "sbn3i_recip_u1024",
+        "sbn3f_sqrt"
+      ],
+      "donor_ids": [
+        "u52"
+      ],
+      "extra_flags": [
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/div_km.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_qv.cpp",
+        "src/fp/x86_64/inv_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_div_km"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_seed",
+        "sbn3f_inv_chain",
+        "sbn3f_inv_fix"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/inv.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_qv.cpp",
+        "src/fp/x86_64/div.S",
+        "src/core/x86_64/high_fixed.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv",
+        "sbn3f_inv_seed"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_qv",
+        "sbn3f_inv_base",
+        "sbn3i_mulhigh_reg_6",
+        "sbn3i_mulhigh_reg_6_r1",
+        "sbn3i_mulhigh_reg_6_r2",
+        "sbn3i_mulhigh_reg_7",
+        "sbn3i_mulhigh_reg_7_r1",
+        "sbn3i_mulhigh_reg_7_r3",
+        "sbn3i_mulhigh_reg_8",
+        "sbn3i_mulhigh_reg_8_r1",
+        "sbn3i_mulhigh_reg_9",
+        "sbn3i_mulhigh_reg_9_r1",
+        "sbn3i_mulhigh_reg_10_r2"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/inv_qv.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vbmi",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/inv_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv_qv",
+        "sbn3f_inv_fix"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_seed",
+        "sbn3f_inv_chain"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/inv_engine.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "bmi2",
+        "popcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/qv_kit.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_inv_chain"
+      ],
+      "requires_symbols": [
+        "sbn3f_inv_fix",
+        "sbn3f_qvk_z9",
+        "sbn3f_qvk_z8",
+        "sbn3f_qvk_z7",
+        "sbn3f_qvk_z6",
+        "sbn3f_qvk_z5",
+        "sbn3f_qvk_z4",
+        "sbn3f_qvk_z3",
+        "sbn3f_qvk_z2",
+        "sbn3f_qvk_z1",
+        "sbn3f_qvk_z0",
+        "sbn3f_qvk_seg9",
+        "sbn3f_qvk_seg8",
+        "sbn3f_qvk_seg7",
+        "sbn3f_qvk_seg6",
+        "sbn3f_qvk_seg5",
+        "sbn3f_qvk_seg4",
+        "sbn3f_qvk_seg3",
+        "sbn3f_qvk_seg2",
+        "sbn3f_qvk_seg1",
+        "sbn3f_qvk_seg0",
+        "sbn3f_qvk_rcp9",
+        "sbn3f_qvk_rcp8",
+        "sbn3f_qvk_rcp7",
+        "sbn3f_qvk_rcp6",
+        "sbn3f_qvk_rcp5",
+        "sbn3f_qvk_rcp4",
+        "sbn3f_qvk_rcp3",
+        "sbn3f_qvk_rcp2",
+        "sbn3f_qvk_rcp1",
+        "sbn3f_qvk_rcp0",
+        "sbn3f_qvk_rc9",
+        "sbn3f_qvk_rc8",
+        "sbn3f_qvk_rc7",
+        "sbn3f_qvk_rc6",
+        "sbn3f_qvk_rc5",
+        "sbn3f_qvk_rc4",
+        "sbn3f_qvk_rc3",
+        "sbn3f_qvk_rc2",
+        "sbn3f_qvk_gz9",
+        "sbn3f_qvk_gz8",
+        "sbn3f_qvk_gz7",
+        "sbn3f_qvk_gz6",
+        "sbn3f_qvk_gz5",
+        "sbn3f_qvk_gz4",
+        "sbn3f_qvk_gz3",
+        "sbn3f_qvk_gz2",
+        "sbn3f_qvk_gz1",
+        "sbn3f_qvk_gz0",
+        "sbn3f_qvk_upd9",
+        "sbn3f_qvk_upd8",
+        "sbn3f_qvk_upd7",
+        "sbn3f_qvk_upd6",
+        "sbn3f_qvk_upd5",
+        "sbn3f_qvk_upd4",
+        "sbn3f_qvk_upd3",
+        "sbn3f_qvk_upd2",
+        "sbn3f_qvk_upd1",
+        "sbn3f_qvk_upd0",
+        "sbn3f_qvk_seg9_r1",
+        "sbn3f_qvk_seg9_r2",
+        "sbn3f_qvk_seg9_r3",
+        "sbn3f_qvk_seg8_r1",
+        "sbn3f_qvk_seg8_r2",
+        "sbn3f_qvk_seg8_r3",
+        "sbn3f_qvk_seg7_r1",
+        "sbn3f_qvk_seg7_r2",
+        "sbn3f_qvk_seg7_r3",
+        "sbn3f_qvk_seg6_r1",
+        "sbn3f_qvk_seg6_r2",
+        "sbn3f_qvk_seg6_r3",
+        "sbn3f_qvk_seg5_r1",
+        "sbn3f_qvk_seg5_r2",
+        "sbn3f_qvk_seg5_r3",
+        "sbn3f_qvk_seg4_r1",
+        "sbn3f_qvk_seg4_r2",
+        "sbn3f_qvk_seg4_r3",
+        "sbn3f_qvk_seg3_r1",
+        "sbn3f_qvk_seg3_r2",
+        "sbn3f_qvk_seg3_r3",
+        "sbn3f_qvk_seg2_r1",
+        "sbn3f_qvk_seg2_r2",
+        "sbn3f_qvk_seg2_r3",
+        "sbn3f_qvk_seg1_r1",
+        "sbn3f_qvk_seg1_r2",
+        "sbn3f_qvk_seg1_r3",
+        "sbn3f_qvk_seg0_r1",
+        "sbn3f_qvk_seg0_r2",
+        "sbn3f_qvk_seg0_r3",
+        "sbn3f_qvk_sx",
+        "sbn3f_qvk_exact"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/sqrt.S",
+      "language": "asm_cpp",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/sqrt.cpp",
+        "src/fp/x86_64/div_qv.cpp",
+        "src/fp/x86_64/sqrt_km.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_sqrt"
+      ],
+      "requires_symbols": [
+        "sbn3f_sqrt_qv",
+        "sbn3f_sqrt_sb_fix",
+        "sbn3f_sqrt_km"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/sqrt.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_sqrt_sb_fix"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-fno-vectorize",
+        "-fno-slp-vectorize"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/sqrt_km.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/mul.S",
+        "src/fp/x86_64/mul_glue.cpp",
+        "src/fp/x86_64/rsqrt.S",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_sqrt_km"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt",
+        "sbn3f_mul",
+        "sbn3f_sqr",
+        "sbn::v3::fp::mul_m_need",
+        "sbn::v3::fp::mul_m",
+        "sbn::v3::fp::sqr_m",
+        "sbn3i_add_n",
+        "sbn3i_sub_n"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/rsqrt_rsp.S",
+        "src/fp/x86_64/rsqrt_qv.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_rsqrt",
+        "sbn3f_rsqrt_seed",
+        "sbn3f_rsqrt_prefix23",
+        "sbn3f_rsqrt_prefix24",
+        "sbn3f_rsqrt_prefix25",
+        "sbn3f_rsqrt_prefix26"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_qv",
+        "sbn3f_rsqrt_rsp_k7",
+        "sbn3f_rsqrt_rsp_seed"
+      ],
+      "donor_ids": [
+        "word_asm"
+      ]
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_rsp.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "adx",
+        "bmi2"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_rsqrt_rsp_k7",
+        "sbn3f_rsqrt_rsp_seed"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_qv.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vbmi",
+        "bmi1",
+        "bmi2",
+        "lzcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/rsqrt_engine.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_rsqrt_qv",
+        "sbn3f_rsqrt_qv_cs",
+        "sbn3f_rsqrt_fix"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_seed",
+        "sbn3f_rsqrt_chain_cu"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/rsqrt_engine.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "bmi2",
+        "popcnt"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/qv_kit.S"
+      ],
+      "provides_symbols": [
+        "sbn3f_rsqrt_chain",
+        "sbn3f_rsqrt_chain_cu"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt_fix",
+        "sbn3f_qvk_z9",
+        "sbn3f_qvk_z8",
+        "sbn3f_qvk_z7",
+        "sbn3f_qvk_z6",
+        "sbn3f_qvk_z5",
+        "sbn3f_qvk_z4",
+        "sbn3f_qvk_z3",
+        "sbn3f_qvk_z2",
+        "sbn3f_qvk_z1",
+        "sbn3f_qvk_z0",
+        "sbn3f_qvk_seg9",
+        "sbn3f_qvk_seg8",
+        "sbn3f_qvk_seg7",
+        "sbn3f_qvk_seg6",
+        "sbn3f_qvk_seg5",
+        "sbn3f_qvk_seg4",
+        "sbn3f_qvk_seg3",
+        "sbn3f_qvk_seg2",
+        "sbn3f_qvk_seg1",
+        "sbn3f_qvk_seg0",
+        "sbn3f_qvk_rcp9",
+        "sbn3f_qvk_rcp8",
+        "sbn3f_qvk_rcp7",
+        "sbn3f_qvk_rcp6",
+        "sbn3f_qvk_rcp5",
+        "sbn3f_qvk_rcp4",
+        "sbn3f_qvk_rcp3",
+        "sbn3f_qvk_rcp2",
+        "sbn3f_qvk_rcp1",
+        "sbn3f_qvk_rcp0",
+        "sbn3f_qvk_rc9",
+        "sbn3f_qvk_rc8",
+        "sbn3f_qvk_rc6",
+        "sbn3f_qvk_rc5",
+        "sbn3f_qvk_rc4",
+        "sbn3f_qvk_rc3",
+        "sbn3f_qvk_rc2",
+        "sbn3f_qvk_gz9",
+        "sbn3f_qvk_gz8",
+        "sbn3f_qvk_gz7",
+        "sbn3f_qvk_gz6",
+        "sbn3f_qvk_gz5",
+        "sbn3f_qvk_gz4",
+        "sbn3f_qvk_gz3",
+        "sbn3f_qvk_gz2",
+        "sbn3f_qvk_gz1",
+        "sbn3f_qvk_gz0",
+        "sbn3f_qvk_upd9",
+        "sbn3f_qvk_upd8",
+        "sbn3f_qvk_upd7",
+        "sbn3f_qvk_upd6",
+        "sbn3f_qvk_upd5",
+        "sbn3f_qvk_upd4",
+        "sbn3f_qvk_upd3",
+        "sbn3f_qvk_upd2",
+        "sbn3f_qvk_upd1",
+        "sbn3f_qvk_upd0",
+        "sbn3f_qvk_seg9_r1",
+        "sbn3f_qvk_seg9_r2",
+        "sbn3f_qvk_seg9_r3",
+        "sbn3f_qvk_seg8_r1",
+        "sbn3f_qvk_seg8_r2",
+        "sbn3f_qvk_seg8_r3",
+        "sbn3f_qvk_seg7_r1",
+        "sbn3f_qvk_seg7_r2",
+        "sbn3f_qvk_seg7_r3",
+        "sbn3f_qvk_seg6_r1",
+        "sbn3f_qvk_seg6_r2",
+        "sbn3f_qvk_seg6_r3",
+        "sbn3f_qvk_seg5_r1",
+        "sbn3f_qvk_seg5_r2",
+        "sbn3f_qvk_seg5_r3",
+        "sbn3f_qvk_seg4_r1",
+        "sbn3f_qvk_seg4_r2",
+        "sbn3f_qvk_seg4_r3",
+        "sbn3f_qvk_seg3_r1",
+        "sbn3f_qvk_seg3_r2",
+        "sbn3f_qvk_seg3_r3",
+        "sbn3f_qvk_seg2_r1",
+        "sbn3f_qvk_seg2_r2",
+        "sbn3f_qvk_seg2_r3",
+        "sbn3f_qvk_seg1_r1",
+        "sbn3f_qvk_seg1_r2",
+        "sbn3f_qvk_seg1_r3",
+        "sbn3f_qvk_seg0_r1",
+        "sbn3f_qvk_seg0_r2",
+        "sbn3f_qvk_seg0_r3",
+        "sbn3f_qvk_sx",
+        "sbn3f_qvk_exact",
+        "sbn3f_qvk_canon_mem"
+      ],
+      "donor_ids": []
+    },
+    {
+      "path": "src/fp/x86_64/qv_kit.S",
+      "language": "asm",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512ifma"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3f_qvk_z9",
+        "sbn3f_qvk_z8",
+        "sbn3f_qvk_z7",
+        "sbn3f_qvk_z6",
+        "sbn3f_qvk_z5",
+        "sbn3f_qvk_z4",
+        "sbn3f_qvk_z3",
+        "sbn3f_qvk_z2",
+        "sbn3f_qvk_z1",
+        "sbn3f_qvk_z0",
+        "sbn3f_qvk_seg9",
+        "sbn3f_qvk_seg8",
+        "sbn3f_qvk_seg7",
+        "sbn3f_qvk_seg6",
+        "sbn3f_qvk_seg5",
+        "sbn3f_qvk_seg4",
+        "sbn3f_qvk_seg3",
+        "sbn3f_qvk_seg2",
+        "sbn3f_qvk_seg1",
+        "sbn3f_qvk_seg0",
+        "sbn3f_qvk_rcp9",
+        "sbn3f_qvk_rcp8",
+        "sbn3f_qvk_rcp7",
+        "sbn3f_qvk_rcp6",
+        "sbn3f_qvk_rcp5",
+        "sbn3f_qvk_rcp4",
+        "sbn3f_qvk_rcp3",
+        "sbn3f_qvk_rcp2",
+        "sbn3f_qvk_rcp1",
+        "sbn3f_qvk_rcp0",
+        "sbn3f_qvk_rc9",
+        "sbn3f_qvk_rc8",
+        "sbn3f_qvk_rc7",
+        "sbn3f_qvk_rc6",
+        "sbn3f_qvk_rc5",
+        "sbn3f_qvk_rc4",
+        "sbn3f_qvk_rc3",
+        "sbn3f_qvk_rc2",
+        "sbn3f_qvk_rc1",
+        "sbn3f_qvk_rc0",
+        "sbn3f_qvk_gz9",
+        "sbn3f_qvk_gz8",
+        "sbn3f_qvk_gz7",
+        "sbn3f_qvk_gz6",
+        "sbn3f_qvk_gz5",
+        "sbn3f_qvk_gz4",
+        "sbn3f_qvk_gz3",
+        "sbn3f_qvk_gz2",
+        "sbn3f_qvk_gz1",
+        "sbn3f_qvk_gz0",
+        "sbn3f_qvk_upd9",
+        "sbn3f_qvk_upd8",
+        "sbn3f_qvk_upd7",
+        "sbn3f_qvk_upd6",
+        "sbn3f_qvk_upd5",
+        "sbn3f_qvk_upd4",
+        "sbn3f_qvk_upd3",
+        "sbn3f_qvk_upd2",
+        "sbn3f_qvk_upd1",
+        "sbn3f_qvk_upd0",
+        "sbn3f_qvk_seg9_r1",
+        "sbn3f_qvk_seg9_r2",
+        "sbn3f_qvk_seg9_r3",
+        "sbn3f_qvk_seg8_r1",
+        "sbn3f_qvk_seg8_r2",
+        "sbn3f_qvk_seg8_r3",
+        "sbn3f_qvk_seg7_r1",
+        "sbn3f_qvk_seg7_r2",
+        "sbn3f_qvk_seg7_r3",
+        "sbn3f_qvk_seg6_r1",
+        "sbn3f_qvk_seg6_r2",
+        "sbn3f_qvk_seg6_r3",
+        "sbn3f_qvk_seg5_r1",
+        "sbn3f_qvk_seg5_r2",
+        "sbn3f_qvk_seg5_r3",
+        "sbn3f_qvk_seg4_r1",
+        "sbn3f_qvk_seg4_r2",
+        "sbn3f_qvk_seg4_r3",
+        "sbn3f_qvk_seg3_r1",
+        "sbn3f_qvk_seg3_r2",
+        "sbn3f_qvk_seg3_r3",
+        "sbn3f_qvk_seg2_r1",
+        "sbn3f_qvk_seg2_r2",
+        "sbn3f_qvk_seg2_r3",
+        "sbn3f_qvk_seg1_r1",
+        "sbn3f_qvk_seg1_r2",
+        "sbn3f_qvk_seg1_r3",
+        "sbn3f_qvk_seg0_r1",
+        "sbn3f_qvk_seg0_r2",
+        "sbn3f_qvk_seg0_r3",
+        "sbn3f_qvk_sx",
+        "sbn3f_qvk_exact",
+        "sbn3f_qvk_canon_mem"
+      ],
       "requires_symbols": [],
       "donor_ids": []
     },

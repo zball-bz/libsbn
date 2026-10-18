@@ -55,10 +55,22 @@ extern "C" void sbn3_mul_basecase(uint64_t *r, size_t capacity,
 #endif
     mul_basecase_assumed(r,a,an,b,bn);
 }
+// straight-line triangle-plus-diagonal squares of 2..14 limbs
+using sqr_fn = void (*)(uint64_t *, const uint64_t *);
+static constexpr sqr_fn sqr_kernels[13] = {sbn3i_sqr_basecase_2, sbn3i_sqr_basecase_3, sbn3i_sqr_basecase_4,
+    sbn3i_sqr_basecase_5, sbn3i_sqr_basecase_6, sbn3i_sqr_basecase_7, sbn3i_sqr_basecase_8, sbn3i_sqr_basecase_9,
+    sbn3i_sqr_basecase_10, sbn3i_sqr_basecase_11, sbn3i_sqr_basecase_12, sbn3i_sqr_basecase_13,
+    sbn3i_sqr_basecase_14};
 void sbn::v3::mul_basecase_assumed(uint64_t *r,const uint64_t *a,size_t an,const uint64_t *b,size_t bn) noexcept {
     if (!an || !bn) { if (an+bn) memset(r, 0, (an+bn)*8); return; }
     if(an==1 && bn==1){const __uint128_t p=__uint128_t(a[0])*b[0];r[0]=uint64_t(p);r[1]=uint64_t(p>>64);return;}
     if (an <= 6 && bn <= 6) { sbn3i_mul_basecase_le6(r, a, an, b, bn); return; }
+    // 7..16 limbs: the fixed-row kernel at N = 16 (1..6 keep le6, untouched); squares (the
+    // same pointer and length) of 7..14 limbs by the straight-line triangle-plus-diagonal kernels
+    if (an <= 16 && bn <= 16) {
+        if (a == b && an == bn && an <= 14) { sqr_kernels[an - 2](r, a); return; }
+        sbn3i_mul_basecase_le16(r, a, an, b, bn); return;
+    }
     if (an < bn) { const uint64_t *p = a; a = b; b = p; size_t n = an; an = bn; bn = n; }
     if constexpr(SBN3_MUL2_STREAM)if(bn==2 && (SBN3_MUL2_STREAM==1 || an>=8192)){mul2_stream(r,a,an,b);return;}
     const long n = static_cast<long>(an);
@@ -69,6 +81,10 @@ void sbn::v3::mul_basecase_assumed(uint64_t *r,const uint64_t *a,size_t an,const
         r += 2; b += 2; bn -= 2;
     }
     if (bn) r[an] = sbn3i_addmul_1(r, a, n, b[0]);
+}
+void sbn::v3::sqr_basecase_assumed(uint64_t *r,const uint64_t *a,size_t n) noexcept {
+    if (n >= 2 && n <= 14) { sqr_kernels[n - 2](r, a); return; }
+    mul_basecase_assumed(r, a, n, a, n);
 }
 extern "C" void sbn3_int_mul_basecase(sbn3_int *out,sbn3_int_view a,sbn3_int_view b) {
     require(out && a.negative<=1 && b.negative<=1,SBN3_FATAL_ARGUMENT,"integer magnitude/sign");
