@@ -2057,14 +2057,16 @@
       ],
       "depends_on": [
         "src/fp/x86_64/sqrt.cpp",
-        "src/fp/x86_64/div_qv.cpp"
+        "src/fp/x86_64/div_qv.cpp",
+        "src/fp/x86_64/sqrt_km.cpp"
       ],
       "provides_symbols": [
         "sbn3f_sqrt"
       ],
       "requires_symbols": [
         "sbn3f_sqrt_qv",
-        "sbn3f_sqrt_sb_fix"
+        "sbn3f_sqrt_sb_fix",
+        "sbn3f_sqrt_km"
       ],
       "donor_ids": [
         "word_asm"
@@ -2085,6 +2087,41 @@
         "-fno-vectorize",
         "-fno-slp-vectorize"
       ]
+    },
+    {
+      "path": "src/fp/x86_64/sqrt_km.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "bmi2",
+        "adx"
+      ],
+      "depends_on": [
+        "src/fp/x86_64/mul.S",
+        "src/fp/x86_64/mul_glue.cpp",
+        "src/fp/x86_64/rsqrt.S",
+        "src/core/x86_64/word.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3f_sqrt_km"
+      ],
+      "requires_symbols": [
+        "sbn3f_rsqrt",
+        "sbn3f_mul",
+        "sbn3f_sqr",
+        "sbn::v3::fp::mul_m_need",
+        "sbn::v3::fp::mul_m",
+        "sbn::v3::fp::sqr_m",
+        "sbn3i_add_n",
+        "sbn3i_sub_n"
+      ],
+      "donor_ids": []
     },
     {
       "path": "src/fp/x86_64/rsqrt.S",

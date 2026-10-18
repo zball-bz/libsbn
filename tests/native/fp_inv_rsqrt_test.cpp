@@ -1,19 +1,21 @@
-// Contract test of the fp reciprocal and reciprocal square root kernels sbn3f_inv / sbn3f_rsqrt (src/fp/kernel.hpp),
-// k = 1..512 result limbs, by exact integer arithmetic in the test (no reference library, no research code).
+// Contract test of the fp reciprocal, reciprocal square root and square root kernels sbn3f_inv / sbn3f_rsqrt / sbn3f_sqrt
+// (src/fp/kernel.hpp), k = 1..512 result limbs, by exact integer arithmetic in the test (no reference library, no
+// research code).
 //
 // The contract: k = e_top - L2 result limbs at grid L2 = floor((leps - 2) / 64), unit u = B^L2 (B = 2^64), and
 //   inv:   |Z - 1/b| < 4u,         checked as  (Z - 4u) |b| < 1 < (Z + 4u) |b|,
 //   rsqrt: |Z - 1/sqrt(x)| < 4u,   checked as  (Z - 4u <= 0 or (Z - 4u)^2 x < 1) and 1 < (Z + 4u)^2 x,
+//   sqrt:  |Z - sqrt(x)| < 4u,     checked as  (Z - 4u <= 0 or (Z - 4u)^2 < x) and x < (Z + 4u)^2,
 // with Z the kernel's output value (sign: b's for inv, + for rsqrt); every product is formed exactly over the limbs and
-// compared with the power of B it must straddle. Also checked: the output is normalized (top limb nonzero, at most
-// inv_need / rsqrt_need limbs; zero exactly when k <= 0), the kernel writes nothing outside z[0 .. need) (canaries on
+// compared with the power of B (or the operand) it must straddle. Also checked: the output is normalized (top limb
+// nonzero, at most inv_need / rsqrt_need / sqrt_need limbs; zero exactly when k <= 0), the kernel writes nothing outside z[0 .. need) (canaries on
 // both sides), leaves the operand unchanged, and reads nothing outside it (operands placed against PROT_NONE pages on
 // either side, and the output's capacity ending at one).
 // Operands: every k 1..512 at several leading-zero counts (every one for small k: the scalar routes switch on it) and
 // several leps in the same grid, with these families: random limbs (k + 1 limbs, the kernels' window), short operands,
 // long operands (truncated by the kernels), all ones, powers of two (B^(e-1) among them), a top limb with one bit and
-// the rest ones; rsqrt also every s = c/2 + 32 [e odd] (c = lzcnt & ~1) for small k and the s 61..63 band; both signs
-// for inv; k <= 0 (zero results).
+// the rest ones; rsqrt and sqrt also every s = c/2 + 32 [e odd] (c = lzcnt & ~1) for small k and the s 61..63 band;
+// sqrt also exact squares (a zero residual on its Karp-Markstein path); both signs for inv; k <= 0 (zero results).
 #include "fp/kernel.hpp"
 #include <stdint.h>
 #include <stdio.h>
@@ -132,6 +134,11 @@ Nat mul(const Nat &a, const Nat &b) {
     const Nat z0 = mul(a0, b0), z2 = mul(a1, b1), z1 = sub(sub(mul(add(a0, a1), add(b0, b1)), z0), z2);
     return add(add(z0, shl_limbs(z1, h)), shl_limbs(z2, 2 * h));
 }
+// sign of A B^p - C B^q for A, C >= 0 trimmed (p, q any integers)
+int cmp_scaled(const Nat &A, int64_t p, const Nat &C, int64_t q) {
+    const int64_t lo = p < q ? p : q;
+    return cmp(shl_limbs(A, size_t(p - lo)), shl_limbs(C, size_t(q - lo)));
+}
 // sign of A * B^p - 1 for A >= 0 (p any integer): A B^p vs 1
 int cmp_one(const Nat &A, int64_t p) {
     if (A.empty()) return -1;
@@ -195,9 +202,10 @@ void fail(const char *op, const char *what, int64_t k, unsigned ld, int fam, int
 }
 
 // one call: the operand at its place, the output with canaries (place 1: the output capacity ends at a PROT_NONE page)
-template <bool RSQRT>
+enum { INV, RSQRT, SQRT };
+template <int OP>
 void check(const Op &o, int64_t leps, unsigned ld, int fam, int place) {
-    const char *op = RSQRT ? "rsqrt" : "inv";
+    const char *op = OP == RSQRT ? "rsqrt" : OP == SQRT ? "sqrt" : "inv";
     const size_t n = o.v.size();
     uint64_t *d;
     std::vector<uint64_t> heap;
@@ -206,8 +214,10 @@ void check(const Op &o, int64_t leps, unsigned ld, int fam, int place) {
     else { heap.assign(n + 2, 0); d = heap.data() + 1; }
     memcpy(d, o.v.data(), 8 * n);
     const fx x{d, o.e, uint64_t(n) | (o.neg ? sbn::v3::fp::sign_bit : 0)};
-    const int64_t need = RSQRT ? sbn::v3::fp::rsqrt_need(x, leps) : sbn::v3::fp::inv_need(x, leps);
-    const int64_t L2 = (leps - 2) >> 6, k = RSQRT ? ((2 - o.e) >> 1) - L2 : 1 - o.e - L2;
+    const int64_t need = OP == RSQRT ? sbn::v3::fp::rsqrt_need(x, leps) : OP == SQRT ? sbn::v3::fp::sqrt_need(x, leps)
+                                                                       : sbn::v3::fp::inv_need(x, leps);
+    const int64_t L2 = (leps - 2) >> 6;
+    const int64_t k = OP == RSQRT ? ((2 - o.e) >> 1) - L2 : OP == SQRT ? ((o.e + 1) >> 1) - L2 : 1 - o.e - L2;
     std::vector<uint64_t> buf;
     uint64_t *z;
     if (place == 1 && need > 0) {
@@ -217,7 +227,7 @@ void check(const Op &o, int64_t leps, unsigned ld, int fam, int place) {
         buf.assign(size_t(need) + 2 * G, CAN);
         z = buf.data() + G;
     }
-    const fxr r = RSQRT ? sbn3f_rsqrt(z, &x, leps) : sbn3f_inv(z, &x, leps);
+    const fxr r = OP == RSQRT ? sbn3f_rsqrt(z, &x, leps) : OP == SQRT ? sbn3f_sqrt(z, &x, leps) : sbn3f_inv(z, &x, leps);
     ++n_checks;
     if (memcmp(d, o.v.data(), 8 * n) != 0) fail(op, "the operand changed", k, ld, fam, leps, o);
     for (int i = 1; i <= G; ++i)
@@ -232,7 +242,7 @@ void check(const Op &o, int64_t leps, unsigned ld, int fam, int place) {
     } else {
         if (rn < 1 || rn > need) { fail(op, "output length outside 1 .. need", k, ld, fam, leps, o); return; }
         if (z[rn - 1] == 0) fail(op, "output not normalized", k, ld, fam, leps, o);
-        if ((r.ns >> 63) != (RSQRT ? 0 : uint64_t(o.neg))) fail(op, "sign", k, ld, fam, leps, o);
+        if ((r.ns >> 63) != (OP == INV ? uint64_t(o.neg) : 0)) fail(op, "sign", k, ld, fam, leps, o);
     }
     // the value: Z = Zv B^gz; m = min(gz, L2); Zs = Zv B^(gz - m), D = 4 B^(L2 - m)
     Nat Zv(z, z + (k > 0 ? rn : 0));
@@ -245,12 +255,19 @@ void check(const Op &o, int64_t leps, unsigned ld, int fam, int place) {
     trim(X);
     const int64_t gx = o.e - int64_t(n);
     bool lo_ok, hi_ok;
-    if (!RSQRT) {
+    if (OP == INV) {
         // (Zs -+ D) X B^(m + gx) vs 1
         const Nat P = mul(Zs, X), Q = shl_limbs(mul_small(X, 4), j);
         const Nat up = add(P, Q);
         hi_ok = cmp_one(up, m + gx) > 0;
         lo_ok = cmp(P, Q) <= 0 || cmp_one(sub(P, Q), m + gx) < 0;
+    } else if (OP == SQRT) {
+        // (Zs -+ D)^2 B^2m vs X B^gx: Zs^2 -+ 8 B^j Zs + 16 B^2j
+        const Nat T2 = mul(Zs, Zs), c1 = shl_limbs(mul_small(Zs, 8), j), c2 = shl_limbs(Nat{16}, 2 * j);
+        const Nat base = add(T2, c2);
+        hi_ok = cmp_scaled(add(base, c1), 2 * m, X, gx) > 0;
+        const Nat four = shl_limbs(Nat{4}, j);
+        lo_ok = cmp(Zs, four) <= 0 || cmp_scaled(sub(base, c1), 2 * m, X, gx) < 0;
     } else {
         // (Zs -+ D)^2 X B^(2m + gx) vs 1: Zs^2 X -+ 8 B^j Zs X + 16 B^2j X
         const Nat T1 = mul(Zs, X), T2 = mul(Zs, T1);
@@ -276,10 +293,10 @@ int main() {
             if (an > 2) a[an / 2] = 0, a[an - 2] = ~uint64_t(0);
             if (cmp(mul(a, b), mul_school(a, b)) != 0) { fprintf(stderr, "test multiply broken (%zu x %zu)\n", an, bn); return 2; }
         }
-    opnd_pages.init(8 * 600);
+    opnd_pages.init(8 * 1100);                          // sqrt operands: up to 2k + 7 limbs
     out_pages.init(8 * 600);
     const unsigned edge_ld[] = {0, 1, 2, 31, 32, 54, 55, 58, 59, 60, 61, 62, 63};
-    long inv_n = 0, rs_n = 0;
+    long inv_n = 0, rs_n = 0, sq_n = 0;
     for (int64_t k = -2; k <= 512; ++k) {
         // inv: b = v B^(e - n), k = 1 - e - L2
         const bool small = k <= 24;
@@ -293,11 +310,11 @@ int main() {
         for (unsigned ld : lds) {
             const int64_t e = int64_t(rnd() % 7) - 3, L2 = 1 - e - k, leps = 64 * L2 + 2 + int64_t(rnd() % 64);
             const size_t nk = size_t(k > 0 ? k : 1) + 1;
-            check<false>(make_op(ld, nk, 0, e, rnd() & 1), leps, ld, 0, int(ld % 3));
+            check<INV>(make_op(ld, nk, 0, e, rnd() & 1), leps, ld, 0, int(ld % 3));
             ++inv_n;
             if (small || ld == 0 || ld == 63 || ld == 61) {
                 for (int fam = 1; fam <= 3; ++fam) {
-                    check<false>(make_op(ld, nk, fam, e, false), leps, ld, fam, fam % 3);
+                    check<INV>(make_op(ld, nk, fam, e, false), leps, ld, fam, fam % 3);
                     ++inv_n;
                 }
             }
@@ -306,9 +323,9 @@ int main() {
             const unsigned ld = unsigned(rnd() % 64);
             const int64_t e = int64_t(rnd() % 7) - 3, L2 = 1 - e - k, leps = 64 * L2 + 2 + int64_t(rnd() % 64);
             const size_t nk = size_t(k > 0 ? k : 1);
-            check<false>(make_op(ld, 1 + rnd() % 3, 0, e, false), leps, ld, 0, 1);                   // short
-            check<false>(make_op(ld, nk + 2 + rnd() % 6, 0, e, true), leps, ld, 0, 2);              // long
-            check<false>(make_op(63, 1 + rnd() % 3, 1, e, false), leps, 63, 1, 0);                  // B^(e-1)
+            check<INV>(make_op(ld, 1 + rnd() % 3, 0, e, false), leps, ld, 0, 1);                   // short
+            check<INV>(make_op(ld, nk + 2 + rnd() % 6, 0, e, true), leps, ld, 0, 2);              // long
+            check<INV>(make_op(63, 1 + rnd() % 3, 1, e, false), leps, 63, 1, 0);                  // B^(e-1)
             inv_n += 3;
         }
         // rsqrt: x = v B^(e - n), k = floor((2 - e) / 2) - L2; c = lzcnt & ~1, s = c/2 + 32 [e odd]
@@ -324,11 +341,11 @@ int main() {
             int64_t e = 2 * (int64_t(rnd() % 7) - 3) + (odd ? 1 : 0);
             const int64_t L2 = ((2 - e) >> 1) - k, leps = 64 * L2 + 2 + int64_t(rnd() % 64);
             const size_t nk = size_t(k > 0 ? k : 1) + 1;
-            check<true>(make_op(ld, nk, 0, e, false), leps, ld, 0, int(s % 3));
+            check<RSQRT>(make_op(ld, nk, 0, e, false), leps, ld, 0, int(s % 3));
             ++rs_n;
             if (k <= 12 || s == 0 || s == 63) {
                 for (int fam = 1; fam <= 3; ++fam) {
-                    check<true>(make_op(c, nk, fam, e, false), leps, c, fam, fam % 3);
+                    check<RSQRT>(make_op(c, nk, fam, e, false), leps, c, fam, fam % 3);
                     ++rs_n;
                 }
             }
@@ -338,11 +355,40 @@ int main() {
             const int64_t e = 2 * (int64_t(rnd() % 7) - 3) + (s >= 32 ? 1 : 0), L2 = ((2 - e) >> 1) - k;
             const int64_t leps = 64 * L2 + 2 + int64_t(rnd() % 64);
             const size_t nk = size_t(k > 0 ? k : 1);
-            check<true>(make_op(ld, 1 + rnd() % 3, 0, e, false), leps, ld, 0, 1);                    // short
-            check<true>(make_op(ld, nk + 2 + rnd() % 6, 0, e, false), leps, ld, 0, 2);               // long
+            check<RSQRT>(make_op(ld, 1 + rnd() % 3, 0, e, false), leps, ld, 0, 1);                    // short
+            check<RSQRT>(make_op(ld, nk + 2 + rnd() % 6, 0, e, false), leps, ld, 0, 2);               // long
             const int64_t eo = 2 * (int64_t(rnd() % 7) - 3) + 1, L2o = ((2 - eo) >> 1) - k;  // x = B^(e-1), e odd: 1/sqrt x = B^e_top
-            check<true>(make_op(63, 1 + rnd() % 3, 1, eo, false), 64 * L2o + 2 + int64_t(rnd() % 64), 63, 1, 0);
+            check<RSQRT>(make_op(63, 1 + rnd() % 3, 1, eo, false), 64 * L2o + 2 + int64_t(rnd() % 64), 63, 1, 0);
             rs_n += 3;
+        }
+        // sqrt: x = v B^(e - n), k = ceil(e / 2) - L2; the same s cover as rsqrt
+        for (unsigned s : ss) {
+            const bool odd = s >= 32;
+            const unsigned c = 2 * (s - (odd ? 32 : 0)), ld = c + unsigned(rnd() & 1);
+            const int64_t e = 2 * (int64_t(rnd() % 7) - 3) + (odd ? 1 : 0), L2 = ((e + 1) >> 1) - k;
+            const int64_t leps = 64 * L2 + 2 + int64_t(rnd() % 64);
+            const size_t nk = size_t(k > 0 ? 2 * k : 1) + 1;
+            check<SQRT>(make_op(ld, nk, 0, e, false), leps, ld, 0, int(s % 3));
+            ++sq_n;
+            if (k <= 12 || s == 0 || s == 63) {
+                for (int fam = 1; fam <= 3; ++fam) {
+                    check<SQRT>(make_op(c, nk, fam, e, false), leps, c, fam, fam % 3);
+                    ++sq_n;
+                }
+            }
+        }
+        {
+            const unsigned s = unsigned(rnd() % 64), c = 2 * (s % 32), ld = c + unsigned(rnd() & 1);
+            const int64_t e = 2 * (int64_t(rnd() % 7) - 3) + (s >= 32 ? 1 : 0), L2 = ((e + 1) >> 1) - k;
+            const int64_t leps = 64 * L2 + 2 + int64_t(rnd() % 64);
+            const size_t nk = size_t(k > 0 ? 2 * k : 1);
+            check<SQRT>(make_op(ld, 1 + rnd() % 3, 0, e, false), leps, ld, 0, 1);                     // short
+            check<SQRT>(make_op(ld, nk + 2 + rnd() % 6, 0, e, false), leps, ld, 0, 2);                // long
+            Op sq = make_op(ld, 1 + rnd() % (nk > 4 ? nk / 2 : 2), 0, e, false);                      // an exact square
+            sq.v = mul(sq.v, sq.v);
+            trim(sq.v);
+            if (sq.v.size() <= 2 * size_t(k > 0 ? k : 1) + 8) check<SQRT>(sq, leps, ld, 0, 0), ++sq_n;
+            sq_n += 2;
         }
     }
     timespec t1;
@@ -352,6 +398,7 @@ int main() {
         fprintf(stderr, "fp_inv_rsqrt_test: %ld of %ld checks failed\n", n_fail, n_checks);
         return 1;
     }
-    printf("fp_inv_rsqrt_test: OK, %ld checks (inv %ld, rsqrt %ld; k -2..512), %.2f s\n", n_checks, inv_n, rs_n, sec);
+    printf("fp_inv_rsqrt_test: OK, %ld checks (inv %ld, rsqrt %ld, sqrt %ld; k -2..512), %.2f s\n", n_checks, inv_n, rs_n, sq_n,
+           sec);
     return 0;
 }
