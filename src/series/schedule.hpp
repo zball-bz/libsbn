@@ -32,9 +32,16 @@ struct ScheduleRefinement {
     // Query/compile-only context; never retained for runtime serial splitting.
     const void *prepared_context = nullptr;
 };
+bool choose_split(sbn3_series_range,double,const sbn3_series_oracle &,
+                  const ScheduleRefinement &,uint64_t &) noexcept;
 sbn3_query_result query_schedule(const sbn3_series_spec &, const sbn3_series_options &,
                                  const sbn3_series_oracle &, sbn3_series_info &,
                                  const ScheduleRefinement & = {});
+// One explicit decomposition quote for an enclosing resource planner. Does not
+// enumerate prefix candidates; max_serial_prefix is not the selection here.
+sbn3_query_result query_schedule_prefix(const sbn3_series_spec &, const sbn3_series_options &,
+                                        const sbn3_series_oracle &, unsigned prefix, sbn3_series_info &,
+                                        const ScheduleRefinement & = {});
 // Replay only the already selected schedule. Resource identities/bytes are
 // checked against the pure query; do not repeat the candidate search at bind.
 sbn3_series_plan *prepare_schedule(const sbn3_series_spec &, const sbn3_series_options &,
@@ -48,6 +55,10 @@ sbn3_query_result compile_schedule(const sbn3_series_spec &, const sbn3_series_o
 // Disjoint preparation regions, independent of logical execution order.
 void prepare_stages(const sbn3_series_plan *, sbn3_team *,
                     void (*)(void *, const sbn3_series_stage *, const sbn3_series_resources *), void *);
+// Private replay on an already active scope. The scope width matches the
+// compiled worker grant; public C execution retains its idle-Team entry.
+void execute_schedule_on_scope(const sbn3_series_plan *,const sbn3_series_executor *,
+    sbn3_team_scope *,sbn3_series_values *,void *scratch,size_t bytes);
 SharedPlacement shared_placement(const sbn3_series_plan *, size_t stage_index, unsigned slot = 0);
 const uint64_t *stage_decisions(const sbn3_series_plan *, size_t stage_index);
 } // namespace sbn::v3::series

@@ -1,4 +1,5 @@
 #pragma once
+#include "common/query_audit.hpp"
 #include "sbn3/mul.h"
 #include "product/local_windows.hpp"
 #include "product/difference.hpp"
@@ -15,6 +16,7 @@
 namespace sbn::v3::product::compact_window_detail {
 struct Plan {pq16::Shape fft{};size_t ring=0,capacity=0,low_words=0,bytes=0;unsigned count=0,shared=0;bool keep_cache=false;};
 inline Plan query(const WindowGroupShape &s,bool keep_cache=false) noexcept {
+    SBN3_QUERY_AUDIT("compact_window_detail::query");
     if((s.count!=2&&s.count!=3)||s.products[s.count-2].bound.words<=native_policy::window_inline_words)return {};
     size_t extent=0;for(unsigned j=0;j<s.count;++j)extent=std::max(extent,s.products[j].bound.words+1);
     if(extent>pq16::cyclic_max_words+pq16::cyclic_max_words/4)return {};
@@ -76,14 +78,19 @@ inline Plan query(const WindowGroupShape &s,bool keep_cache=false) noexcept {
 }
 class Products {
     Plan p_;Frame &space_;uint64_t *value_,*low_;const pq16::Tables *tables_;double *cache_=nullptr;Frame::Mark cache_mark_{};
-    size_t low_product(Span a,Span b,ShiftedSpan sub,MagnitudeBound bound){
+    const pq16::Shape *low_plans_=nullptr;
+    size_t low_product(unsigned slot,Span a,Span b,ShiftedSpan sub,MagnitudeBound bound){
         const size_t g=bound.words>=p_.ring?bound.words-p_.ring+1:1;
         require(g<=p_.low_words,SBN3_FATAL_WORKSPACE,"repair low capacity");
         memset(low_,0,16*g);FrameMark temporary(space_);
         if(g<=8){
             for(size_t j=0;j<std::min(b.words,g);++j){uint64_t carry=0;
                 for(size_t i=0;i+j<g&&i<a.words;++i){const auto x=(unsigned __int128)a.data[i]*b.data[j]+low_[i+j]+carry;low_[i+j]=uint64_t(x);carry=uint64_t(x>>64);}}
-        }else if(a.words&&b.words)local_window_detail::full(low_,{a.data,std::min(a.words,g)},{b.data,std::min(b.words,g)},space_);
+        }else if(a.words&&b.words){
+            const Span low_a{a.data,std::min(a.words,g)},low_b{b.data,std::min(b.words,g)};
+            if(low_plans_)local_window_detail::full_selected(low_,low_a,low_b,space_,low_plans_[slot]);
+            else local_window_detail::full(low_,low_a,low_b,space_);
+        }
         if(sub.shift<g&&sub.value.words)limbs::sub_from(low_+sub.shift,g-sub.shift,sub.value.data,std::min(sub.value.words,g-sub.shift));
         return g;
     }
@@ -111,14 +118,14 @@ class Products {
         return {value_+w.origin,w.words,0,negative};
     }
   public:
-    Products(Plan p,Frame &space):p_(p),space_(space),value_(space.alloc<uint64_t>(p.capacity)),low_(space.alloc<uint64_t>(2*p.low_words)),
-        tables_(pq16::prepare(space,p.fft)){}
+    Products(Plan p,Frame &space,const pq16::Shape *low_plans=nullptr):p_(p),space_(space),value_(space.alloc<uint64_t>(p.capacity)),low_(space.alloc<uint64_t>(2*p.low_words)),
+        tables_(pq16::prepare(space,p.fft)),low_plans_(low_plans){}
     WindowResult multiply(unsigned slot,Span a,Span b,Window w,MagnitudeBound bound){
-        const auto g=low_product(a,b,{},bound);calculate(slot,a,b);auto result=finish(w,bound,g);
+        const auto g=low_product(slot,a,b,{},bound);calculate(slot,a,b);auto result=finish(w,bound,g);
         require(!result.negative,SBN3_FATAL_MATH,"positive repaired product");return result;
     }
     WindowResult cancel(unsigned slot,Span a,Span b,ShiftedSpan sub,Window w,MagnitudeBound bound){
-        const auto g=low_product(a,b,sub,bound);calculate(slot,a,b);
+        const auto g=low_product(slot,a,b,sub,bound);calculate(slot,a,b);
         if(sub.value.words==1&&sub.value.data[0]==1)limbs::cyclic_sub_power(value_,p_.ring,sub.shift%p_.ring);
         else limbs::cyclic_sub_shifted(value_,p_.ring,sub.value.data,sub.value.words,sub.shift);
         return finish(w,bound,g);

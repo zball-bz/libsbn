@@ -90,6 +90,36 @@
           "group": "reference"
         }
       ]
+    },
+    {
+      "name": "cpp_integer",
+      "sources": [
+        {
+          "path": "examples/cpp_integer.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "ooc_constant",
+      "sources": [
+        {
+          "path": "examples/ooc_constant.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ]
+    },
+    {
+      "name": "cpp_float",
+      "sources": [
+        {
+          "path": "examples/cpp_float.cpp",
+          "language": "cxx",
+          "group": "reference"
+        }
+      ]
     }
   ]
 }

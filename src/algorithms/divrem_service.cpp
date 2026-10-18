@@ -7,6 +7,7 @@
 #include "algorithms/local_divrem.hpp"
 #include "product/difference.hpp"
 #include "algorithms/divrem_prepared.hpp"
+#include "algorithms/divisor_view.hpp"
 #include "algorithms/newton_tuning.hpp"
 #include "algorithms/newton_limits.hpp"
 #include "algorithms/local_inverse.hpp"
@@ -614,7 +615,7 @@ void fused_execute(Binding&b,const uint64_t*N,size_t nn,uint64_t*Q,uint64_t*R,sb
             require(++corrections<=8,SBN3_FATAL_MATH,"fused positive correction");parallel_limbs::sub_from(b.team,b.tbuf,L,b.Dn,dn);}
         require(!parallel_limbs::add_word(b.ubuf,qn,corrections),SBN3_FATAL_MATH,"fused quotient add");
     }
-    parallel_limbs::copy(b.team,Q,b.ubuf,qn);parallel_limbs::copy(b.team,R,b.tbuf,dn);
+    if(Q)parallel_limbs::copy(b.team,Q,b.ubuf,qn);parallel_limbs::copy(b.team,R,b.tbuf,dn);
     if(b.shift)parallel_limbs::right_shift(b.team,R,dn,dn,b.shift);
     result.corrections=corrections;b.metrics.products_executed=4;
     unbind_products(b);b.arena->release(b.phase_output);b.phase_output={};
@@ -645,12 +646,11 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
     // X = R*B^head + N'[pos-head, pos); the blocks below are then complete.
     if (head) {
         pos -= head;
-        if(zero_head)Q[pos]=0;
+        if(zero_head){if(Q)Q[pos]=0;}
         else{
             shifted_span(team, xbuf, N, nn, pos, head, s);
             parallel_limbs::copy(team, xbuf + head, rbuf, dn);
-            for (size_t j = head; j-- > 0;)
-                Q[pos + j] = word_step(team, xbuf + j, Dn, dn, b.dinv, b.metrics.head_corrections);
+            for (size_t j = head; j-- > 0;){const auto digit=word_step(team,xbuf+j,Dn,dn,b.dinv,b.metrics.head_corrections);if(Q)Q[pos+j]=digit;}
             parallel_limbs::copy(team, rbuf, xbuf, dn);
         }
         b.metrics.head_limbs += head;
@@ -677,14 +677,14 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
         tin.b = {qbuf, in};
         sbn3_product_execute(product_binding(b,false), &tin, {tbuf, p.tcap});
         ++products;
-        auto *block=Q+pos;
-        parallel_limbs::copy(team,block,qbuf,ic);
+        auto *block=Q?Q+pos:nullptr;const auto qlow=qbuf[0];
+        if(Q)parallel_limbs::copy(team,block,qbuf,ic);
         // E = R*B^ic + N'block - T, |E| < 7 D' < B^(dn+1).
         // T's output storage becomes E. The U operand has already been read,
         // so reuse ubuf for the shifted low block instead of materializing X.
         shifted_span(team, ubuf, N, nn, pos, ic, s);
         const product::DifferenceValue input{{ubuf,ic},0,ic,0,{rbuf,dn}};
-        const bool negative=product::product_difference(xbuf,L+size_t(cyclic),p.ring,input,block[0]*Dn[0],nullptr,team).negative;
+        const bool negative=product::product_difference(xbuf,L+size_t(cyclic),p.ring,input,qlow*Dn[0],nullptr,team).negative;
         require(parallel_limbs::zero(team, xbuf + dn + 1, L + size_t(cyclic) - dn - 1), SBN3_FATAL_MATH, "division residual certificate");
         unsigned k = 0;
         auto above = [&](bool strict) {
@@ -698,13 +698,13 @@ void barrett_execute(Binding &b, const uint64_t *N, size_t nn, uint64_t *Q, uint
             }
             require(!sbn3i_sub_n(xbuf, Dn, xbuf, long(dn)), SBN3_FATAL_MATH, "division negative residual");
             ++k;
-            require(!parallel_limbs::sub_word(block, ic, k), SBN3_FATAL_MATH, "division quotient underflow");
+            if(Q)require(!parallel_limbs::sub_word(block, ic, k), SBN3_FATAL_MATH, "division quotient underflow");
         } else {
             while (above(false)) {
                 require(++k <= divrem_tuning::correction_limit, SBN3_FATAL_MATH, "division correction bound");
                 parallel_limbs::sub_from(team, xbuf, dn + 1, Dn, dn);
             }
-            if (k)
+            if (Q&&k)
             require(!parallel_limbs::add_word(block, ic, k), SBN3_FATAL_MATH, "division quotient overflow");
         }
         corrections += k;
@@ -990,7 +990,7 @@ static __attribute__((noinline)) void bind_general(const sbn3_divrem_plan *opaqu
     Stored s{};
     load(*opaque, s);
     Plan p = s.plan;
-    require(team->arena == arena && team->width >= p.info.workers && pthread_equal(team->creator, pthread_self()) &&
+    require(arena->accepts_team(team->arena) && team->width >= p.info.workers && pthread_equal(team->creator, pthread_self()) &&
                 !team->busy,
             SBN3_FATAL_TEAM, "division bind team");
     size_t end = 0;
@@ -1090,11 +1090,11 @@ static __attribute__((noinline)) void execute_general(sbn3_divrem_binding *opaqu
                 remainder.capacity >= dn && result,
             SBN3_FATAL_ARGUMENT, "division execute spans");
     const size_t qcount = nn >= dn ? nn - dn + 1 : 0;
-    require(!qcount || (quotient.data && quotient.capacity >= qcount), SBN3_FATAL_ARGUMENT, "division quotient capacity");
-    const size_t nb = bytes_for(nn, 8), qb = bytes_for(qcount, 8), rb = bytes_for(dn, 8);
+    require(quotient.data?quotient.capacity>=qcount:!quotient.capacity, SBN3_FATAL_ARGUMENT, "division quotient capacity");
+    const size_t nb = bytes_for(nn, 8), qb = quotient.data?bytes_for(qcount, 8):0, rb = bytes_for(dn, 8);
     if (nn)
         check_span(b, numerator.data, nb, "division numerator");
-    if (qcount)
+    if (qb)
         check_span(b, quotient.data, qb, "division quotient");
     check_span(b, remainder.data, rb, "division remainder");
     require(!overlaps(numerator.data, nb, quotient.data, qb) && !overlaps(numerator.data, nb, remainder.data, rb) &&
@@ -1115,9 +1115,9 @@ static __attribute__((noinline)) void execute_general(sbn3_divrem_binding *opaqu
         if(p.terminal.n)fused_execute(b,numerator.data,nn_eff,quotient.data,remainder.data,*result);
         else barrett_execute(b, numerator.data, nn_eff, quotient.data, remainder.data, *result);
     }
-    if (qcount > written)
+    if (quotient.data&&qcount > written)
         memset(quotient.data + written, 0, (qcount - written) * 8);
-    size_t qlen = written;
+    size_t qlen = quotient.data?written:0;
     while (qlen && !quotient.data[qlen - 1])
         --qlen;
     size_t rlen = dn;
@@ -1151,6 +1151,40 @@ extern "C" void sbn3_divrem_execute(sbn3_divrem_binding *opaque,sbn3_const_limbs
     const auto run=division_executor(opaque);
     if constexpr(SBN3_CHECK_SMALL)require(run,SBN3_FATAL_LIFETIME,"division executor");
     run(opaque,n,q,r,result);
+}
+extern "C" size_t sbn3_remainder_plan_workspace_bytes(const sbn3_divrem_plan*plan){
+    require(plan,SBN3_FATAL_ARGUMENT,"remainder plan");
+    if(plan->opaque[0]!=divrem_prepared::magic)return 0;
+    divrem_prepared::Plan p;std::memcpy(&p,plan->opaque,offsetof(divrem_prepared::Plan,geometry));
+    if(p.algorithm!=SBN3_DIVREM_BARRETT)return 0;
+    std::memcpy(&p.geometry.local,reinterpret_cast<const char*>(plan->opaque)+offsetof(divrem_prepared::Plan,geometry),sizeof p.geometry.local);
+    return p.geometry.local.fused_precision?0:(p.geometry.local.block_limbs*8+63)&~size_t(63);
+}
+extern "C" size_t sbn3_remainder_workspace_bytes(const sbn3_divrem_binding*opaque){
+    if(!compact_binding(opaque))return 0;
+    auto&b=divrem_prepared::get(const_cast<sbn3_divrem_binding*>(opaque));if(b.algorithm!=SBN3_DIVREM_BARRETT)return 0;
+    const auto&p=divrem_prepared::local(b).plan;return p.fused_precision?0:(p.block_limbs*8+63)&~size_t(63);
+}
+extern "C" void sbn3_remainder_execute(sbn3_divrem_binding*opaque,sbn3_const_limbs n,sbn3_limbs r,
+                                       void*extra,size_t bytes,sbn3_divrem_result*out){
+    if(!compact_binding(opaque)){execute_general(opaque,n,{nullptr,0},r,out);return;}
+    auto&b=divrem_prepared::get(opaque);divrem_prepared::idle(b);const size_t dn=b.dn,need=sbn3_remainder_workspace_bytes(opaque);
+    require(divrem_prepared::is_prepared(b)&&out&&r.data&&r.capacity>=dn&&(!n.count||n.data)&&bytes>=need&&(!need||(extra&&!(uintptr_t(extra)&63))),SBN3_FATAL_ARGUMENT,"prepared remainder spans");
+    if constexpr(SBN3_CHECK_SMALL){
+        require(n.count<=b.nn,SBN3_FATAL_ARGUMENT,"prepared remainder numerator");divrem_prepared::span(b,n.data,n.count*8);divrem_prepared::span(b,r.data,dn*8);
+        if(need)divrem_prepared::span(b,extra,need);
+        require(!overlaps(n.data,n.count*8,r.data,dn*8)&&!overlaps(extra,need,n.data,n.count*8)&&!overlaps(extra,need,r.data,dn*8),SBN3_FATAL_ARGUMENT,"prepared remainder alias");
+    }
+    const bool timed=b.flags&divrem_prepared::timed;const auto start=timed?divrem_prepared::now():0;uint64_t corrections=0;
+    if(b.algorithm<=SBN3_DIVREM_SCHOOLBOOK){auto&v=divrem_prepared::word(b);divrem_words::remainder_prepared(r.data,n.data,n.count,v.state,v.scratch);}
+    else if(b.algorithm==SBN3_DIVREM_DC){auto&v=divrem_prepared::native(b);auto frame=Frame::external(v.work,v.work_bytes);u52::remainder_prepared(r.data,n.data,n.count,v.state,frame);}
+    else{auto&v=divrem_prepared::local(b);auto frame=Frame::external(v.work,v.work_bytes);LocalDivisionMetrics m;
+        size_t used=n.count;while(used&&!n.data[used-1])--used;
+        corrections=local_division_apply(v.plan,v.state,nullptr,r.data,n.data,used,frame,&m,static_cast<uint64_t*>(extra));
+        v.products=m.products;v.head_limbs+=m.head_limbs;v.head_corrections+=m.head_corrections;v.corrections+=corrections;
+    }
+    size_t rn=dn;while(rn&&!r.data[rn-1])--rn;*out={0,rn,corrections};++b.executes;
+    if(timed)divrem_prepared::timing(b).execute_ns=divrem_prepared::now()-start;
 }
 extern "C" void sbn3_int_divrem_execute(sbn3_divrem_binding *opaque, sbn3_int *q, sbn3_int *r, sbn3_int_view n,
                                         sbn3_int_view d) {
@@ -1217,6 +1251,18 @@ extern "C" void sbn3_divrem_unbind(sbn3_divrem_binding *opaque) {
     if(compact_binding(opaque))
         return divrem_prepared::unbind(divrem_prepared::get(opaque));
     unbind_general(opaque);
+}
+
+sbn::v3::DivisorWords sbn::v3::prepared_divisor_words(sbn3_divrem_binding *opaque)noexcept {
+    if(compact_binding(opaque)){
+        auto &b=divrem_prepared::get(opaque);
+        require(divrem_prepared::is_prepared(b),SBN3_FATAL_LIFETIME,"divisor words before prepare");
+        if(b.algorithm==SBN3_DIVREM_DC){const auto &d=divrem_prepared::native(b).state;return {d.digits,b.dn,unsigned(d.shift),52};}
+        if(b.algorithm==SBN3_DIVREM_BARRETT){const auto &d=divrem_prepared::local(b).state;return {d.divisor,b.dn,d.shift,64};}
+        const auto &d=divrem_prepared::word(b).state;return {b.dn<=2?d.short_words:d.divisor,b.dn,d.shift,64};
+    }
+    auto &b=binding(opaque);require(b.prepared,SBN3_FATAL_LIFETIME,"divisor words before prepare");
+    return {b.Dn,b.plan.request.denominator_limbs,b.shift,64};
 }
 
 static __attribute__((noinline)) sbn3_divrem_binding *prepare_into_general(

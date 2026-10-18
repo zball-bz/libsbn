@@ -8,12 +8,13 @@ int main(){
     unsigned checked=0,repairs=0,actual_carries=0;
     ref_int A,B,P,Q,E,difference,modulus;ref_inits(A,B,P,Q,E,difference,modulus,nullptr);
     for(size_t an:{4ul,9ul,17ul,33ul,65ul,97ul,128ul,193ul,257ul,298ul,300ul,
-                   333ul,416ul,511ul,595ul,700ul,831ul,832ul})
+                   333ul,416ul,511ul,595ul,700ul,831ul,832ul,833ul,1190ul,2048ul,4096ul,8000ul})
       for(size_t bn:{an,an+7,an+an/2,an+an/3+1,an+127,2*an+1,4*an+3,8192ul}){
+        if(an>832&&!u52::middle_guard_supported(an,bn))continue;
         const size_t na=(64*an+51)/52,nb=(64*bn+51)/52,words=(52*(nb-na+7)+63)/64;
         const uint64_t start=52*(na-5),window=64*(an-1),shift=window-start;
         const size_t width=bn-an+1;
-        assert(shift>=128 && 2*na<(uint64_t(1)<<12));
+        assert(shift>=128);
         Fixture f(1);auto lease=f.allocate(u52::middle_guard_scratch_bytes(an,bn),64);Frame work(*f.arena,lease);
         auto *a=f.guarded(an),*b=f.guarded(bn),*m=f.guarded(words),*got=f.guarded(width);
         for(unsigned pattern=0;pattern<12;++pattern){
@@ -30,7 +31,7 @@ int main(){
             ref_set_ui(modulus,1);ref_mul_2exp(modulus,modulus,64*width);
             ref_sub(difference,Q,E);ref_mod(difference,difference,modulus);
             assert(ref_cmp_ui(difference,1)<=0);
-            const bool repair=m[1]==UINT64_MAX;
+            const bool repair=m[1]>UINT64_MAX-(na+2047)/2048;
             if(!repair)assert(!ref_sgn(difference));
             repairs+=repair;actual_carries+=ref_sgn(difference)!=0;++checked;
         }

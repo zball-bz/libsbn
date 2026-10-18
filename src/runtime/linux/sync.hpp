@@ -23,16 +23,12 @@ inline void wait_equal(uint32_t *p,uint32_t value) noexcept {
  * sequentially consistent operations prevent the producer and consumer
  * from both missing the other's publication before FUTEX_WAIT. */
 inline uint64_t now_ns() noexcept {timespec t{};clock_gettime(CLOCK_MONOTONIC,&t);return uint64_t(t.tv_sec)*1000000000+t.tv_nsec;}
-inline void wait_epoch(uint32_t *p,uint32_t value,uint32_t *parked) noexcept {
+inline void wait_epoch(uint32_t *p,uint32_t value,uint32_t *parked,uint64_t spin_ns=1000000) noexcept {
     if(__atomic_load_n(p,__ATOMIC_ACQUIRE)!=value)return;
 #if defined(__has_feature)
 #if __has_feature(thread_sanitizer)
-    constexpr uint64_t spin_ns=2000;
-#else
-    constexpr uint64_t spin_ns=100000;
+    if(spin_ns>2000)spin_ns=2000;
 #endif
-#else
-    constexpr uint64_t spin_ns=100000;
 #endif
     const uint64_t begin=now_ns();
     do {

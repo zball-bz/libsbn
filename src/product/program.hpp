@@ -1,6 +1,7 @@
 #pragma once
 #include "product/backend.hpp"
 #include "runtime/team.hpp"
+#include <initializer_list>
 namespace sbn::v3 {
 struct ProductProgramPlan {
     // Filled together by *_query/replay/describe and immutable afterwards.
@@ -13,6 +14,7 @@ struct ProductProgramPlan {
     size_t pair_workspace_bytes = 0;
     SharedPreparation tables{};
     size_t local_bytes = 0;
+    size_t a1 = 0,b1 = 0; // frame-owned MAC2 only
 };
 struct ProductProgram {
     const Backend *backend = nullptr;
@@ -25,10 +27,14 @@ struct ProductProgram {
     const void *shared_prepared = nullptr;
     size_t shared_prepared_bytes = 0;
     size_t output_capacity = 0;
+    size_t a1 = 0,b1 = 0;
 };
-inline sbn3_query_result product_program_describe(size_t an,size_t bn,ProductProgramPlan &p) {
+enum class ProgramCapability { multiply, matrix };
+inline sbn3_query_result product_program_describe(size_t an,size_t bn,ProductProgramPlan &p,
+                                                 ProgramCapability capability=ProgramCapability::multiply) {
     const auto *backend=backend_lookup(p.plan.opaque[1]);
-    if(!backend || !backend->program_prepare || !backend->program_execute || !backend->program_bytes)
+    if(!backend || !backend->program_prepare || !backend->program_bytes ||
+       (capability==ProgramCapability::multiply?!backend->program_execute:!backend->program_matrix_execute))
         return SBN3_UNSUPPORTED;
     p.an=an;p.bn=bn;
     if(backend->program_layout){
@@ -63,7 +69,7 @@ inline sbn3_query_result product_program_chosen(size_t an,size_t bn,const sbn3_m
 inline sbn3_query_result product_program_replay(size_t an,size_t bn,const sbn3_mul_options &options,
                                                uint64_t backend_id,ProductProgramPlan &p) {
     const auto *backend=backend_lookup(backend_id);
-    if(!backend)return SBN3_UNSUPPORTED;
+    if(!backend||!backend->query)return SBN3_UNSUPPORTED;
     const sbn3_product_spec spec{an,bn};
     const auto rc=backend->query(spec,options,p.plan,p.info);
     return rc==SBN3_SUPPORTED?product_program_describe(an,bn,p):rc;
@@ -132,13 +138,13 @@ inline ProductProgram product_program_prepare(const ProductProgramPlan &p, Frame
             p.pair_workspace_bytes,
             shared,
             shared ? product_program_tables(p).bytes : 0,
-            sbn3_mul_output_capacity(&p.info)};
+            sbn3_mul_output_capacity(&p.info),p.a1,p.b1};
 }
 inline void product_program_pair(const ProductProgram &p, Frame &work, sbn3_team_scope *scope,
                                  sbn3_const_limbs common, sbn3_const_limbs fresh0,
                                  sbn3_const_limbs fresh1, sbn3_limbs out0, sbn3_limbs out1,
                                  bool common_on_right = false) {
-    require(p.backend && p.prepared && p.pair_workspace_bytes && p.backend->program_pair_execute && scope &&
+    require(p.backend && p.backend->program_execute && p.prepared && p.pair_workspace_bytes && p.backend->program_pair_execute && scope &&
                 common.count <= (common_on_right ? p.bn : p.an) &&
                 fresh0.count <= (common_on_right ? p.an : p.bn) &&
                 fresh1.count <= (common_on_right ? p.an : p.bn) && common.count && fresh0.count && fresh1.count &&
@@ -166,12 +172,38 @@ inline void product_program_pair(const ProductProgram &p, Frame &work, sbn3_team
     FrameMark mark(work);
     p.backend->program_pair_execute(p.prepared, work, &subset, common, fresh0, fresh1, out0, out1);
 }
+inline void product_program_pair_continue(const ProductProgram&p,Frame&work,sbn3_team_scope*scope,
+    sbn3_const_limbs common,sbn3_const_limbs fresh,sbn3_limbs out,ProductPairContinuation next){
+    require(p.backend&&p.backend->program_pair_continue&&p.prepared&&p.pair_workspace_bytes&&scope&&next.next&&
+        common.count&&common.count<=p.an&&fresh.count&&fresh.count<=p.bn&&out.capacity>=p.output_capacity&&
+        sbn3_team_width(scope)>=p.workers,SBN3_FATAL_ARGUMENT,"continued pair shape");
+    require(!(uintptr_t(work.data())&(p.workspace_alignment-1))&&work.capacity()>=p.pair_workspace_bytes,
+        SBN3_FATAL_WORKSPACE,"continued pair work");
+    auto check=[&](sbn3_const_limbs input,sbn3_limbs output){
+        require(input.count<=p.bn&&output.capacity>=p.output_capacity,SBN3_FATAL_ARGUMENT,"continued pair next shape");
+        for(auto v:{input,sbn3_const_limbs{output.data,p.output_capacity}}){
+            valid_span(v.data,v.count*8,"continued pair span");
+            require(!overlaps(v.data,v.count*8,work.data(),work.capacity())&&
+                !overlaps(v.data,v.count*8,p.prepared,p.prepared_bytes)&&
+                !overlaps(v.data,v.count*8,p.shared_prepared,p.shared_prepared_bytes),SBN3_FATAL_ARGUMENT,"continued pair alias");
+        }
+    };
+    check(fresh,out);
+    require(!overlaps(common.data,common.count*8,work.data(),work.capacity())&&
+        !overlaps(common.data,common.count*8,p.prepared,p.prepared_bytes)&&
+        !overlaps(common.data,common.count*8,p.shared_prepared,p.shared_prepared_bytes),SBN3_FATAL_ARGUMENT,"continued pair common alias");
+    struct Checked {ProductPairContinuation next;decltype(check)&check;};Checked call{next,check};
+    ProductPairContinuation bridge{&call,[](void*ptr,sbn3_const_limbs&in,sbn3_limbs&z){auto&c=*static_cast<Checked*>(ptr);
+        if(!c.next.next(c.next.context,in,z))return false;c.check(in,z);return true;}};
+    require_scope_leader(scope);sbn3_team_scope subset{scope->team,scope->first,p.workers,false,scope->epoch};FrameMark mark(work);
+    p.backend->program_pair_continue(p.prepared,work,&subset,common,fresh,out,bridge);
+}
 inline void product_program_run(const ProductProgram &p, Frame &work, sbn3_team_scope *scope,
                                 sbn3_const_limbs a, sbn3_const_limbs b, sbn3_limbs out, bool bounded,
                                 bool consume) {
     const bool lengths = bounded ? (p.contract & program_bounded_inputs) && a.count <= p.an && b.count <= p.bn
                                  : a.count == p.an && b.count == p.bn;
-    require(p.backend && p.prepared && lengths && out.capacity >= p.output_capacity && scope &&
+    require(p.backend && p.backend->program_execute && p.prepared && lengths && out.capacity >= p.output_capacity && scope &&
                 sbn3_team_width(scope) >= p.workers,
             SBN3_FATAL_ARGUMENT, "product program execution");
     require(!(uintptr_t(work.data()) & (p.workspace_alignment - 1)) && work.capacity() >= p.workspace_bytes &&
@@ -195,6 +227,26 @@ inline void product_program_run(const ProductProgram &p, Frame &work, sbn3_team_
 inline void product_program_execute(const ProductProgram &p, Frame &work, sbn3_team_scope *scope,
                                     sbn3_const_limbs a, sbn3_const_limbs b, sbn3_limbs out) {
     product_program_run(p, work, scope, a, b, out, false, false);
+}
+inline void product_program_sum(const ProductProgram &p,Frame &work,sbn3_team_scope *scope,
+                                const sbn3_product_inputs &in,sbn3_limbs out) {
+    require(p.backend&&p.backend->program_sum_execute&&p.prepared&&scope&&sbn3_team_width(scope)>=p.workers,
+            SBN3_FATAL_ARGUMENT,"product sum program");
+    require(in.a.count==p.an&&in.a1.count==p.a1&&in.b.count==p.bn&&in.b1.count==p.b1&&out.capacity>=p.output_capacity,
+            SBN3_FATAL_ARGUMENT,"product sum shape");
+    require(work.capacity()>=p.workspace_bytes&&!(uintptr_t(work.data())&(p.workspace_alignment-1)),
+            SBN3_FATAL_WORKSPACE,"product sum workspace");
+    for(auto v:{in.a,in.b,in.a1,in.b1}) {
+        valid_span(v.data,v.count*8,"product sum input");
+        require(!overlaps(v.data,v.count*8,out.data,p.output_capacity*8)&&
+                !overlaps(v.data,v.count*8,work.data(),work.capacity())&&
+                !overlaps(v.data,v.count*8,p.prepared,p.prepared_bytes)&&
+                !overlaps(v.data,v.count*8,p.shared_prepared,p.shared_prepared_bytes),SBN3_FATAL_ARGUMENT,"product sum alias");
+    }
+    valid_span(out.data,p.output_capacity*8,"product sum output");
+    require(!overlaps(out.data,p.output_capacity*8,work.data(),work.capacity()),SBN3_FATAL_ARGUMENT,"product sum output workspace");
+    require_scope_leader(scope);sbn3_team_scope subset{scope->team,scope->first,p.workers,false,scope->epoch};
+    FrameMark mark(work);p.backend->program_sum_execute(p.prepared,work,&subset,in,out);
 }
 inline void product_program_bounded(const ProductProgram &p, Frame &work, sbn3_team_scope *scope,
                                     sbn3_const_limbs a, sbn3_const_limbs b, sbn3_limbs out,

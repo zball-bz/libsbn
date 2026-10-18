@@ -92,14 +92,15 @@ uint32_t Team::send(unsigned worker,Work fn,void *argument) noexcept {
 }
 void Team::join(unsigned worker,uint32_t ticket) noexcept {
     auto &w=workers[worker];
-    for(;;){const uint32_t done=__atomic_load_n(&w.completed,__ATOMIC_ACQUIRE);if(done==ticket)return;os::wait_epoch(&w.completed,done,&w.parked_done);}
+    for(;;){const uint32_t done=__atomic_load_n(&w.completed,__ATOMIC_ACQUIRE);if(done==ticket)return;
+        os::wait_epoch(&w.completed,done,&w.parked_done,__atomic_load_n(&idle_spin_ns,__ATOMIC_ACQUIRE));}
 }
 void *Team::worker_main(void *p) noexcept {
     auto &w=*static_cast<Worker *>(p);current_team=w.team;current_worker=w.index;
     __atomic_store_n(&w.started,1,__ATOMIC_RELEASE);os::wake(&w.started);
     uint32_t last=0;
     for(;;) {
-        os::wait_epoch(&w.issued,last,&w.parked_issue);
+        os::wait_epoch(&w.issued,last,&w.parked_issue,__atomic_load_n(&w.team->idle_spin_ns,__ATOMIC_ACQUIRE));
         const uint32_t next=__atomic_load_n(&w.issued,__ATOMIC_ACQUIRE);
         Work fn=w.fn;void *arg=w.argument;
         if(fn)fn(arg,w.index);
@@ -236,6 +237,15 @@ extern "C" unsigned sbn3_region_width(const sbn3_team_region *r) {require(r,SBN3
 extern "C" void sbn3_region_barrier(sbn3_team_region *r) {require(r,SBN3_FATAL_ARGUMENT,"null region");r->barrier->arrive();}
 
 namespace sbn::v3 {
+void serial_team_run(sbn3_action_fn fn,void *arg) {
+    require(fn,SBN3_FATAL_ARGUMENT,"serial team action");
+    sbn3_team local{};local.width=1;local.creator=pthread_self();local.busy=true;local.epoch=1;
+    Team *old=current_team;const unsigned oldw=current_worker;
+    current_team=&local;current_worker=0;
+    sbn3_team_scope scope{&local,0,1,false,1};fn(arg,&scope);
+    require(!scope.active,SBN3_FATAL_TEAM,"unfinished serial scope");os::publish_stores();
+    current_team=old;current_worker=oldw;
+}
 void require_scope_leader(const sbn3_team_scope *s) {scope_valid(s);}
 void kernel_for(sbn3_team_scope *s,uint64_t lo,uint64_t hi,uint64_t grain,sbn3_schedule schedule,
                  KernelForFn fn,void *arg,Frame *const *frames) {

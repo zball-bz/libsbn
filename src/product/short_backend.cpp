@@ -2,6 +2,7 @@
 #include "product/fft_backend.hpp"
 #include "product/fft_choice.hpp"
 #include "runtime/team.hpp"
+#include "runtime/bound_owner.hpp"
 #include "runtime/linux/sync.hpp"
 #include "backend/u52/kernels.hpp"
 #include "backend/pq16/kernels.hpp"
@@ -32,6 +33,7 @@ struct Binding {
     Plan plan;
     Arena *arena;
     sbn3_team *team;
+    BoundOwner owner;
     sbn3_lease tables, work;
     Frame frame;
     const pq16::Tables *pq = nullptr;
@@ -264,16 +266,15 @@ void fast_equal_size(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uin
 void execute_ptrs_checked(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 void fast_window(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *);
 void idle(const Binding &b) {
-    require(pthread_equal(b.team->creator, pthread_self()) && !b.team->busy && !b.active, SBN3_FATAL_TEAM,
-            "short binding owner/active");
+    b.owner.check(*b.team);
+    require(!__atomic_load_n(&b.active,__ATOMIC_ACQUIRE),SBN3_FATAL_LIFETIME,"short binding active");
 }
-void bind_product(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, const sbn3_lease &w,
-                  sbn3_team &team, const sbn3_spectrum *s0, const sbn3_spectrum *s1, sbn3_mul_binding **out) {
+void bind_product_impl(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, const sbn3_lease &w,
+                  sbn3_team &team, const sbn3_spectrum *s0, const sbn3_spectrum *s1,
+                  sbn3_mul_binding **out,sbn3_team_scope *scope) {
     auto q = load(p);
     require(!s0 && !s1, SBN3_FATAL_ARGUMENT, "short products have no spectrum");
-    require(team.arena == &a && team.width >= q.info.workers && pthread_equal(team.creator, pthread_self()) &&
-                !team.busy,
-            SBN3_FATAL_TEAM, "short binding team");
+    BoundOwner owner;owner.bind(a,team,scope,q.info.workers);
     require(t.bytes >= q.info.table_bytes && w.bytes >= q.info.workspace_bytes &&
                 !(uintptr_t(t.data) & 127) && !(uintptr_t(w.data) & 127) &&
                 !overlaps(t.data, t.bytes, w.data, w.bytes),
@@ -288,6 +289,7 @@ void bind_product(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, co
     a.claim_unshared(t);
     a.claim_unshared(w);
     auto *b = new (w.data) Binding(q, a, team, t, w);
+    b->owner=owner;
     auto enclose = [&](const sbn3_lease &l) {
         if (l.bytes) {
             const auto begin = uintptr_t(l.data);
@@ -343,9 +345,18 @@ void bind_product(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, co
                 }
         }
     }
-    b->header.execute_fast = SBN3_CHECK_SMALL || !b->kernel ? execute_ptrs_checked : b->kernel;
+    b->header.execute_fast = SBN3_CHECK_SMALL || b->owner.scoped() || !b->kernel ? execute_ptrs_checked : b->kernel;
     a.release(w);
     *out = &b->header;
+}
+void bind_product(const sbn3_mul_plan &p,sbn3_arena &a,const sbn3_lease &t,const sbn3_lease &w,
+                  sbn3_team &team,const sbn3_spectrum *s0,const sbn3_spectrum *s1,sbn3_mul_binding **out) {
+    bind_product_impl(p,a,t,w,team,s0,s1,out,nullptr);
+}
+void bind_product_scope(const sbn3_mul_plan &p,sbn3_arena &a,const sbn3_lease &t,const sbn3_lease &w,
+                  sbn3_team_scope *scope,const sbn3_spectrum *s0,const sbn3_spectrum *s1,sbn3_mul_binding **out) {
+    require(scope&&scope->team,SBN3_FATAL_TEAM,"short scoped binding");
+    bind_product_impl(p,a,t,w,*static_cast<sbn3_team *>(scope->team),s0,s1,out,scope);
 }
 void bind(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, const sbn3_lease &w, sbn3_team &team,
           sbn3_mul_binding **out) {
@@ -551,15 +562,15 @@ void action(void *arg, sbn3_team_scope *parent) {
 void product_execute(sbn3_mul_binding *p, sbn3_team_scope *scope, const sbn3_product_inputs &in,
                      sbn3_limbs out) {
     auto &b = get(p);
+    scope=b.owner.resolve(*b.team,scope,b.plan.info.workers);
     if constexpr (!SBN3_CHECK_SMALL) {
-        if (b.plan.info.algorithm != SBN3_MUL_PQ16 || b.plan.info.workers == 1) {
+        if (!scope && (b.plan.info.algorithm != SBN3_MUL_PQ16 || b.plan.info.workers == 1)) {
             b.kernel(p, in.a.data, b.plan.kind == SBN3_PRODUCT_SQR ? in.a.data : in.b.data, out.data);
             return;
         }
     }
     if (scope) {
-        require_scope_leader(scope);
-        require(scope->team == b.team && scope->width == b.plan.info.workers, SBN3_FATAL_TEAM,
+        require(b.owner.scoped()||scope->width == b.plan.info.workers, SBN3_FATAL_TEAM,
                 "short borrowed width");
     } else
         idle(b);
@@ -579,12 +590,12 @@ void product_execute(sbn3_mul_binding *p, sbn3_team_scope *scope, const sbn3_pro
         }
         b.team->busy = false;
     } else
-        sbn3_team_run(b.team, action, &run);
+        b.owner.run(*b.team, action, &run);
 }
 void execute(sbn3_mul_binding *p, sbn3_const_limbs a, sbn3_const_limbs b, sbn3_limbs out) {
     auto &binding = get(p);
     if constexpr (!SBN3_CHECK_SMALL)
-        if (binding.plan.info.algorithm != SBN3_MUL_PQ16 || binding.plan.info.workers == 1) {
+        if (!binding.owner.scoped() && (binding.plan.info.algorithm != SBN3_MUL_PQ16 || binding.plan.info.workers == 1)) {
             binding.kernel(p, a.data, b.data, out.data);
             return;
         }
@@ -597,11 +608,6 @@ void execute_ptrs_checked(sbn3_mul_binding *p, const uint64_t *a, const uint64_t
 }
 void execute_scope(sbn3_mul_binding *p, sbn3_team_scope *s, sbn3_const_limbs a, sbn3_const_limbs b,
                    sbn3_limbs out) {
-    if constexpr (!SBN3_CHECK_SMALL)
-        if (get(p).plan.info.algorithm != SBN3_MUL_PQ16 || get(p).plan.info.workers == 1) {
-            get(p).kernel(p, a.data, b.data, out.data);
-            return;
-        }
     require(get(p).plan.kind == SBN3_PRODUCT_MUL, SBN3_FATAL_ARGUMENT, "mul recipe");
     product_execute(p, s, {a, b, {}, {}}, out);
 }
@@ -630,12 +636,12 @@ struct Program {
 ProgramLayout program_layout(const sbn3_mul_plan &p) {
     const auto q=load(p); // public/private handoff: one complete validation
     ProgramLayout result{};
-    if(q.kind!=SBN3_PRODUCT_MUL || q.ring)return result;
+    if((q.kind!=SBN3_PRODUCT_MUL&&q.kind!=SBN3_PRODUCT_SQR) || q.ring)return result;
     size_t header=0;
     if(!align_size(sizeof(Program),128,header) || !add_size(header,q.info.table_bytes,result.prepared_bytes))return {};
-    result.contract=program_bounded_inputs |
+    result.contract=q.kind==SBN3_PRODUCT_MUL?program_bounded_inputs |
         ((q.info.algorithm==SBN3_MUL_U52 && std::max(q.an,q.bn)<=u52::strip_limbs) ||
-         (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered) ? program_consume_inputs : 0u);
+         (q.info.algorithm==SBN3_MUL_PQ16 && !q.shape.centered) ? program_consume_inputs : 0u):0;
     result.local_bytes=result.prepared_bytes;
     if(q.info.algorithm==SBN3_MUL_PQ16){
         const auto &s=q.shape;
@@ -643,7 +649,7 @@ ProgramLayout program_layout(const sbn3_mul_plan &p) {
         result.local_bytes=header;
         const size_t cached=16*size_t(s.nfull)+256;
         const size_t original=s.centered?((8*std::max(q.an,q.bn)+127)&~size_t(127)):0;
-        result.pair_workspace_bytes=cached+original+pq16::cached_scratch_bytes(s,q.an,q.bn)+128;
+        if(q.kind==SBN3_PRODUCT_MUL)result.pair_workspace_bytes=cached+original+pq16::cached_scratch_bytes(s,q.an,q.bn)+128;
     }
     return result;
 }
@@ -651,7 +657,7 @@ size_t program_bytes(const sbn3_mul_plan &p) {
     return program_layout(p).prepared_bytes;
 }
 const void *program_prepare(const sbn3_mul_plan &p,Frame &f) {
-    const auto q=load(p);require(q.kind==SBN3_PRODUCT_MUL && !q.ring,SBN3_FATAL_ARGUMENT,"short program recipe");
+    const auto q=load(p);require((q.kind==SBN3_PRODUCT_MUL||q.kind==SBN3_PRODUCT_SQR) && !q.ring,SBN3_FATAL_ARGUMENT,"short program recipe");
     auto *v=::new(f.allocate(sizeof(Program),128)) Program{};v->plan=q;
     if(q.info.algorithm==SBN3_MUL_PQ16)v->tables=pq16::prepare(f,q.shape);
     return v;
@@ -667,6 +673,7 @@ const void *program_prepare_shared(const sbn3_mul_plan &p,Frame &f,const void *s
 }
 void program_execute(const void *p,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs a,sbn3_const_limbs b,sbn3_limbs out) {
     const auto &v=*static_cast<const Program *>(p);
+    if(v.plan.kind==SBN3_PRODUCT_SQR)b=a;
     if(v.plan.info.algorithm==SBN3_MUL_SCALAR)mul_basecase_assumed(out.data,a.data,a.count,b.data,b.count);
     else if(v.plan.info.algorithm==SBN3_MUL_U52)u52::multiply(out.data,a.data,a.count,b.data,b.count,f);
     else pq16::multiply(out.data,a.data,a.count,b.data,b.count,*v.tables,f,scope);
@@ -726,7 +733,7 @@ void compute_spectrum(sbn3_mul_binding *p, sbn3_spectrum *s, sbn3_const_limbs in
     for (unsigned k = 1; k < b.team->width; ++k)
         require(!overlaps(input.data, input.count * 8, b.team->stacks[k].data, b.team->stacks[k].bytes),
                 SBN3_FATAL_ARGUMENT, "short spectrum stack alias");
-    fft_compute_spectrum(b.plan.shape, s, input, *b.team, b.plan.info.workers);
+    fft_compute_spectrum_owned(b.plan.shape, s, input, *b.team, b.plan.info.workers,b.owner);
 }
 void prepare_spectrum(sbn3_mul_binding *p, sbn3_const_limbs input, unsigned f, uint64_t generation,
                       sbn3_arena &a, const sbn3_lease &l, sbn3_spectrum **out) {
@@ -777,6 +784,7 @@ const Backend &short_backend() noexcept {
         .program_tables_prepare = program_tables_prepare,
         .program_prepare_shared = program_prepare_shared,
         .program_layout = program_layout,
+        .product_bind_scope = bind_product_scope,
     };
     return b;
 }

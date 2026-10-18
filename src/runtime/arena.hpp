@@ -17,6 +17,16 @@ public:
     Lease leases[max_leases]{};
     uint64_t prepares = 0, trims = 0;
     size_t computations = 0;
+    // Private adapter for caller-owned resident storage. Such a region has
+    // byte leases, but never owns its mapping or changes page residency.
+    bool borrowed = false;
+    const Arena *worker_arena = nullptr;
+    // Private scoped resident adapters bind this exact Team identity. This
+    // does not broaden accepts_team(nullptr) for ordinary arena callers.
+    const void *borrowed_team = nullptr;
+    bool accepts_team(const Arena *a) const noexcept {
+        return a==this || (borrowed && worker_arena && a==worker_arena);
+    }
 
     sbn3_status prepare(size_t offset, size_t bytes, sbn3_error *) noexcept;
     sbn3_status trim(size_t offset, size_t bytes, sbn3_error *) noexcept;

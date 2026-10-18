@@ -34,6 +34,10 @@ void sbn3_int_divrem_basecase(sbn3_int *q, sbn3_int *r, sbn3_int_view n, sbn3_in
 size_t sbn3_divrem_small_scratch_bytes(size_t nn,size_t dn);
 size_t sbn3_divrem_small(uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,
                          const uint64_t *d,size_t dn,void *scratch);
+/* Remainder-only counterpart: same local domain and algorithm thresholds,
+ * no full quotient output/temporary. Dn<=2 needs zero scratch. */
+size_t sbn3_remainder_small_scratch_bytes(size_t nn,size_t dn);
+void sbn3_remainder_small(uint64_t *r,const uint64_t*n,size_t nn,const uint64_t*d,size_t dn,void*scratch);
 
 /* Prepared service: thresholds select word/schoolbook, local u52 D&C,
  * block Barrett, or a fused short-quotient terminal followed by an exact
@@ -141,6 +145,15 @@ sbn3_divrem_binding *sbn3_divrem_prepare_into(const sbn3_divrem_request *,const 
  * arithmetic invariant diagnostics are retained in every build. */
 void sbn3_divrem_execute(sbn3_divrem_binding *,sbn3_const_limbs numerator,sbn3_limbs quotient,
                          sbn3_limbs remainder,sbn3_divrem_result *);
+/* Same retained divisor; emits only R. The auxiliary span is exclusive,
+ * disjoint from the binding/values, 64-byte aligned and at least the queried
+ * size. It is zero for word, native DC and general Barrett; a local blocked
+ * FFT recipe needs one bounded estimate block. No whole Q is allocated.
+ * result.quotient_limbs is zero because the quotient was not requested. */
+size_t sbn3_remainder_workspace_bytes(const sbn3_divrem_binding *);
+size_t sbn3_remainder_plan_workspace_bytes(const sbn3_divrem_plan *);
+void sbn3_remainder_execute(sbn3_divrem_binding *,sbn3_const_limbs numerator,sbn3_limbs remainder,
+                            void*auxiliary,size_t auxiliary_bytes,sbn3_divrem_result *);
 /* Signed truncating division over the prepared |d|: q/r are caller-owned
  * with capacities as above; d must be the prepared divisor's magnitude
  * (same limbs) and carries the sign. Outputs are normalized. */

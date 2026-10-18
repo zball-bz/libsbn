@@ -1,11 +1,15 @@
 #include "radix/programs.hpp"
 #include "radix/power_bank.hpp"
+#include "radix/balanced_powers.hpp"
+#include "radix/rail_product.hpp"
+#include "backend/u52/kernels.hpp"
 #include "value/parallel_limbs.hpp"
 #include "common/identity.hpp"
 #include "product/cost_model.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "product/fft_choice.hpp"
 #include "product/short_query_bounds.hpp"
+#include "product/local_product.hpp"
 #include "sbn3/product.h"
 #include "sbn3/divrem.h"
 #include <algorithm>
@@ -100,13 +104,26 @@ TreePolicy &tree_policy() noexcept {
         if (const char *v = getenv("SBN3_RADIX_RING")) policy.ring_products = atoi(v) != 0;
         if (const char *v = getenv("SBN3_RADIX_INTEGER_TREE")) { // limbs; one conversion: the base 10 equivalent in limb-words
             policy.integer_tree_limbs_repeated = strtoull(v, nullptr, 10);
-            policy.integer_tree_work = 5 * policy.integer_tree_limbs_repeated * policy.integer_tree_limbs_repeated / 2;
+            policy.integer_tree_work = policy.integer_tree_limbs_repeated * policy.integer_tree_limbs_repeated;
         }
         if (const char *v = getenv("SBN3_RADIX_RING_NODE")) policy.ring_node_limbs = strtoull(v, nullptr, 10);
         if (const char *v = getenv("SBN3_RADIX_RING_COUNT")) policy.ring_min_count = unsigned(strtoul(v, nullptr, 10));
     }
 #endif
     return policy;
+}
+bool local_temporary_supported(size_t an,size_t bn,unsigned workers) noexcept {
+    return workers==1&&an+bn<=2*native_policy::window_inline_words;
+}
+size_t local_temporary_bytes(size_t an,size_t bn) noexcept {
+    const auto p=product::local_product_query(an,bn,false,false);
+    return p.persistent_bytes+p.work_bytes+256;
+}
+void local_temporary_product(Frame &space,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,uint64_t *out) noexcept {
+    FrameMark mark(space);
+    const auto p=product::local_product_query(an,bn,false,false);
+    const auto prepared=product::local_product_prepare(p,a,space);
+    product::local_product_apply(p,prepared,out,b,bn,space);
 }
 uint64_t PlanTranscript::check(uint64_t a, uint64_t b, uint64_t c, uint64_t identity) noexcept {
     uint64_t h = identity::fnv_seed;
@@ -181,7 +198,7 @@ void ProgramSetPlan::account(const ProductShape &s) noexcept {
 ProgramSetBuilder::ProgramSetBuilder(const ProgramSetPlan &plan, Arena &arena, const sbn3_lease &prepared) noexcept
     : plan_(plan), arena_(arena), lease_(prepared),
       local_(Frame::borrow(arena, prepared, static_cast<uint8_t *>(prepared.data) + align_to(plan.shared_bytes, 128),
-                           prepared.bytes - align_to(plan.shared_bytes, 128))) {
+                           plan.bytes() - align_to(plan.shared_bytes, 128))) {
     require(prepared.bytes >= plan.bytes() && !(uintptr_t(prepared.data) & (plan.alignment - 1)), SBN3_FATAL_WORKSPACE,
             "radix program storage", plan.bytes(), prepared.bytes);
 }
@@ -434,29 +451,156 @@ void rail_build(const BaseInfo &base, const RailPlan &rail, unsigned workers, Ar
 void reciprocal_basecase(const uint64_t *d, size_t n, uint64_t *out, Frame &scratch) noexcept {
     local_inverse(out,d,n,scratch);
 }
+int BalancedPowers::find(uint64_t exponent)const noexcept {
+    for(unsigned j=0;j<count;++j)if(entries[j].exponent==exponent)return int(j);
+    return -1;
+}
+int BalancedPowers::request(const BaseInfo &base,uint64_t exponent,bool retained) noexcept {
+    if(!exponent)return -1;
+    if(const int i=find(exponent);i>=0){entries[i].retained|=retained;return i;}
+    unsigned fixed=UINT32_MAX,parent=0;
+    if(!(exponent&(exponent-1))){const unsigned k=unsigned(__builtin_ctzll(exponent));if(fixed_power(base.odd,k).data)fixed=k;}
+    if(fixed==UINT32_MAX){const int p=request(base,exponent/2,false);if(p<0)return -1;parent=unsigned(p);}
+    if(count==max_balanced_powers)return -1;
+    const unsigned id=count++;auto &e=entries.emplace(id);
+    e.exponent=exponent;e.retained=retained;e.fixed_level=fixed;e.parent=parent;
+    e.limbs=limbs_for_bits(power_bits(base.odd_bound,fragment_digits*exponent));
+    return int(id);
+}
+sbn3_query_result BalancedPowers::finish(const BaseInfo &base,unsigned workers,PlanTranscript *transcript,
+                                       const RailProductPlan *const *caches) noexcept {
+    total_limbs=0;auxiliary_bytes=0;setup_bytes=0;
+    for(unsigned j=0;j<count;++j){auto &e=entries[j];if(e.fixed_level!=UINT32_MAX)continue;
+        if(e.retained){e.offset=total_limbs;total_limbs+=align_to(e.limbs+8,8);}
+        else{e.offset=auxiliary_bytes/8;auxiliary_bytes+=align_to((e.limbs+8)*8,64);}
+    }
+    const auto seed=fixed_power(base.odd,0);require(seed.data,SBN3_FATAL_MATH,"balanced power seed");
+    const size_t seed_limbs=rail_limbs(base,0);
+    for(unsigned j=0;j<count;++j){auto &e=entries[j];if(e.fixed_level!=UINT32_MAX)continue;
+        const size_t m=entries[e.parent].limbs;
+        const size_t square_limbs=limbs_for_bits(power_bits(base.odd_bound,fragment_digits*(e.exponent&~uint64_t(1))));
+        const size_t prefix=auxiliary_bytes+((e.exponent&1)?align_to((square_limbs+8)*8,64):0);
+        size_t square_bytes=0;
+        const auto *cache=caches?caches[e.parent]:nullptr;
+        e.cached_square=cache&&(square_workers(workers,m)==1||tree_policy().reuse_fft_squares)&&
+            rail_product_square_supported(*cache,m);
+        if(e.cached_square)square_bytes=align_to(2*m*8,64)+cache->scratch_bytes+128;
+        else if(m>rail_basecase_limbs&&m<rail_cached_min_common)
+            square_bytes=align_to(2*m*8,64)+u52::scratch_bytes(m,m)+128;
+        else if(m>rail_basecase_limbs){
+            const unsigned w=square_workers(workers,m);
+            if(m>=rail_square_service_limbs){
+                const uint64_t recorded=transcript&&transcript->replay?transcript->next():0;
+                ProductChoice choice=recorded&((uint64_t(1)<<product_choice_bits)-1);SquarePlan plan{};bool searched=false;
+                auto check=[&]{return PlanTranscript::check(m,e.exponent,w,plan.info.mul.arithmetic_id);};
+                e.service=square_plan(m,w,plan,choice,&searched);
+                if(recorded&&!searched&&e.service&&check()!=recorded>>product_choice_bits){choice=0;plan={};e.service=square_plan(m,w,plan,choice,&searched);}
+                if(transcript&&transcript->replay)transcript->searched+=searched;
+                if(transcript&&!transcript->replay)transcript->record(e.service?choice:0,check());
+                if(e.service){e.square_choice=choice;square_bytes=plan.bytes+(size_t(1)<<21);}
+            }
+            if(!e.service){ProductShape shape{};const auto rc=product_shape(m,m,w,shape,nullptr,transcript,1);
+                if(rc!=SBN3_SUPPORTED)return rc;e.square_choice=shape.choice;square_bytes=shape.temporary_bytes()+64;}
+        }
+        size_t correction=0;
+        if(e.exponent&1)correction=align_to((square_limbs+seed_limbs)*8,64)+
+            (std::max(square_limbs,seed_limbs)>chain_basecase_limbs?u52::scratch_bytes(square_limbs,seed_limbs):0)+128;
+        setup_bytes=std::max(setup_bytes,prefix+std::max(square_bytes,correction)+256);
+    }
+    return SBN3_SUPPORTED;
+}
+namespace {
+void balanced_square(const BalancedPowers::Entry&e,unsigned workers,Arena&arena,sbn3_team&team,
+                     sbn3_lease&lease,size_t prefix,const uint64_t*q,size_t m,uint64_t*out,size_t n,
+                     const RailProduct *cache) noexcept {
+    auto copy=[&](const uint64_t*z){
+        for(size_t j=n;j<2*m;++j)require(!z[j],SBN3_FATAL_MATH,"balanced square capacity");
+        parallel_limbs::copy(&team,out,z,std::min(n,2*m));
+        if(n>2*m)memset(out+2*m,0,(n-2*m)*8);
+    };
+    if(e.cached_square){
+        require(cache&&cache->common==q,SBN3_FATAL_MATH,"power square cache identity");
+        Frame scratch=Frame::borrow(arena,lease,static_cast<uint8_t*>(lease.data)+prefix,lease.bytes-prefix);
+        auto*z=scratch.alloc<uint64_t>(2*m);rail_product_square(*cache,scratch,z);copy(z);return;
+    }
+    if(m<=rail_basecase_limbs){uint64_t z[2*rail_basecase_limbs];sbn3_mul_basecase(z,2*m,q,m,q,m);copy(z);return;}
+    if(m<rail_cached_min_common){
+        Frame scratch=Frame::borrow(arena,lease,static_cast<uint8_t*>(lease.data)+prefix,lease.bytes-prefix);
+        auto*z=scratch.alloc<uint64_t>(2*m);u52::multiply(z,q,m,q,m,scratch);copy(z);return;
+    }
+    if(!e.service){Frame scratch=Frame::borrow(arena,lease,static_cast<uint8_t*>(lease.data)+prefix,lease.bytes-prefix);
+        auto*z=scratch.alloc<uint64_t>(2*m);temporary_product(&team,square_workers(workers,m),scratch,q,m,q,m,z,2*m,e.square_choice);copy(z);return;}
+    SquarePlan plan{};ProductChoice choice=e.square_choice;
+    require(square_plan(m,square_workers(workers,m),plan,choice),SBN3_FATAL_MATH,"balanced square replay");
+    const auto&i=plan.info.mul;const uintptr_t base=reinterpret_cast<uintptr_t>(arena.base);
+    const size_t start=size_t(reinterpret_cast<uintptr_t>(lease.data)-base),bytes=lease.bytes;
+    arena.release(lease);sbn3_lease guard{};if(prefix)guard=arena.acquire(start,prefix);
+    size_t at=align_to(base+start+prefix,4096)-base;
+    auto tables=arena.acquire(at,align_to(std::max<size_t>(i.table_bytes,64),4096));at+=tables.bytes;
+    at=align_to(base+at,std::max<size_t>(i.workspace_alignment,4096))-base;
+    auto work=arena.acquire(at,align_to(std::max<size_t>(i.workspace_bytes,64),4096));at+=work.bytes;
+    const size_t capacity=sbn3_mul_output_capacity(&i);auto*z=reinterpret_cast<uint64_t*>(base+at);
+    require(at+capacity*8<=start+bytes,SBN3_FATAL_WORKSPACE,"balanced square scratch");
+    sbn3_mul_binding*b=nullptr;sbn3_product_bind(&plan.plan,static_cast<sbn3_arena*>(&arena),&tables,&work,&team,nullptr,nullptr,&b);
+    sbn3_product_inputs in{};in.a={q,m};sbn3_product_execute(b,&in,{z,capacity});sbn3_mul_unbind(b);
+    // Copy while the prefix containing an auxiliary destination is still live.
+    copy(z);arena.release(work);arena.release(tables);if(guard.token)arena.release(guard);
+    lease=arena.acquire(start,bytes);
+}
+}
+void balanced_powers_build(const BaseInfo&base,const BalancedPowers&p,unsigned workers,Arena&arena,sbn3_team&team,
+                           sbn3_lease&lease,uint64_t*storage,const uint64_t**out,RailProduct *const *caches) noexcept {
+    require(lease.bytes>=p.setup_bytes,SBN3_FATAL_WORKSPACE,"balanced power setup");
+    auto*aux=static_cast<uint64_t*>(lease.data);const auto seed=fixed_power(base.odd,0);const size_t seed_limbs=rail_limbs(base,0);
+    for(unsigned j=0;j<p.count;++j){const auto&e=p.entries[j];
+        if(e.fixed_level!=UINT32_MAX){out[j]=fixed_power(base.odd,e.fixed_level).data;
+            if(caches&&caches[j])rail_product_forward(*caches[j],out[j]);continue;}
+        auto*dest=(e.retained?storage:aux)+e.offset;out[j]=dest;
+        const size_t m=p.entries[e.parent].limbs;
+        const size_t sn=limbs_for_bits(power_bits(base.odd_bound,fragment_digits*(e.exponent&~uint64_t(1))));
+        auto*square=(e.exponent&1)?reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(lease.data)+p.auxiliary_bytes):dest;
+        const size_t prefix=p.auxiliary_bytes+((e.exponent&1)?align_to((sn+8)*8,64):0);
+        balanced_square(e,workers,arena,team,lease,prefix,out[e.parent],m,square,sn,caches?caches[e.parent]:nullptr);
+        if(e.exponent&1){
+            Frame scratch=Frame::borrow(arena,lease,static_cast<uint8_t*>(lease.data)+prefix,lease.bytes-prefix);
+            auto*z=scratch.alloc<uint64_t>(sn+seed_limbs);
+            if(std::max(sn,seed_limbs)<=chain_basecase_limbs)sbn3_mul_basecase(z,sn+seed_limbs,square,sn,seed.data,seed_limbs);
+            else u52::multiply(z,square,sn,seed.data,seed_limbs,scratch);
+            for(size_t k=e.limbs;k<sn+seed_limbs;++k)require(!z[k],SBN3_FATAL_MATH,"balanced odd power capacity");
+            parallel_limbs::copy(&team,dest,z,e.limbs);
+        }
+        memset(dest+e.limbs,0,(align_to(e.limbs+8,8)-e.limbs)*8);
+        if(caches&&caches[j])rail_product_forward(*caches[j],dest);
+    }
+}
 Chain chain_of(const BaseInfo &b, uint64_t fragments) noexcept {
     Chain c{};
     c.first = unsigned(__builtin_ctzll(fragments));
     uint64_t done = uint64_t(1) << c.first;
     c.limbs = c.widest = rail_limbs(b, c.first);
+    c.first_limbs=c.limbs;
     for (unsigned k = c.first + 1; k < 64 && (fragments >> k); ++k) {
         if (!((fragments >> k) & 1))
             continue;
         done += uint64_t(1) << k;
         const size_t next = limbs_for_bits(power_bits(b.odd_bound, done * fragment_digits));
-        c.step[c.steps++] = {k, c.limbs, next, 0};
+        c.step[c.steps++] = {k, c.limbs, next, rail_limbs(b,k), 0};
         c.widest = std::max(c.widest, c.limbs + rail_limbs(b, k));
         c.limbs = next;
     }
     return c;
 }
-sbn3_query_result chain_bytes(const BaseInfo &b, Chain &c, unsigned workers, size_t &bytes, PlanTranscript *transcript) noexcept {
+sbn3_query_result chain_bytes(const BaseInfo &, Chain &c, unsigned workers, size_t &bytes, PlanTranscript *transcript) noexcept {
     size_t episode = 0;
     for (unsigned j = 0; j < c.steps; ++j) {
         auto &s = c.step[j];
-        const size_t bn = rail_limbs(b, s.level);
+        const size_t bn = s.power_limbs;
+        if(s.cache_slot>=0){episode=std::max(episode,s.cache_bytes);continue;}
         if (std::max(s.acc_limbs, bn) <= chain_basecase_limbs)
             continue;
+        if(local_temporary_supported(s.acc_limbs,bn,workers)){
+            episode=std::max(episode,local_temporary_bytes(s.acc_limbs,bn));continue;
+        }
         ProductShape shape{};
         const auto rc = product_shape(s.acc_limbs, bn, workers, shape, nullptr, transcript);
         if (rc != SBN3_SUPPORTED)
@@ -467,18 +611,23 @@ sbn3_query_result chain_bytes(const BaseInfo &b, Chain &c, unsigned workers, siz
     bytes = c.steps ? c.resident_bytes() + episode + 256 : 0;
     return SBN3_SUPPORTED;
 }
-const uint64_t *chain_evaluate(const Chain &c, const RailPlan &rail, const uint64_t *const *entries, sbn3_team *team,
-                               unsigned workers, Frame &scratch) noexcept {
+const uint64_t *chain_evaluate(const Chain &c, const RailPlan &, const uint64_t *const *entries, sbn3_team *team,
+                               unsigned workers, Frame &scratch,const RailProduct *caches) noexcept {
     if(!c.steps)return entries[c.first];
     auto *x = scratch.alloc<uint64_t>(c.widest + 8), *y = scratch.alloc<uint64_t>(c.widest + 8);
     memset(x, 0, (c.widest + 8) * 8);
     memset(y, 0, (c.widest + 8) * 8);
-    memcpy(x, entries[c.first], rail.limbs[c.first] * 8);
+    memcpy(x, entries[c.first], c.first_limbs * 8);
     for (unsigned j = 0; j < c.steps; ++j) {
         const auto &s = c.step[j];
-        const size_t bn = rail.limbs[s.level];
-        if (std::max(s.acc_limbs, bn) <= chain_basecase_limbs)
+        const size_t bn = s.power_limbs;
+        if(s.cache_slot>=0){
+            require(caches&&caches[s.cache_slot].common==entries[s.level],SBN3_FATAL_MATH,"chain cache identity");
+            rail_product_prefix(caches[s.cache_slot],scratch,x,s.acc_limbs,y);
+        }else if (std::max(s.acc_limbs, bn) <= chain_basecase_limbs)
             sbn3_mul_basecase(y, s.acc_limbs + bn, x, s.acc_limbs, entries[s.level], bn);
+        else if(local_temporary_supported(s.acc_limbs,bn,workers))
+            local_temporary_product(scratch,x,s.acc_limbs,entries[s.level],bn,y);
         else
             temporary_product(team, workers, scratch, x, s.acc_limbs, entries[s.level], bn, y, c.widest + 8, s.choice);
         for (size_t i = s.out_limbs; i < s.acc_limbs + bn; ++i)

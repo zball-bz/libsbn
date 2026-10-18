@@ -3,6 +3,7 @@
 // the exact fallback). ENCLOSED: every certified digit is shared by the whole interval [X, X + 2^e).
 #include "product_support.hpp"
 #include "sbn3/radix.h"
+#include "radix/programs.hpp"
 #include <initializer_list>
 #include <string>
 #include <math.h>
@@ -101,19 +102,24 @@ Expect reference(const std::vector<uint64_t> &m, int64_t exponent2, unsigned bas
 struct Stats {
     uint64_t cases = 0, fallbacks = 0, ties = 0, enclosed = 0, shortened = 0;
 } stats;
+bool canonical_decimal_only=false,once_mode=false;
 void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64_t> &m, int64_t exponent2,
            uint64_t digits, sbn3_radix_mode mode, bool alphabet, int expect_fallback = -1, size_t budget = 0) {
     Fixture &f = pool.f;
+    const bool use_once=once_mode&&expect_fallback<0; // explicit recipe witnesses retain the planned interface
     sbn3_format_spec spec{base, m.size(), exponent2, digits, mode};
     sbn3_radix_options options{};
     options.workers = workers;
     options.memory_budget = budget;
-    options.repeated = unsigned(random_word() & 1); // the integer tree from 32 limbs, or from 256
-    // Explicit fallback assertions exercise the tree recipe. The direct
-    // one-use fraction recipe is exact and has no boundary fallback.
-    if(expect_fallback>=0)options.repeated=1;
+    options.repeated = unsigned(random_word() & 1);
+    // Boundary witnesses belong to the tree recipe. Both fresh and repeated
+    // defaults may use exact direct extraction for small values.
+    auto &policy=sbn::v3::radix::tree_policy();
+    const unsigned saved_recipe=policy.fraction_recipe;
+    if(expect_fallback>=0)policy.fraction_recipe=2;
     unsigned char table[64];
     sbn3_radix_alphabet(base, table);
+    if(alphabet&&!canonical_decimal_only&&(random_word()&1))for(unsigned j=0;j<64;++j)table[j]=uint8_t(73*j+151);
     if (alphabet) {
         options.use_alphabet = 1;
         memcpy(options.alphabet, table, 64);
@@ -121,21 +127,24 @@ void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64
     sbn3_format_plan plan{};
     sbn3_format_info info{};
     allocation_watch_start();
-    const auto rc = sbn3_format_query(&spec, &options, &plan, &info);
+    const auto rc = use_once?sbn3_format_once_query(&spec,&options,&info):sbn3_format_query(&spec, &options, &plan, &info);
     assert(allocation_watch_stop() == 0);
     assert(rc == SBN3_SUPPORTED);
     assert(info.storage_bytes <= pool.bytes);
     assert(mode == SBN3_RADIX_ENCLOSED || info.fraction_digits == digits);
     sbn3_format_binding *binding = nullptr;
     allocation_watch_start();
-    sbn3_format_bind(&plan, f.arena, pool.offset, f.team, &binding);
+    if(!use_once)sbn3_format_bind(&plan, f.arena, pool.offset, f.team, &binding);
     assert(allocation_watch_stop() == 0);
     std::vector<unsigned char> out(info.digit_bytes + 64, 0xee);
     for (unsigned repeat = 0; repeat < 2; ++repeat) {
         sbn3_format_result result{};
         std::fill(out.begin(), out.end(), 0xee);
         allocation_watch_start();
-        sbn3_format_execute(binding, {m.data(), m.size()}, out.data(), &result);
+        if(use_once){const sbn3_radix_workspace w{f.arena,f.team,pool.offset,pool.bytes};
+            sbn3_format_once_result r;sbn3_format_once(&spec,&options,m.data(),out.data(),info.storage_bytes?&w:nullptr,&r);
+            assert(r.integer_digits==info.integer_digits);result={r.integer_first,r.fraction_digits,r.exact_fallback};}
+        else sbn3_format_execute(binding, {m.data(), m.size()}, out.data(), &result);
         assert(allocation_watch_stop() == 0);
         for (size_t j = info.digit_bytes; j < out.size(); ++j)
             assert(out[j] == 0xee);
@@ -167,9 +176,12 @@ void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64
             assert(result.fraction_digits <= common);
             ++stats.enclosed;
             if (result.fraction_digits < info.fraction_digits) {
-                // only an exact guard of all b-1 may shorten the result
-                for (size_t j = info.fraction_digits; j < info.fraction_digits + 8; ++j)
-                    assert(unsigned(uint8_t(e.fraction[j])) == base - 1);
+                // The interval rule includes the tree's one-unit downward
+                // error, so it can stop within two guard units of a rollover.
+                uint64_t guard=0,power=1;
+                for(size_t j=info.fraction_digits;j<info.fraction_digits+8;++j){
+                    guard=guard*base+unsigned(uint8_t(e.fraction[j]));power*=base;}
+                assert(guard==0 || guard>=power-2);
                 ++stats.shortened;
             }
         }
@@ -184,8 +196,9 @@ void check(Pool &pool, unsigned workers, unsigned base, const std::vector<uint64
         ++stats.cases;
     }
     allocation_watch_start();
-    sbn3_format_unbind(binding);
+    if(!use_once)sbn3_format_unbind(binding);
     assert(allocation_watch_stop() == 0);
+    policy.fraction_recipe=saved_recipe;
 }
 std::vector<uint64_t> random_limbs(size_t n) {
     std::vector<uint64_t> m(n);
@@ -220,8 +233,7 @@ std::vector<uint64_t> near_boundary(unsigned base, uint64_t t, size_t limbs, int
 // Large analytic fractions exercise the ring stages and, near 1/10, the
 // subsequent exact repair. Their decimal strings are known without a large
 // quadratic reference conversion. Reuse the binding with changed input values.
-void phase_storage(Pool &pool,unsigned workers) {
-    constexpr size_t n=65537;
+void phase_storage(Pool &pool,unsigned workers,size_t n=65537) {
     const uint64_t digits=uint64_t(floorl(64.L*n*log10l(2.L)))-256;
     std::vector<uint64_t> m(n),saved(n);
     for(unsigned repeated:{0u,1u}){
@@ -261,10 +273,41 @@ void phase_storage(Pool &pool,unsigned workers) {
         sbn3_format_unbind(binding);
     }
 }
-int main() {
+int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"--once-small")){once_mode=true;argv[1]=const_cast<char*>("--decimal-small");}
+    if(argc==2&&!strcmp(argv[1],"--once")){once_mode=true;argc=1;}
+    if(argc==2&&!strcmp(argv[1],"--decimal-small")){
+        canonical_decimal_only=true;Fixture f(1,false,size_t(16)<<20);Pool pool(f,size_t(4)<<20);
+        for(unsigned base=2;base<=64;++base)
+            check(pool,1,base,random_limbs(1),0,0,SBN3_RADIX_EXACT,true);
+        for(size_t n=1;n<=40;++n){
+            for(unsigned pattern=0;pattern<3;++pattern){auto m=random_limbs(n);
+                if(pattern<2)std::fill(m.begin(),m.end(),pattern?UINT64_MAX:uint64_t(0));
+                check(pool,1,10,m,0,0,SBN3_RADIX_EXACT,true);
+                for(size_t digits:{size_t(0),size_t(1),size_t(18),size_t(19),size_t(20),size_t(19*n),64*n,64*n+1})
+                    check(pool,1,10,m,-int64_t(64*n),digits,SBN3_RADIX_EXACT,true);
+            }
+            auto m=random_limbs(n);
+            for(int64_t exponent:{-int64_t(64*n)+1,-int64_t(64*n)-1})
+                check(pool,1,10,m,exponent,19*n,SBN3_RADIX_EXACT,true);
+            check(pool,1,10,m,-int64_t(64*n),19*n,SBN3_RADIX_ENCLOSED,true);
+        }
+        puts("decimal service format: dense 1..40 limbs, cutoffs, exact/enclosed, partial exponents, zero/tie/top values PASS");return 0;
+    }
+    if(argc==2&&!strcmp(argv[1],"--integer-scaled")){sbn::v3::radix::tree_policy().integer_scaled_work=1;argc=1;}
+    if(argc>1){assert(argc==2&&(!strcmp(argv[1],"--phase-overlay-only")||!strcmp(argv[1],"--staged-fft-only")));
+        if(!strcmp(argv[1],"--staged-fft-only"))sbn::v3::radix::tree_policy().staged_serial_fft=true;
+        Fixture f(16,false,size_t(384)<<20);Pool pool(f,size_t(256)<<20);
+        for(size_t n:{50535u,62757u,74632u,262147u,524291u,1048583u})phase_storage(pool,16,n);
+        puts("phase overlay: six irregular NTT/linear sizes, fresh/repeated, exact ties and lease conservation PASS");return 0;}
     for (unsigned workers : {1u, 4u}) {
         Fixture f(workers, false);
         Pool pool(f, size_t(192) << 20);
+        for(unsigned base=2;base<=64;++base){
+            const auto m=random_limbs(3);
+            check(pool,workers,base,m,-89,37,SBN3_RADIX_EXACT,true);
+            check(pool,workers,base,m,-192,37,SBN3_RADIX_ENCLOSED,false);
+        }
         const unsigned bases[] = {2, 8, 16, 32, 64, 3, 7, 10, 12, 36, 62, 63};
         for (unsigned base : bases) {
             for (size_t limbs : {size_t(1), size_t(2), size_t(5), size_t(31), size_t(33), size_t(40), size_t(100), size_t(300)}) {
@@ -295,6 +338,12 @@ int main() {
             }
         }
         // digit-boundary ties of the fraction: x just below / at / above T / b^t, many more bits than digits
+        {
+            auto &policy=sbn::v3::radix::tree_policy();const unsigned saved=policy.fraction_recipe;
+            policy.fraction_recipe=1;const auto before=stats.fallbacks;
+            check(pool,workers,10,near_boundary(10,300,24,-1),-64*24,300,SBN3_RADIX_EXACT,false);
+            assert(stats.fallbacks>before);policy.fraction_recipe=saved;
+        }
         for (unsigned base : {3u, 10u, 12u, 63u}) {
             for (uint64_t t : {uint64_t(1), uint64_t(5), uint64_t(64), uint64_t(100), uint64_t(200)}) {
                 for (uint64_t digits : {t, t + 1, t + 30, uint64_t(64) * ((t + 63) / 64), uint64_t(300)}) {

@@ -16,7 +16,8 @@ void divide_terminal(const DivideTerminal &p,const uint64_t *A,const uint64_t *D
     group.cache=p.u;group.stage=p.stage;group.value=p.work[1];group.period=k;
     group.capacity=capacity;group.execute_capacity=output;group.team=p.team;
     group.repair_bytes=p.repair_bytes;
+    group.scope=p.scope;group.low_lift=p.low_lift;
     product::CyclicWindowProducts products(group);
-    bounded_refinement<RefinementKind::Quotient>({p.m,n,p.work[0],Q,p.team},products,A,D,U,Q);
+    bounded_refinement<RefinementKind::Quotient>({p.m,n,p.work[0],Q,p.team,p.scope},products,A,D,U,Q);
 }
 } // namespace sbn::v3

@@ -30,10 +30,13 @@ struct CyclicWindowGroup {
     size_t repair_bytes=0;
     uint64_t *witness=nullptr;
     size_t witness_words=0;
+    sbn3_team_scope* scope=nullptr;
+    const LowLiftProgram* low_lift=nullptr;
 };
 class CyclicWindowProducts {
     const CyclicWindowGroup &p_;
     ProductStageRun stage_;
+    parallel_limbs::Owner owner()const noexcept{return {p_.team,p_.scope};}
 
     void run(unsigned slot, Span a, Span b) noexcept {
         require(slot < 3, SBN3_FATAL_ARGUMENT, "cyclic window slot");
@@ -52,8 +55,8 @@ class CyclicWindowProducts {
         const bool live=s.cached&&!s.build_cache&&binding->backend->product_execute_live;
         if (!live && (words != b.words || s.input_padding)) {
             require(s.input_padding, SBN3_FATAL_ARGUMENT, "cyclic window padding storage");
-            parallel_limbs::copy(p_.team, s.input_padding, b.data, b.words);
-            parallel_limbs::fill(p_.team, s.input_padding + b.words, words - b.words);
+            parallel_limbs::copy(owner(), s.input_padding, b.data, b.words);
+            parallel_limbs::fill(owner(), s.input_padding + b.words, words - b.words);
             b = {s.input_padding, words};
         }
         auto *cache = s.cached ? stage_.cache(p_.cache) : nullptr;
@@ -65,18 +68,19 @@ class CyclicWindowProducts {
                                            {b.data,b.words},{},{}};
             if(s.fresh_in_cached){
                 require(binding->backend->product_execute_fresh,SBN3_FATAL_ARGUMENT,"fresh product capability");
-                binding->backend->product_execute_fresh(binding,nullptr,input,output);
-            }else if(live)binding->backend->product_execute_live(binding,nullptr,input,output);
+                binding->backend->product_execute_fresh(binding,p_.scope,input,output);
+            }else if(live)binding->backend->product_execute_live(binding,p_.scope,input,output);
+            else if(p_.scope)sbn3_product_execute_on_scope(binding,p_.scope,&input,output);
             else sbn3_product_execute(binding, &input, output);
         }
         if (s.metrics) sbn3_product_get_metrics(binding, s.metrics);
-        if(!p_.repair_bytes)parallel_limbs::fill(p_.team, p_.value+p_.period, p_.capacity-p_.period);
+        if(!p_.repair_bytes)parallel_limbs::fill(owner(), p_.value+p_.period, p_.capacity-p_.period);
     }
     void check_bound(MagnitudeBound b) const noexcept {
         if(!b.verify)return;
         require(b.high_exclusive && b.words < p_.capacity &&
                     p_.value[b.words] < b.high_exclusive &&
-                    parallel_limbs::zero(p_.team,p_.value+b.words+1,p_.capacity-b.words-1),
+                    parallel_limbs::zero(owner(),p_.value+b.words+1,p_.capacity-b.words-1),
                 SBN3_FATAL_MATH,"cyclic product window bound");
     }
     WindowResult window(Window w,bool negative=false) const noexcept {
@@ -91,7 +95,7 @@ class CyclicWindowProducts {
         else {
             require(sub.shift<p_.period&&sub.value.words<=2*p_.period-sub.shift,
                     SBN3_FATAL_ARGUMENT,"cyclic cancellation addend");
-            parallel_limbs::cyclic_sub_shifted(p_.team,p_.value,p_.period,sub.value.data,sub.value.words,sub.shift);
+            parallel_limbs::cyclic_sub_shifted(owner(),p_.value,p_.period,sub.value.data,sub.value.words,sub.shift);
         }
     }
     WindowResult repaired(unsigned slot,Span a,Span b,ShiftedSpan sub,Window w,MagnitudeBound limit) noexcept {
@@ -104,15 +108,17 @@ class CyclicWindowProducts {
         require((!p_.witness||(g<=p_.witness_words&&!overlaps(witness,8*g,p_.value,8*p_.capacity)))&&
                 !overlaps(witness,8*g,a.data,8*a.words)&&!overlaps(witness,8*g,b.data,8*b.words)&&
                 !overlaps(witness,8*g,sub.value.data,8*sub.value.words),SBN3_FATAL_ARGUMENT,"cyclic witness lifetime");
-        struct Low {Span a,b;ShiftedSpan sub;size_t words;uint64_t *tail;} args{a,b,sub,g,witness};
+        const LowLiftStep* selected=nullptr;
+        if(p_.low_lift){require(slot<p_.low_lift->count,SBN3_FATAL_MATH,"compiled cyclic lift slot");selected=&p_.low_lift->steps[slot];}
+        struct Low {Span a,b;ShiftedSpan sub;size_t words;uint64_t *tail;const LowLiftStep* selected;} args{a,b,sub,g,witness,selected};
         binding->backend->with_product_scratch(binding,&args,[](void *arg,Frame &scratch){
-            auto &x=*static_cast<Low*>(arg);auto *low=low_lift_prepare(scratch,x.words,x.a,x.b,x.sub);
+            auto &x=*static_cast<Low*>(arg);auto *low=low_lift_prepare(scratch,x.words,x.a,x.b,x.sub,x.selected);
             memcpy(x.tail,low,8*x.words);
         });
         run(slot,a,b);subtract(sub);
         const bool negative=p_.witness?reconstruct_cyclic(p_.value,p_.period,witness,g):
                                       reconstruct_cyclic_tail(p_.value,p_.period,g);
-        parallel_limbs::fill(p_.team,p_.value+p_.period+g,p_.capacity-p_.period-g);
+        parallel_limbs::fill(owner(),p_.value+p_.period+g,p_.capacity-p_.period-g);
         check_bound(limit);return window(w,negative);
     }
   public:
@@ -150,13 +156,13 @@ class CyclicWindowProducts {
         if(limit.words==p_.period){
             require(p_.capacity>p_.period,SBN3_FATAL_ARGUMENT,"cyclic residual lift capacity");
             negative=reconstruct_cyclic(p_.value,p_.period,low);
-        }else negative=parallel_limbs::cyclic_absolute(p_.team,p_.value,p_.period);
+        }else negative=parallel_limbs::cyclic_absolute(owner(),p_.value,p_.period);
         check_bound(limit);return window(w,negative);
     }
     WindowResult retain(WindowResult r,uint64_t *destination) const noexcept {
         if(p_.consume_value)return r;
         require(destination,SBN3_FATAL_ARGUMENT,"cyclic retained window");
-        parallel_limbs::copy(p_.team,destination,r.data,r.words);r.data=destination;return r;
+        parallel_limbs::copy(owner(),destination,r.data,r.words);r.data=destination;return r;
     }
 };
 } // namespace sbn::v3::product

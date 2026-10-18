@@ -2,6 +2,7 @@
 #include "common/identity.hpp"
 #include "product/fft_backend.hpp"
 #include "runtime/team.hpp"
+#include "runtime/bound_owner.hpp"
 #include <new>
 #include <initializer_list>
 #include <algorithm>
@@ -169,6 +170,7 @@ struct Binding {
     Plan plan{};
     Arena *arena;
     sbn3_team *team;
+    BoundOwner owner;
     sbn3_lease tables, work;
     Frame frame;
     const Spectrum *cache = nullptr;
@@ -187,8 +189,8 @@ const Binding &binding(const sbn3_mul_binding *b) {
     return *reinterpret_cast<const Binding *>(b);
 }
 void idle(const Binding &b) {
-    require(pthread_equal(b.team->creator, pthread_self()) && !b.team->busy && !b.active, SBN3_FATAL_TEAM,
-            "FFT binding owner");
+    b.owner.check(*b.team);
+    require(!__atomic_load_n(&b.active,__ATOMIC_ACQUIRE),SBN3_FATAL_LIFETIME,"FFT binding active");
 }
 sbn3_query_result query_product(const sbn3_product_request &r, const sbn3_mul_options &o, sbn3_mul_plan &out,
                                 sbn3_product_info &info) {
@@ -321,16 +323,15 @@ void product_metrics(const sbn3_mul_binding *p, sbn3_product_metrics &out) {
 void forbidden_fast(sbn3_mul_binding *, const uint64_t *, const uint64_t *, uint64_t *) {
     fatal(SBN3_FATAL_ARGUMENT, "FFT cache requires product_execute");
 }
-void product_bind(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, const sbn3_lease &w,
-                  sbn3_team &team, const sbn3_spectrum *s0, const sbn3_spectrum *s1, sbn3_mul_binding **out) {
+void product_bind_impl(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, const sbn3_lease &w,
+                  sbn3_team &team, const sbn3_spectrum *s0, const sbn3_spectrum *s1,
+                  sbn3_mul_binding **out,sbn3_team_scope *scope) {
     const auto q = load(p);
     require(bool(s0) == q.has_cache && !s1, SBN3_FATAL_ARGUMENT, "FFT cached operand");
     const auto *s = s0 ? &spectrum(s0) : nullptr;
     if (s)
         require(matches(*s, q.cached), SBN3_FATAL_ARGUMENT, "FFT incompatible spectrum");
-    require(team.arena == &a && team.width >= q.info.mul.workers &&
-                pthread_equal(team.creator, pthread_self()) && !team.busy,
-            SBN3_FATAL_TEAM, "FFT bind team");
+    BoundOwner owner;owner.bind(a,team,scope,q.info.mul.workers);
     require(t.bytes >= q.info.mul.table_bytes && w.bytes >= q.info.mul.workspace_bytes &&
                 !(uintptr_t(t.data) & 127) && !(uintptr_t(w.data) & 127) &&
                 !overlaps(t.data, t.bytes, w.data, w.bytes) &&
@@ -340,6 +341,7 @@ void product_bind(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, co
     a.claim_unshared(t);
     a.claim_unshared(w);
     auto *b = new (w.data) Binding(q, a, team, t, w, s);
+    b->owner=owner;
     b->header.execute_fast = forbidden_fast;
     b->base_bytes = up(sizeof(Binding));
     b->frame.allocate(b->base_bytes, 128);
@@ -353,6 +355,15 @@ void product_bind(const sbn3_mul_plan &p, sbn3_arena &a, const sbn3_lease &t, co
     }
     a.release(w);
     *out = &b->header;
+}
+void product_bind(const sbn3_mul_plan &p,sbn3_arena &a,const sbn3_lease &t,const sbn3_lease &w,
+                  sbn3_team &team,const sbn3_spectrum *s0,const sbn3_spectrum *s1,sbn3_mul_binding **out) {
+    product_bind_impl(p,a,t,w,team,s0,s1,out,nullptr);
+}
+void product_bind_scope(const sbn3_mul_plan &p,sbn3_arena &a,const sbn3_lease &t,const sbn3_lease &w,
+                  sbn3_team_scope *scope,const sbn3_spectrum *s0,const sbn3_spectrum *s1,sbn3_mul_binding **out) {
+    require(scope&&scope->team,SBN3_FATAL_TEAM,"FFT scoped binding");
+    product_bind_impl(p,a,t,w,*static_cast<sbn3_team *>(scope->team),s0,s1,out,scope);
 }
 struct Call {
     Binding *b;
@@ -430,6 +441,7 @@ void product_values(Binding &b, const sbn3_product_inputs &in, sbn3_limbs out, b
 void product_execute(sbn3_mul_binding *p, sbn3_team_scope *scope, const sbn3_product_inputs &in,
                      sbn3_limbs out) {
     auto &b = binding(p);
+    scope=b.owner.resolve(*b.team,scope,b.plan.info.mul.workers);
     if (!scope)
         idle(b);
     product_values(b, in, out);
@@ -437,7 +449,7 @@ void product_execute(sbn3_mul_binding *p, sbn3_team_scope *scope, const sbn3_pro
     if (scope)
         action(&c, scope);
     else
-        sbn3_team_run(b.team, action, &c);
+        b.owner.run(*b.team, action, &c);
 }
 
 void unbind(sbn3_mul_binding *p) {
@@ -485,7 +497,7 @@ void compute_spectrum(sbn3_mul_binding *p, sbn3_spectrum *s, sbn3_const_limbs a)
     for (const auto &l : {b.tables, b.work})
         require(!overlaps(a.data, a.count * 8, l.data, l.bytes), SBN3_FATAL_ARGUMENT,
                 "FFT producer resource alias");
-    fft_compute_spectrum(b.plan.shape, s, a, *b.team, b.plan.info.mul.workers);
+    fft_compute_spectrum_owned(b.plan.shape, s, a, *b.team, b.plan.info.mul.workers,b.owner);
 }
 void prepare(sbn3_mul_binding *p, sbn3_const_limbs a, unsigned f, uint64_t g, sbn3_arena &arena,
              const sbn3_lease &l, sbn3_spectrum **out) {
@@ -560,10 +572,10 @@ void fft_reserve_spectrum(pq16::Shape shape, size_t an, unsigned frontier, uint6
 }
 namespace {
 void begin_fft_spectrum(pq16::Shape shape, Spectrum &s, sbn3_const_limbs a, sbn3_team &team,
-                        unsigned workers) {
-    require(equal(shape, s.shape) && a.count == s.desc.source_limbs && s.arena == team.arena &&
-                team.width >= workers && pthread_equal(team.creator, pthread_self()) && !team.busy,
+                        unsigned workers,const BoundOwner& owner) {
+    require(equal(shape, s.shape) && a.count == s.desc.source_limbs,
             SBN3_FATAL_ARGUMENT, "FFT spectrum producer");
+    BoundOwner producer;producer.bind(*s.arena,team,owner.resolve(team,nullptr,workers),workers);
     valid_span(a.data, bytes_for(a.count, 8), "FFT spectrum source");
     require(!(uintptr_t(a.data) & 7) && !overlaps(a.data, a.count * 8, s.storage.data, s.storage.bytes),
             SBN3_FATAL_ARGUMENT, "FFT spectrum input alias");
@@ -585,9 +597,9 @@ void compute_square(sbn3_mul_binding *p, sbn3_spectrum *handle, sbn3_const_limbs
     auto &s = spectrum(handle);
     require(b.plan.kind == SBN3_PRODUCT_SQR && b.cache == &s, SBN3_FATAL_ARGUMENT, "FFT fused square cache");
     product_values(b, {a, {}, {}, {}}, out, true);
-    begin_fft_spectrum(b.plan.shape, s, a, *b.team, b.plan.info.mul.workers);
+    begin_fft_spectrum(b.plan.shape, s, a, *b.team, b.plan.info.mul.workers,b.owner);
     Call c{&b, {s.original ? s.original : a.data, a.count}, {}, out, &s};
-    sbn3_team_run(b.team, action, &c);
+    b.owner.run(*b.team, action, &c);
     __atomic_store_n(&s.state, spectrum_contract::ready, __ATOMIC_RELEASE);
 }
 void compute_multiply(sbn3_mul_binding *p,sbn3_spectrum *handle,sbn3_const_limbs a,
@@ -595,16 +607,16 @@ void compute_multiply(sbn3_mul_binding *p,sbn3_spectrum *handle,sbn3_const_limbs
     auto &b=binding(p);idle(b);auto &s=spectrum(handle);
     require(b.plan.kind==SBN3_PRODUCT_MUL&&b.cache==&s,SBN3_FATAL_ARGUMENT,"FFT build/apply cache");
     product_values(b,{a,fresh,{},{}},out,true);
-    begin_fft_spectrum(b.plan.shape,s,a,*b.team,b.plan.info.mul.workers);
+    begin_fft_spectrum(b.plan.shape,s,a,*b.team,b.plan.info.mul.workers,b.owner);
     Call call{&b,{s.original?s.original:a.data,a.count},fresh,out,&s};
-    sbn3_team_run(b.team,action,&call);
+    b.owner.run(*b.team,action,&call);
     __atomic_store_n(&s.state,spectrum_contract::ready,__ATOMIC_RELEASE);
 }
 } // namespace
-void fft_compute_spectrum(pq16::Shape shape, sbn3_spectrum *p, sbn3_const_limbs a, sbn3_team &team,
-                          unsigned workers) {
+void fft_compute_spectrum_owned(pq16::Shape shape, sbn3_spectrum *p, sbn3_const_limbs a, sbn3_team &team,
+                          unsigned workers,const BoundOwner& owner) {
     auto &s = spectrum(p);
-    begin_fft_spectrum(shape, s, a, team, workers);
+    begin_fft_spectrum(shape, s, a, team, workers,owner);
     struct Work {
         Spectrum *s;
         const uint64_t *a;
@@ -616,8 +628,13 @@ void fft_compute_spectrum(pq16::Shape shape, sbn3_spectrum *p, sbn3_const_limbs 
         sbn3_team_scope sub{scope->team, scope->first, w.workers, false, scope->epoch};
         pq16::forward_spectrum(w.s->data, w.a, w.n, *w.s->tables, &sub);
     };
-    sbn3_team_run(&team, run, &work);
+    owner.run(team,run,&work);
     __atomic_store_n(&s.state, spectrum_contract::ready, __ATOMIC_RELEASE);
+}
+void fft_compute_spectrum(pq16::Shape shape,sbn3_spectrum *p,sbn3_const_limbs a,sbn3_team &team,
+                          unsigned workers) {
+    BoundOwner owner;owner.bind(*spectrum(p).arena,team,nullptr,workers);
+    fft_compute_spectrum_owned(shape,p,a,team,workers,owner);
 }
 const Backend &fft_backend() noexcept {
     static const Backend b{
@@ -644,6 +661,7 @@ const Backend &fft_backend() noexcept {
         .spectrum_reserve_plan = reserve_plan,
         .spectrum_square = compute_square,
         .spectrum_multiply = compute_multiply,
+        .product_bind_scope = product_bind_scope,
     };
     return b;
 }

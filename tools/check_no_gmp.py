@@ -7,6 +7,7 @@ def audit(receipts):
     binaries=set();units=0
     for path in receipts:
         x=json.loads(path.read_text());binaries.add(ROOT/x['archive']['path'])
+        for a in x.get('inline_archives',[]):binaries.add(ROOT/a['path'])
         for u in x['units']:
             units+=1
             assert not any(Path(p).name in ('gmp.h','gmpxx.h') for p in u['dependencies']),u['source']

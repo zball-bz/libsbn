@@ -16,6 +16,7 @@
 #include "runtime/scratch.hpp"
 namespace sbn::v3::radix {
 inline constexpr size_t rail_product_min_limbs = 400;   // below: the exact word kernels win
+inline constexpr size_t rail_cached_min_common = 128; // coupled square/window FFT crossover
 inline constexpr size_t rail_product_max_ring = 32768;  // the FFT kernels' cyclic cap (16-bit digits)
 struct RailProductPlan {
     bool enabled = false;
@@ -28,7 +29,7 @@ struct RailProductPlan {
 };
 // False when no supported ring of at least `minimum_ring` limbs exists for these operand lengths.
 bool rail_product_plan(size_t fresh_limbs, size_t common_limbs, size_t minimum_ring, RailProductPlan &,
-                       uint64_t applications=0) noexcept;
+                       uint64_t applications=0,size_t minimum_fresh=rail_product_min_limbs) noexcept;
 // The parse tree needs the whole product: a linear product with the same cached spectrum
 // (ring == 0, the output has common + fresh limbs). False outside the FFT kernels' single-worker band.
 bool rail_linear_plan(size_t fresh_limbs, size_t common_limbs, RailProductPlan &) noexcept;
@@ -40,8 +41,21 @@ struct RailProduct {
 };
 // Tables and the spectrum of `common` (plan.common_limbs limbs, zero padded, outliving the object) in `storage`.
 void rail_product_prepare(RailProduct &, const RailProductPlan &, Frame &storage, const uint64_t *common) noexcept;
+// Reserve a level before its integer power exists. Publishing that power
+// completes the cache; its spectrum can also produce the next square.
+void rail_product_reserve(RailProduct &, const RailProductPlan &, Frame &storage) noexcept;
+void rail_product_forward(RailProduct &, const uint64_t *common) noexcept;
+bool rail_product_square_supported(const RailProductPlan &,size_t limbs) noexcept;
+void rail_product_square(const RailProduct &,Frame &work,uint64_t *out) noexcept;
+bool rail_product_prefix_supported(const RailProductPlan &,size_t fresh_limbs) noexcept;
+void rail_product_prefix(const RailProduct &,Frame &,const uint64_t *fresh,size_t fresh_limbs,uint64_t *out) noexcept;
+// Exact requested window when its guard separates both the omitted carry
+// and wrapped high part. False leaves `out` untouched; the caller can use
+// the complete residue/witness recipe. `residue` has plan.ring words.
+bool rail_product_try_window(const RailProduct &,Frame &work,const uint64_t *fresh,size_t live_limbs,
+                             size_t origin,size_t words,uint64_t *residue,uint64_t *out) noexcept;
 // out: plan.output_limbs() limbs (the canonical residue, or the full product). work: at least
 // plan.scratch_bytes. One worker.
 void rail_product_execute(const RailProduct &, Frame &work, sbn3_team_scope *self, const uint64_t *fresh,
-                          uint64_t *out) noexcept;
+                          uint64_t *out,size_t live_limbs=0) noexcept;
 } // namespace sbn::v3::radix

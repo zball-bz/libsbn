@@ -15,10 +15,11 @@ void inverse_rung(const InverseRung &p,const uint64_t *D,const uint64_t *U,uint6
     group.capacity=k<n+3?std::max(k,n)+3:k;group.execute_capacity=k;group.team=p.team;
     group.consume_value=p.consume_residual;
     group.repair_bytes=p.repair_bytes;
+    group.scope=p.scope;group.low_lift=p.low_lift;
     // The old approximation occupies only [0,m+1). Its unused output tail
     // can retain the low witness while the product consumes rho in place.
     if(p.repair_bytes){group.witness=V+p.m+1;group.witness_words=n-p.m;}
     product::CyclicWindowProducts products(group);
-    bounded_refinement<RefinementKind::Inverse>({p.m,n,nullptr,p.correction,p.team},products,nullptr,D,U,V);
+    bounded_refinement<RefinementKind::Inverse>({p.m,n,nullptr,p.correction,p.team,p.scope},products,nullptr,D,U,V);
 }
 } // namespace sbn::v3

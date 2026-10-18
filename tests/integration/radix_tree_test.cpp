@@ -79,6 +79,7 @@ struct Case {
 };
 uint64_t checked = 0, equal = 0, below = 0;
 uint64_t forced_repairs = 0;
+bool full_boundary_patterns=false;
 // One prepared block per fixture; every run leases aligned pieces of it and releases them again.
 struct Pool {
     Fixture &f;
@@ -110,9 +111,9 @@ struct Pool {
 void force_middle_carry(Pool &pool,const FormatTree &tree,int root,std::vector<uint64_t> &y) {
     const auto &c=tree.plan->classes[tree.plan->trees[root].root];
     const auto &s=c.split;
-    assert(s.middle_words && !s.product.choice && s.product.work_bytes);
+    assert(s.middle_words && !s.product.choice && s.low_bytes);
     const size_t na=(64*s.product.bn+51)/52;
-    const uint64_t origin=52*(na-5),window=64*c.window_limbs,bits=window+64;
+    const uint64_t origin=52*(na-1-s.middle_guards),window=64*c.window_limbs,bits=window+64;
     ref_int a,x,t,two,expected,observed;ref_inits(a,x,t,two,expected,observed,nullptr);
     ref_import(a,s.product.bn,-1,8,0,0,tree.rail[c.level]);
     assert(ref_get_ui(a)&1);
@@ -132,7 +133,9 @@ void force_middle_carry(Pool &pool,const FormatTree &tree,int root,std::vector<u
     std::vector<uint64_t> middle(s.middle_words),got(c.right_limbs);
     auto &lease=pool.take(s.middle_bytes,64);Frame scratch(*pool.f.arena,lease);
     allocation_watch_start();
-    {ComputeLease computing(*pool.f.arena);u52::middle_guard(middle.data(),tree.rail[c.level],s.product.bn,y.data(),s.product.an,scratch);}
+    {ComputeLease computing(*pool.f.arena);
+        if(s.middle_guards==6)u52::middle_guard6(middle.data(),tree.rail[c.level],s.product.bn,y.data(),s.product.an,scratch);
+        else u52::middle_guard(middle.data(),tree.rail[c.level],s.product.bn,y.data(),s.product.an,scratch);}
     assert(!allocation_watch_stop() && middle[1]==UINT64_MAX);
     take_window(got.data(),got.size(),middle.data(),middle.size(),s.middle_shift);
     ref_mul(expected,a,x);ref_fdiv_q_2exp(expected,expected,window);
@@ -171,7 +174,7 @@ void run(Pool &pool, unsigned base, uint64_t fragments, unsigned workers) {
     std::vector<uint64_t> y(limbs), side(2 * fragments);
     std::vector<uint8_t> out(fragments * 64 + 64, 0xee);
     Reference ref;
-    const unsigned ordinary_patterns = fragments > 300 ? 3 : 14;
+    const unsigned ordinary_patterns = fragments > 300&&!full_boundary_patterns ? 3 : 14;
     const unsigned patterns=ordinary_patterns+(plan->classes[plan->trees[root].root].split.middle_words!=0);
     for (unsigned pattern = 0; pattern < patterns; ++pattern) {
         for (auto &w : y)
@@ -206,9 +209,11 @@ void run(Pool &pool, unsigned base, uint64_t fragments, unsigned workers) {
         }
         }
         std::fill(out.begin(), out.end(), 0xee);
+        const auto original=y;
         allocation_watch_start();
         const uint64_t overlap = format_tree_run(tree, root, y.data(), out.data(), side.data(), side.data() + fragments);
         assert(allocation_watch_stop() == 0);
+        assert(y==original);
         for (size_t j = fragments * 64; j < out.size(); ++j)
             assert(out[j] == 0xee);
         auto expect = ref.digits(y.data(), limbs, base, fragments * 64 + 8);
@@ -269,6 +274,46 @@ std::vector<uint8_t> convert(Pool &pool, unsigned base, uint64_t fragments, unsi
     return out;
 }
 uint64_t cross_checked = 0, ring_stage_runs = 0;
+// Construct both meanings of an all-zero wrap gap. The staged right slot
+// aliases its parent's low input, and the carry case must also exercise the
+// deferred witness after the cyclic pool has been retired.
+void wrap_alias_gate(Pool &pool) {
+    auto &policy=tree_policy();const auto saved=policy;
+    policy.ring_node_limbs=1024;
+    std::unique_ptr<FormatTreePlan> plan;uint64_t fragments=0;
+    for(uint64_t candidate:{8193ull,16385ull,32769ull}){
+        auto q=std::make_unique<FormatTreePlan>();
+        assert(format_tree_begin(10,4,candidate,*q)==SBN3_SUPPORTED&&q->add_tree(candidate)==0&&q->finish()==SBN3_SUPPORTED);
+        if(q->trees[0].stage_count&&q->trees[0].stages[0].split.ring.enabled&&q->trees[0].stages[0].split.low_limbs){
+            plan=std::move(q);fragments=candidate;break;}
+    }
+    assert(plan);const auto &c=plan->classes[plan->trees[0].root];const auto &sp=plan->trees[0].stages[0].split;
+    ref_int a,x,t,two,zero,acc,product,high,gap;ref_inits(a,x,t,two,zero,acc,product,high,gap,nullptr);
+    ref_set_ui(a,1);ref_set_ui(acc,5);
+    for(uint64_t e=64*c.left_fragments;e;e>>=1){if(e&1)ref_mul(a,a,acc);ref_mul(acc,acc,acc);}
+    const uint64_t bits=64*c.window_limbs;
+    ref_set_ui(x,1);ref_set_ui(two,2);ref_set_ui(zero,0);
+    for(uint64_t known=1;known<bits;){known=std::min(2*known,bits);
+        ref_mul(t,a,x);ref_sub(t,two,t);ref_mul(x,x,t);ref_fdiv_r_2exp(x,x,known);}
+    ref_sub(x,zero,x);ref_fdiv_r_2exp(x,x,bits);
+    for(unsigned carry:{0u,1u}){
+        std::vector<uint64_t> y(c.limbs,~uint64_t(0));std::fill_n(y.begin(),c.window_limbs,0);
+        if(carry){size_t written=0;ref_export(y.data(),&written,-1,8,0,0,x);assert(written<=c.window_limbs);}
+        ref_import(t,c.split_limbs,-1,8,0,0,y.data());ref_mul(product,a,t);
+        ref_fdiv_q_2exp(high,product,64*sp.ring.ring);assert(ref_sgn(high)>0);
+        ref_fdiv_r_2exp(gap,product,64*sp.ring.ring);ref_add(gap,gap,high);
+        ref_fdiv_q_2exp(gap,gap,64*(sp.low_limbs-1));
+        ref_fdiv_r_2exp(gap,gap,64*(c.window_limbs-sp.low_limbs+1));assert(!ref_sgn(gap));
+        uint64_t fast_overlap=0,exact_overlap=0;
+        auto fast=convert(pool,10,fragments,4,y,fast_overlap);
+        policy.ring_products=false;policy.cyclic_products=false;
+        auto exact=convert(pool,10,fragments,4,y,exact_overlap);
+        assert(fast==exact&&fast_overlap==exact_overlap);
+        policy=saved;policy.ring_node_limbs=1024;
+    }
+    ref_clears(a,x,t,two,zero,acc,product,high,gap,nullptr);policy=saved;
+    printf("radix staged wrap: ambiguous carry/no-carry, aliased source and retired-pool witness PASS\n");
+}
 void cross_check(Pool &pool, unsigned base, uint64_t fragments, unsigned workers) {
     BaseInfo info{};
     assert(base_info(base, info));
@@ -306,16 +351,39 @@ void cross_check(Pool &pool, unsigned base, uint64_t fragments, unsigned workers
 int main(int argc,char **argv) {
     if(argc>1){
         assert(argc==2);
+        if(!strcmp(argv[1],"--srt-recipe-only")||!strcmp(argv[1],"--seed31-only")||!strcmp(argv[1],"--blockdc-only")||!strcmp(argv[1],"--block64-only")){
+            if(!strcmp(argv[1],"--block64-only"))tree_policy().block_tree_limbs=64;
+            if(!strcmp(argv[1],"--seed31-only"))tree_policy().format_seed_fragments=31;
+            if(!strcmp(argv[1],"--blockdc-only")){tree_policy().block_leaves=true;}
+            full_boundary_patterns=true;tree_policy().format_split_policy=2;
+            Fixture f(1,false);Pool pool(f,size_t(160)<<20);
+            for(unsigned base:{3u,10u,63u})for(uint64_t fragments:{155ull,309ull,519ull,617ull,1037ull,1234ull})
+                run(pool,base,fragments,1);
+            printf("SRT recipe: %llu exact/bounded conversions, non-power grids and digit-boundary cases PASS\n",(unsigned long long)checked);return 0;
+        }
+        if(!strcmp(argv[1],"--wrap-alias-only")){
+            Fixture f(4,false);Pool pool(f,size_t(160)<<20);wrap_alias_gate(pool);return 0;}
+        if(!strcmp(argv[1],"--balanced-only")){
+            tree_policy().format_split_policy=2;
+            for(unsigned workers:{1u,4u}){
+                Fixture f(workers,false);Pool pool(f,size_t(160)<<20);
+                for(unsigned base:{3u,10u,63u})for(uint64_t fragments:{9ull,10ull,11ull,13ull,15ull,16ull,17ull,31ull,33ull,63ull,65ull,97ull,129ull,257ull,511ull,512ull,513ull,601ull})
+                    run(pool,base,fragments,workers);
+            }
+            {Fixture f(4,false);Pool pool(f,size_t(160)<<20);run(pool,10,33,1);run(pool,63,97,2);}
+            printf("balanced radix tree: %llu conversions, irregular sizes/guards/aliases PASS\n",(unsigned long long)checked);return 0;
+        }
         if(!strcmp(argv[1],"--leaf-groups-only")){
             for(unsigned workers:{1u,4u}){
                 Fixture f(workers,false);Pool pool(f,size_t(160)<<20);
                 for(unsigned base=3;base<64;++base)if(base&(base-1))
-                    for(uint64_t fragments=1;fragments<=8;++fragments)run(pool,base,fragments,workers);
+                    for(uint64_t fragments=1;fragments<=format_group_fragments;++fragments)run(pool,base,fragments,workers);
             }
             printf("radix leaf roots: %llu conversions, all bases and widths PASS\n",(unsigned long long)checked);
             return 0;
         }
         assert(!strcmp(argv[1],"--middle-repair-only"));
+        tree_policy().format_split_policy=1; // force the kernel this gate is intended to exercise
         Fixture f(1,false);Pool pool(f,size_t(160)<<20);
         for(unsigned base:{3u,10u,63u})for(uint64_t fragments:{33ull,65ull,129ull})run(pool,base,fragments,1);
         assert(forced_repairs==9);

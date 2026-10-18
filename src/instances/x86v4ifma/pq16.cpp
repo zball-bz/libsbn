@@ -1,4 +1,5 @@
 #include "backend/pq16/island.hpp"
+#include "common/query_audit.hpp"
 #include <new>
 #include <initializer_list>
 #include <algorithm>
@@ -9,9 +10,12 @@
 #include "backend/pq16/rac_window.hpp"
 #include "backend/pq16/cost_model.hpp"
 #include "backend/pq16/numeric_domain.hpp"
+#include "product/backend.hpp"
 namespace sbn::v3::pq16 {
 struct Tables {pq16_plan plan{};Shape shape{};const CtTables *ct=nullptr;const RacTables *rac=nullptr;};
+#include "backend/pq16/matrix.hpp"
 Shape query(size_t an,size_t bn,unsigned minimum_pow2) noexcept {
+    SBN3_QUERY_AUDIT("pq16::query");
     if(an>(1u<<20)||bn>(1u<<20)||(minimum_pow2!=128&&minimum_pow2!=256&&minimum_pow2!=512))return {};int c=0;const auto s=pq16_lin_choose(an,bn,&c,minimum_pow2);return {s.nfull,s.branch,s.M,bool(c)};
 }
 Shape select(size_t an,size_t bn,unsigned workers,unsigned bits,size_t budget,bool square,double preparation) noexcept {

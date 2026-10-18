@@ -1,8 +1,8 @@
 # libsbn
 
 A SIMD multiprecision arithmetic library. The current native target is AMD Zen 5
-with AVX-512 IFMA; the build uses the pinned Clang toolchain. The public C API
-contains no SIMD vector types. The API is still under development.
+with AVX-512 IFMA; the build uses the pinned Clang toolchain. The public C and
+C++ APIs contain no SIMD vector types. The API is still under development.
 
 ## Acknowledgements
 
@@ -30,6 +30,9 @@ see [LICENSE.md](LICENSE.md).
 ## Capabilities
 
 - Signed integer values and scalar/u52 base arithmetic.
+- C++20 owning integers, eager arithmetic, allocation-free destination calls and explicit prepared expressions.
+- Resident C++ bigfloats with bounded-error arithmetic, roots, elementary functions, AGM/K/E and explicitly shared constants.
+- Infinite signed bit operations, division rounding modes, ordinary powers, GCD/extended GCD/Jacobi, LCM and modular inverse.
 - Small, FFT and NTT multiplication; squares, cached operands and supported product windows/rings.
 - Inverse, approximate division and reciprocal square root services.
 - Exact finite binary splitting and precision-bounded series; e, pi, ArcCoth and integer logarithms.
@@ -37,7 +40,43 @@ see [LICENSE.md](LICENSE.md).
 - Formatting and parsing in bases 2 through 64 for integers and dyadic values.
 
 Individual query functions define supported domains and required storage.
-Out-of-core execution/checkpointing and general-purpose arbitrary-precision floating-point arithmetic are not yet complete.
+General integer roots and modular powering remain to be implemented.
+Stored multiplication/constant execution is documented in the
+[OOC runner guide](docs/ooc-runner.md). Resident float calls do not spill
+implicitly; public OOC floats and correctly rounded transcendental functions
+remain separate work.
+
+## C++ integers
+
+```cpp
+#include <sbn3/sbn.hpp>
+
+sbn::integer a = 123, b = 456;
+auto value = sbn::pow(a, 3) + b;  // eager owning result
+auto [quotient, remainder] = sbn::divrem(value, 97);
+auto text = sbn::to_string(quotient);
+```
+
+For controlled memory, use caller-provided output and `*_into` operations with
+queried workspace. `sbn::context` additionally compiles explicit expressions
+with bounded inputs and reusable intermediate storage. None of these resident
+interfaces hides disk IO. See the [C++ guide](docs/cpp-integer.md) and
+[runnable example](examples/cpp_integer.cpp) for ownership, preparation,
+conversion and current domain limits.
+
+## C++ bigfloats
+
+```cpp
+auto x = sbn::bigfloat::from(2, sbn::bits{256});
+auto y = sbn::log(x) + sbn::sqrt(x);
+```
+
+Stored inputs are exact dyadic points. General function results are bounded
+approximations; use `*_into` for an explicit local error report and control of
+output storage, scratch and Team. An optional context-owned constant bank
+shares pi/log2 preparation across functions. See the [float guide](docs/float.md)
+and [runnable example](examples/cpp_float.cpp). Performance tuning and
+correct-rounding guarantees are distinct from this implemented numerical scope.
 
 ## Build and test
 

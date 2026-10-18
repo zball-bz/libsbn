@@ -110,6 +110,7 @@ inline void shift_right(uint64_t *r, const uint64_t *a, size_t n, unsigned bits)
 /* {np,nn} / {dp,dn}: dp normalized, dn>=3, nn>=dn. Quotient nn-dn limbs to
  * qp, remainder left in np[0..dn); returns the high quotient limb (0/1). */
 uint64_t sbpi1_div_qr(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp, size_t dn, uint64_t dinv) noexcept;
+void sbpi1_remainder(uint64_t *np,size_t nn,const uint64_t *dp,size_t dn,uint64_t dinv) noexcept;
 /* Quotient un limbs (d need not be normalized), returns the remainder. */
 uint64_t divrem_1(uint64_t *qp, const uint64_t *up, size_t un, uint64_t d) noexcept;
 /* dp[1] normalized, nn>=2: nn-2 quotient limbs to qp, remainder in np[0..2), returns the high limb. */
@@ -133,28 +134,28 @@ template<size_t StaticDn=0>
  * one-shot calls see the same denominator state without an opaque TU call.
  * The GMP-derived divrem loops retain the donor terms referenced above:
  * Copyright 1991-2016 Free Software Foundation, Inc. */
-[[gnu::always_inline]] inline uint64_t divrem_1_prepared(uint64_t *qp, const uint64_t *up, size_t un,
+template<bool Store=true>[[gnu::always_inline]] inline uint64_t divrem_1_prepared(uint64_t *qp, const uint64_t *up, size_t un,
                                  uint64_t d, unsigned cnt, uint64_t dinv) noexcept {
     uint64_t r = 0;
     if (!un)
         return 0;
-    qp += un - 1;
+    if constexpr(Store)qp += un - 1;
     if (!cnt) {
         r = up[un - 1];
         const uint64_t q = r >= d;
-        *qp-- = q;
+        if constexpr(Store)*qp-- = q;
         r -= d & (0 - q);
         un--;
         for (size_t i = un; i-- > 0;) {
-            udiv_qrnnd_preinv(*qp, r, r, up[i], d, dinv);
-            qp--;
+            if constexpr(Store){udiv_qrnnd_preinv(*qp, r, r, up[i], d, dinv);--qp;}
+            else{uint64_t discarded;udiv_qrnnd_preinv(discarded,r,r,up[i],d,dinv);(void)discarded;}
         }
         return r;
     }
     uint64_t n1 = up[un - 1];
     if (n1 < (d >> cnt)) {
         r = n1;
-        *qp-- = 0;
+        if constexpr(Store)*qp-- = 0;
         if (--un == 0)
             return r;
     }
@@ -163,11 +164,12 @@ template<size_t StaticDn=0>
     r |= n1 >> (64 - cnt);
     for (size_t i = un - 1; i-- > 0;) {
         const uint64_t n0 = up[i], nshift = (n1 << cnt) | (n0 >> (64 - cnt));
-        udiv_qrnnd_preinv(*qp, r, r, nshift, d, dinv);
-        qp--;
+        if constexpr(Store){udiv_qrnnd_preinv(*qp, r, r, nshift, d, dinv);--qp;}
+        else{uint64_t discarded;udiv_qrnnd_preinv(discarded,r,r,nshift,d,dinv);(void)discarded;}
         n1 = n0;
     }
-    udiv_qrnnd_preinv(*qp, r, r, n1 << cnt, d, dinv);
+    if constexpr(Store){udiv_qrnnd_preinv(*qp, r, r, n1 << cnt, d, dinv);}
+    else{uint64_t discarded;udiv_qrnnd_preinv(discarded,r,r,n1<<cnt,d,dinv);(void)discarded;}
     return r >> cnt;
 }
 [[gnu::always_inline]] inline uint64_t divrem_2_prepared(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp,
@@ -252,4 +254,22 @@ template<size_t StaticDn>
  * zeros included, also for a shorter effective numerator) and dn remainder limbs. Returns the normalized quotient length. */
 size_t schoolbook(uint64_t *q, uint64_t *r, const uint64_t *n, size_t nn, const uint64_t *d, size_t dn,
                   uint64_t *scratch) noexcept;
+// Same normalized divisor/reciprocal, no quotient array. Dn<=2 streams the
+// source with O(1) registers and no scratch; otherwise scratch has nn+1 words.
+inline void remainder_prepared(uint64_t*r,const uint64_t*n,size_t nn,const PreparedDivisor&p,uint64_t*scratch)noexcept{
+    const size_t dn=p.limbs;
+    while(nn&&!n[nn-1])--nn;
+    if(nn<dn){if(nn)memcpy(r,n,nn*8);memset(r+nn,0,(dn-nn)*8);return;}
+    if(dn==1){r[0]=divrem_1_prepared<false>(nullptr,n,nn,p.short_words[0],p.shift,p.inverse);return;}
+    const unsigned s=p.shift;
+    if(dn==2){
+        auto word=[&](size_t j){return (n[j]<<s)|(s&&j?n[j-1]>>(64-s):0);};
+        uint64_t r1=s?n[nn-1]>>(64-s):0,r0=word(nn-1);
+        for(size_t j=nn-1;j-->0;){uint64_t discarded;udiv_qr_3by2(discarded,r1,r0,r1,r0,word(j),p.short_words[1],p.short_words[0],p.inverse);(void)discarded;}
+        r[0]=(r0>>s)|(s?r1<<(64-s):0);r[1]=r1>>s;return;
+    }
+    if(s)scratch[nn]=shift_left(scratch,n,nn,s);else{memcpy(scratch,n,nn*8);scratch[nn]=0;}
+    sbpi1_remainder(scratch,nn+1,p.divisor,dn,p.inverse);
+    if(s)shift_right(r,scratch,dn,s);else memcpy(r,scratch,dn*8);
+}
 } // namespace sbn::v3::divrem_words

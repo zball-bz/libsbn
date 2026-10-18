@@ -33,9 +33,11 @@
  * eight entries at a time with the exact rec derivation (vrec_of). */
 #include "arith.hpp"
 #include "scratch_adapter.hpp"
+#include "root_bank.hpp"
 #include <stdio.h>
 
 namespace sbn::v3::SBN3_P48_NS {
+static_assert([]{for(unsigned q=0;q<NPMAX;++q)if(PR[q]!=::sbn::v3::p48_root_bank::primes[q])return false;return true;}());
 
 /* z[t] = z_t (order 2^t) or its inverse, t = 1..32; z[0] and z[33..] are zero (never a valid level) */
 constexpr unsigned tower_root_slots = 80;
@@ -73,6 +75,8 @@ inline size_t tower_nodes(size_t lg){
 }
 constexpr size_t tower_zero_slots = 64;
 inline size_t tower_bytes(size_t lg){ return tower_nodes(lg) * sizeof(uint64_t) + 64; }
+inline bool published_tower(size_t lg){return lg<=::sbn::v3::p48_root_bank::tower_log;}
+inline bool published_factors(size_t M2,size_t lgC){return M2<=::sbn::v3::p48_root_bank::factor_stride&&lgC<=::sbn::v3::p48_root_bank::factor_log;}
 
 struct Primes {
     Prime P[NP];
@@ -97,6 +101,9 @@ struct Primes {
             pr.invpow2=inverse_powers[q];
             pr.lg = lg; pr.heap = nullptr;
             V[q].init(pr);
+            if(published_tower(lg)){
+                pr.e=::sbn::v3::p48_root_bank::tower(q,unsigned(lg));
+                pr.ez=::sbn::v3::p48_root_bank::zero_image(q);continue;}
             const size_t n = tower_nodes(lg);
             uint64_t *e = (uint64_t *)storage.allocate(tower_bytes(lg));
             uint64_t *ez = (uint64_t *)storage.allocate(tower_zero_slots * sizeof(uint64_t));
@@ -118,7 +125,11 @@ struct Primes {
     void factors_for(scratch &storage, size_t M2, size_t lgC){
         for(int q = 0; q < NP; ++q){
             Prime &pr = P[q];
-            if(pr.F[0] && pr.M2f >= M2) continue;
+            if(pr.F[0] && pr.M2f >= M2 && pr.lgF>=lgC) continue;
+            if(published_factors(M2,lgC)){
+                for(unsigned d=0;d<2;++d)pr.F[d]=::sbn::v3::p48_root_bank::factors(q,d,M2,unsigned(lgC));
+                pr.M2f=::sbn::v3::p48_root_bank::factor_stride;
+                pr.lgF=::sbn::v3::p48_root_bank::factor_log;continue;}
             const size_t lgF = lgC;                                /* lgC cap */
             size_t lgM2 = 0; while(((size_t)1 << lgM2) < M2) ++lgM2;
             ::sbn::v3::require(lgF + lgM2 <= 32, SBN3_FATAL_MATH, "p48 factor order");

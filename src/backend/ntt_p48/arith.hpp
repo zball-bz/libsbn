@@ -194,7 +194,7 @@ struct Prime {
     /* small-table columns (NOTES §10): F[d][k·M2f + b] = rec(w_d[2^k·b]),
      * k <= lgF, b < M2f — the per-level/leaf factors of column b; with the
      * shared prefix w_d[0..2C) they replace the full tower for po2 plans */
-    uint64_t *F[2]; size_t lgF, M2f;
+    const uint64_t *F[2]; size_t lgF, M2f;
 };
 struct PrimeV {                 /* hoisted vector constants               */
     V p, p2, pn, J, M;

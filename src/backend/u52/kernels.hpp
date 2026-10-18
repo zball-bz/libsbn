@@ -24,10 +24,18 @@ void middle(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) 
 // Let na=ceil(64*an/52), nb=ceil(64*bn/52). Output begins at bit
 // 52*(na-5) of the full product and has ceil(52*(nb-na+7)/64) words.
 // Omitted lower coefficients contribute a nonnegative carry <2*na*2^52.
-// an<=832 (na<=1024), bn>=an, bn<=8192, na>=5;
-// output/input/scratch disjoint. This retains the donor's audited n<=1024.
+// bn>=an, bn<=8192, na>=5. Wider-than-1024 operands require at most 64
+// output/guard diagonals; they accumulate canonicalized 512-row strips.
+// Other shapes retain the donor's audited n<=1024 recursive domain.
+inline bool middle_guard_supported(size_t an,size_t bn) noexcept {
+    const size_t a=(64*an+51)/52,b=(64*bn+51)/52;
+    return a>6&&bn>=an&&bn<=8192&&(a<=1024||b-a+7<=64);
+}
 size_t middle_guard_scratch_bytes(size_t an,size_t bn) noexcept;
 void middle_guard(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
+// Six low guard diagonals: origin 52*(ceil(64*an/52)-7), allowing
+// arbitrary radix-power alignment. Output has ceil(52*(nb-na+9)/64) words.
+void middle_guard6(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
 // Same guarded band as a logical (bn+2)-word B ending in two zero words,
 // while reading exactly bn source words. Scratch is queried at bn+2.
 void middle_guard_zero2(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,Frame &) noexcept;
@@ -59,6 +67,10 @@ DivisionDivisor divide_prepare(const uint64_t *d,size_t dn,Frame &) noexcept;
 void divide_prepared(uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,
                       const DivisionDivisor &,Frame &) noexcept;
 void divide(uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,const uint64_t *d,size_t dn,Frame &) noexcept;
+size_t remainder_work_bytes(size_t nn,size_t dn) noexcept;
+size_t remainder_scratch_bytes(size_t nn,size_t dn) noexcept;
+void remainder_prepared(uint64_t*r,const uint64_t*n,size_t nn,const DivisionDivisor&,Frame&)noexcept;
+void remainder(uint64_t*r,const uint64_t*n,size_t nn,const uint64_t*d,size_t dn,Frame&)noexcept;
 // floor(B^n*A/D), normalized n-word D and (n+1)-word A with A[n]<=1.
 // Writes n+1 words; Q may equal A. Uses divide_scratch_bytes(2*n+1,n).
 // Shares the exact division core, but decodes the low zero words implicitly

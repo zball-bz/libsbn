@@ -25,13 +25,15 @@ size_t largest(sbn3_series_shape s) {
 }
 // Single-term leaf values up to fast_leaf_words live on the executing stack;
 // wider leaves use three reserved scratch slots sized at query time. No
-// formula may exceed max_leaf_words per value.
+// ordinary formula may exceed max_leaf_words per value. Parameterized private
+// formulas opt into checked, size_t-sized leaf banks instead.
 constexpr unsigned fast_leaf_words = 8, max_leaf_words = 64;
 // One precondition set for query, compile and prepare. A formula that fails
 // here is rejected as unsupported before any schedule work; prepare treats it
 // as a caller contract violation because it cannot return a status.
 bool finite_valid(const FiniteFormula &f) {
-    return f.bounds && f.work && f.leaf && f.max_leaf_limbs && f.max_leaf_limbs <= max_leaf_words &&
+    return f.bounds && f.work && f.leaf && f.max_leaf_limbs &&
+           (f.max_leaf_limbs<=max_leaf_words||(f.parameterized_leaves&&f.max_leaf_limbs<SIZE_MAX/64)) &&
            f.recipe >= SBN3_SERIES_HYPERDESCENT && f.recipe <= SBN3_SERIES_BINARY_BBP &&
            (!f.limit_words || f.limit_context) && (!f.serial_envelope || f.split_point) &&
            (!(f.split_point || f.serial_envelope) || f.split_policy_id) &&
@@ -106,7 +108,7 @@ void price_few_uses(ProductPlanMemo *memo,size_t an,size_t bn,const sbn3_mul_opt
     const double candidate=uses*cost_model::linear_product(alternative.info,an,bn).nanoseconds+root_prepare_cost(alternative.info);
     if(candidate<current){product=alternative;derived=facts;}
 }
-sbn3_query_result layout(const sbn3_series_stage &s,Layout &v,bool reuse,sbn3_series_recipe recipe,unsigned leaf_words,const uint64_t *decisions=nullptr,unsigned cohort_workers=0,ProductPlanMemo *memo=nullptr) {
+sbn3_query_result layout(const sbn3_series_stage &s,Layout &v,bool reuse,sbn3_series_recipe recipe,size_t leaf_words,const uint64_t *decisions=nullptr,unsigned cohort_workers=0,ProductPlanMemo *memo=nullptr) {
     v={};v.stage.reuse=reuse && !s.leaf;
     const size_t output=largest(s.output);
     v.stage.an=s.leaf?output:largest(s.left);
@@ -323,6 +325,9 @@ void copy(sbn3_series_value &out, const sbn3_series_value &in) {
     out.mantissa.negative = in.mantissa.negative;
     out.exponent2 = in.exponent2;
 }
+const char *prepared_base(const FiniteBinding &binding) {
+    return static_cast<const char*>(binding.frame_prepared?binding.frame_prepared:binding.prepared.data);
+}
 struct Merge {
     FiniteBinding &binding;
     const Stage &stage;
@@ -510,9 +515,11 @@ void leaf(void *ptr, const sbn3_series_stage *s, sbn3_series_range range, unsign
           sbn3_series_values *out, void *scratch, size_t, sbn3_team_scope *scope) {
     auto &binding = *static_cast<FiniteBinding *>(ptr);
     const auto &f = binding.plan.formula;
+    const auto *leaf_context=f.parameterized_leaves?binding.run_context:f.context;
+    require(!f.parameterized_leaves||leaf_context,SBN3_FATAL_ARGUMENT,"finite runtime leaf context");
     const size_t terms=range.end-range.begin;
     if (f.batch && (!f.batch_max_terms || terms<=f.batch_max_terms) && !f.limit_words) {
-        f.batch(f.context, range, need, out);
+        f.batch(leaf_context, range, need, out);
         return;
     }
     constexpr size_t batch_limbs = 64 * 3 + 8; // 64 terms of at most three words, carries and spare
@@ -522,7 +529,7 @@ void leaf(void *ptr, const sbn3_series_stage *s, sbn3_series_range range, unsign
         sbn3_series_values exact{};
         for (unsigned j = 0; j < 3; ++j)
             exact.value[j].mantissa = {words[j], batch_limbs, 0, 0};
-        f.batch(f.context, range, need, &exact);
+        f.batch(leaf_context, range, need, &exact);
         const size_t precision = f.limit_words(f.limit_context, range.begin);
         for (unsigned j = 0; j < 3; ++j)
             if (need & (1u << j)) {
@@ -531,7 +538,7 @@ void leaf(void *ptr, const sbn3_series_stage *s, sbn3_series_range range, unsign
             }
         return;
     }
-    const auto &stage = *reinterpret_cast<const Stage *>(static_cast<const char *>(binding.prepared.data) +
+    const auto &stage = *reinterpret_cast<const Stage *>(prepared_base(binding) +
                                                          s->prepared_offset);
     Merge m(binding, stage, scope, scratch, largest(s->output), range.begin);
     sbn3_series_values acc{}, single{};
@@ -575,13 +582,13 @@ void leaf(void *ptr, const sbn3_series_stage *s, sbn3_series_range range, unsign
                 x.exponent2 -= int64_t(r);
             }
     };
-    f.leaf(f.context, range.begin, all, &single);
+    f.leaf(leaf_context, range.begin, all, &single);
     word_align(single);
     for (unsigned j = 0; j < 3; ++j)
         if (all & (1u << j))
             copy(acc.value[j], single.value[j]);
     for (uint64_t k = range.begin + 1; k < range.end; ++k) {
-        f.leaf(f.context, k, all, &single);
+        f.leaf(leaf_context, k, all, &single);
         word_align(single);
         m.apply(acc, single, acc, all);
     }
@@ -593,7 +600,7 @@ void merge(void *ptr, const sbn3_series_stage *s, sbn3_series_range range, uint6
            const sbn3_series_values *l, const sbn3_series_values *r, sbn3_series_values *out, void *scratch,
            size_t, sbn3_team_scope *scope) {
     auto &binding = *static_cast<FiniteBinding *>(ptr);
-    const auto &stage = *reinterpret_cast<const Stage *>(static_cast<const char *>(binding.prepared.data) +
+    const auto &stage = *reinterpret_cast<const Stage *>(prepared_base(binding) +
                                                          s->prepared_offset);
     Merge m(binding, stage, scope, scratch, 0, range.begin);
     m.apply(*l, *r, *out, need);
@@ -672,6 +679,9 @@ FiniteFormula finite_formula(const Formula &f) noexcept {
 sbn3_query_result finite_value_shape(const FiniteFormula &f, sbn3_series_range range, unsigned need,
                                      sbn3_series_shape &out) noexcept {
     return bounds(&f, range, range.end - range.begin, need, &out);
+}
+bool finite_split(const FiniteFormula&f,sbn3_series_range range,double fraction,uint64_t&out) noexcept {
+    return finite_valid(f)&&choose_split(range,fraction,oracle(f),refinement(f),out);
 }
 static bool same_options(const sbn3_mul_options &a,const sbn3_mul_options &b) {
     // Field-wise: padding is not part of the request. A new option field must be added here.
@@ -757,6 +767,20 @@ sbn3_query_result finite_query(const FiniteFormula &f, sbn3_series_range range, 
         out = p;
     return rc;
 }
+sbn3_query_result finite_query_prefix(const FiniteFormula &f, sbn3_series_range range, unsigned need,
+                                     const sbn3_series_options &options, unsigned prefix, FinitePlan &out,
+                                     ProductPlanMemo *memo) noexcept {
+    if (!finite_valid(f)) return SBN3_UNSUPPORTED;
+    FinitePlan p{};
+    p.formula = f;
+    p.options = options;
+    p.spec = {f.recipe, range, need, f.formula_id, f.parameter_id};
+    const auto q = oracle(p.formula);
+    const PlanningResources resources{&p.formula, options.workers, memo};
+    const auto rc = query_schedule_prefix(p.spec, p.options, q, prefix, p.info, refinement(p.formula, &resources));
+    if (rc == SBN3_SUPPORTED) out = p;
+    return rc;
+}
 sbn3_query_result finite_compile(const FiniteFormula &f,sbn3_series_range range,unsigned need,
                                   const sbn3_series_options &options,void *storage,size_t bytes,
                                   sbn3_series_info &info,sbn3_series_plan *&out,ProductPlanMemo *memo) noexcept {
@@ -768,7 +792,7 @@ sbn3_query_result finite_compile(const FiniteFormula &f,sbn3_series_range range,
 }
 void finite_prepare(const FinitePlan &p, sbn3_arena &arena, sbn3_team &team, const sbn3_lease &metadata,
                     const sbn3_lease &prepared, const sbn3_lease &scratch, FiniteBinding &b, sbn3_series_plan *compiled) noexcept {
-    require(finite_valid(p.formula), SBN3_FATAL_ARGUMENT, "finite formula preconditions");
+    require(finite_valid(p.formula)&&!p.formula.parameterized_leaves, SBN3_FATAL_ARGUMENT, "finite formula preconditions");
     require(metadata.bytes >= p.info.plan_bytes && prepared.bytes >= p.info.prepared_bytes &&
                 scratch.bytes >= p.info.workspace_bytes && !(uintptr_t(prepared.data) & 127),
             SBN3_FATAL_WORKSPACE, "finite binding storage");
@@ -790,6 +814,8 @@ void finite_prepare(const FinitePlan &p, sbn3_arena &arena, sbn3_team &team, con
     prepare_stages(b.schedule, &team, prepare_stage, &b);
 }
 void finite_execute(FiniteBinding &binding, sbn3_series_values &out) noexcept {
+    require(!binding.plan.formula.parameterized_leaves&&!binding.frame_prepared,
+            SBN3_FATAL_ARGUMENT,"finite lease execution contract");
     struct alignas(64) RootStorage {
         unsigned char bytes[(sizeof(Frame) + 63) & ~size_t(63)];
     };
@@ -807,5 +833,164 @@ void finite_execute(FiniteBinding &binding, sbn3_series_values &out) noexcept {
         binding.scratch_roots[j]->~Frame();
         binding.scratch_roots[j] = nullptr;
     }
+}
+
+namespace {
+constexpr uint64_t frame_magic=UINT64_C(0x53424e3346465231);
+struct FrozenFrameStage {
+    sbn3_series_stage descriptor{};
+    sbn3_series_resources resources{};
+    Stage stage{};
+    ProductProgramPlan product[2]{};
+    bool accelerated[2]{};
+};
+struct FrameProgram {
+    uint64_t marker=0;
+    FinitePlan plan{};
+    FiniteFrameInfo info{};
+    sbn3_series_plan *schedule=nullptr;
+    FrozenFrameStage *stages=nullptr;
+    size_t extent=0;
+};
+bool frame_append(size_t& cursor,size_t bytes,size_t alignment) {
+    size_t at=0;return align_size(cursor,alignment,at)&&add_size(at,bytes,cursor);
+}
+bool frame_info(const FinitePlan& p,FiniteFrameInfo& out) {
+    out={};out.series=p.info;
+    out.alignment=std::max({size_t(128),p.info.plan_alignment,p.info.prepared_alignment,p.info.workspace_alignment});
+    size_t bytes=sizeof(FrameProgram),records=0;
+    if(!mul_size(p.info.stages,sizeof(FrozenFrameStage),records)||
+       !frame_append(bytes,p.info.plan_bytes,p.info.plan_alignment)||
+       !frame_append(bytes,records,128)||!add_size(bytes,out.alignment-1,out.metadata_bytes))return false;
+    bytes=0;
+    if(!frame_append(bytes,p.info.prepared_bytes,p.info.prepared_alignment)||
+       !frame_append(bytes,p.info.workspace_bytes,p.info.workspace_alignment))return false;
+    out.phase_bytes=bytes;return true;
+}
+bool frame_leaf_policy(const FiniteFormula& f,const sbn3_series_options& options) {
+    const bool complete_batch=f.batch&&!f.limit_words&&
+        (!f.batch_max_terms||f.batch_max_terms>=options.leaf_terms);
+    return !f.parameterized_leaves||f.max_leaf_limbs<=fast_leaf_words||
+           options.leaf_terms==1||complete_batch;
+}
+void freeze_frame_stage(void* raw,const sbn3_series_stage* stage,const sbn3_series_resources* resources) {
+    auto& p=*static_cast<FrameProgram*>(raw);const auto& f=p.plan.formula;Layout v;
+    require(stage->index<p.info.series.stages&&layout(*stage,v,f.reuse_values,f.recipe,f.max_leaf_limbs,
+                stage_decisions(p.schedule,stage->index))==SBN3_SUPPORTED&&
+            v.prepared==resources->prepared_bytes&&v.work==resources->bytes,
+            SBN3_FATAL_MATH,"finite frame frozen geometry");
+    auto& record=p.stages[stage->index];record.descriptor=*stage;record.resources=*resources;record.stage=v.stage;
+    for(unsigned j=0;j<v.stage.count;++j){record.product[j]=v.product[j];record.accelerated[j]=v.accelerated[j];}
+}
+void materialize_frame_stages(const FrameProgram& p,void* prepared,ProductTablePoolView shared_pool) {
+    auto* base=static_cast<unsigned char*>(prepared);
+    // Immutable selected plans are already frozen. Table materialization is
+    // deliberately input-independent and performs no geometry query.
+    for(size_t i=0;i<p.info.series.stages;++i){const auto& record=p.stages[i];
+        for(unsigned j=0;j<record.stage.count;++j){
+            const auto place=shared_placement(p.schedule,i,j);if(!place.owner)continue;
+            const auto& product=record.product[j];
+            require(record.accelerated[j]&&product_program_tables(product).bytes==place.bytes,
+                    SBN3_FATAL_MATH,"finite frame shared table shape");
+            if(shared_pool.find(product_program_tables(product)))continue;
+            auto frame=Frame::external(base+place.offset,place.bytes);
+            const auto* backend=backend_lookup(product.plan.opaque[1]);
+            const void* table=backend->program_tables_prepare(product.plan,frame);
+            require(table==frame.data(),SBN3_FATAL_MATH,"finite frame shared table base");
+        }
+    }
+    for(size_t i=0;i<p.info.series.stages;++i){const auto& record=p.stages[i];
+        auto frame=Frame::external(base+record.descriptor.prepared_offset,record.resources.prepared_bytes);
+        auto* stage=::new(frame.allocate(align(sizeof(Stage)),128))Stage(record.stage);
+        for(unsigned j=0;j<stage->count;++j)if(record.accelerated[j]){
+            const auto& product=record.product[j];const auto place=shared_placement(p.schedule,i,j);
+            const void* shared=shared_pool.find(product_program_tables(product));
+            if(!shared)shared=p.plan.formula.table_pool.find(product_program_tables(product));
+            if(!shared&&place.bytes)shared=base+place.offset;
+            stage->groups[j].program=product_program_prepare(product,frame,shared);
+        }
+    }
+}
+}
+sbn3_query_result finite_frame_query(const FiniteFormula& formula,sbn3_series_range range,unsigned need,
+    const sbn3_series_options& options,FiniteFrameInfo& info) noexcept {
+    if(!frame_leaf_policy(formula,options)){info={};return SBN3_UNSUPPORTED;}
+    FinitePlan p;const auto rc=finite_query(formula,range,need,options,p);if(rc!=SBN3_SUPPORTED){info={};return rc;}
+    return frame_info(p,info)?SBN3_SUPPORTED:SBN3_QUERY_CAPACITY;
+}
+FiniteFramePrepared finite_frame_prepare(const FiniteFormula& formula,sbn3_series_range range,unsigned need,
+    const sbn3_series_options& options,Frame& metadata) noexcept {
+    require(frame_leaf_policy(formula,options),SBN3_FATAL_ARGUMENT,"wide finite leaves require single terms or a complete batch");
+    FinitePlan plan;require(finite_query(formula,range,need,options,plan)==SBN3_SUPPORTED,SBN3_FATAL_ARGUMENT,"finite frame shape");
+    FiniteFrameInfo info;require(frame_info(plan,info),SBN3_FATAL_SIZE,"finite frame metadata extent");
+    auto* p=::new(metadata.allocate(sizeof(FrameProgram),128))FrameProgram{};p->plan=plan;p->info=info;
+    auto* schedule=metadata.allocate(plan.info.plan_bytes,plan.info.plan_alignment);
+    const PlanningResources resources{&p->plan.formula,p->plan.options.workers,nullptr};
+    p->schedule=prepare_schedule(plan.spec,plan.options,oracle(p->plan.formula),plan.info,schedule,plan.info.plan_bytes,
+                                 refinement(p->plan.formula,&resources));
+    auto* records=metadata.allocate(plan.info.stages*sizeof(FrozenFrameStage),128);
+    p->stages=static_cast<FrozenFrameStage*>(records);
+    for(size_t i=0;i<plan.info.stages;++i)::new(p->stages+i)FrozenFrameStage{};
+    sbn3_series_visit(p->schedule,freeze_frame_stage,p);
+    p->extent=size_t(metadata.data()+metadata.used()-reinterpret_cast<unsigned char*>(p));
+    require(p->extent<=info.metadata_bytes,SBN3_FATAL_WORKSPACE,"finite frame metadata quote");
+    p->marker=frame_magic;return {p,info};
+}
+void finite_frame_execute(const FiniteFramePrepared& prepared,const void* run_context,
+    sbn3_series_values& out,Frame& phase,sbn3_team_scope* scope,ProductTablePoolView shared_pool) noexcept {
+    require_scope_leader(scope);require(prepared.state,SBN3_FATAL_LIFETIME,"finite frame prepared state");
+    const auto& p=*static_cast<const FrameProgram*>(prepared.state);
+    require(p.marker==frame_magic&&prepared.info.metadata_bytes==p.info.metadata_bytes&&
+            prepared.info.phase_bytes==p.info.phase_bytes&&scope->width>=p.plan.options.workers,
+            SBN3_FATAL_ARGUMENT,"finite frame identity/worker shape");
+    require(!p.plan.formula.parameterized_leaves||run_context,SBN3_FATAL_ARGUMENT,"finite frame runtime parameter");
+    const auto available=phase.capacity()-phase.used();auto* begin=phase.data()+phase.used();
+    require(available>=p.info.phase_bytes&&!(uintptr_t(begin)&(p.info.alignment-1))&&
+            !overlaps(begin,available,&p,p.extent),SBN3_FATAL_WORKSPACE,"finite frame phase",p.info.phase_bytes,available);
+    for(const auto pool:{shared_pool,p.plan.formula.table_pool}){
+        const auto directory_bytes=bytes_for(pool.count,sizeof(ProductTableRef));
+        valid_span(pool.entries,directory_bytes,"finite frame table directory");
+        require(!overlaps(pool.entries,directory_bytes,begin,available),SBN3_FATAL_ARGUMENT,"finite frame table directory/work alias");
+        for(size_t k=0;k<pool.count;++k){const auto& table=pool.entries[k];
+            valid_span(table.data,table.request.bytes,"finite frame shared table");
+            require(!overlaps(table.data,table.request.bytes,begin,available),SBN3_FATAL_ARGUMENT,"finite frame shared table/work alias");
+        }
+        for(unsigned j=0;j<3;++j)if(p.plan.spec.need&(1u<<j)){
+            const auto& value=out.value[j].mantissa;const auto bytes=bytes_for(value.capacity,8);
+            require(!overlaps(value.data,bytes,pool.entries,directory_bytes),SBN3_FATAL_ARGUMENT,"finite frame output/directory alias");
+            for(size_t k=0;k<pool.count;++k)require(!overlaps(value.data,bytes,pool.entries[k].data,pool.entries[k].request.bytes),
+                SBN3_FATAL_ARGUMENT,"finite frame output/shared table alias");
+        }
+    }
+    for(unsigned i=0;i<3;++i)if(p.plan.spec.need&(1u<<i)){
+        const auto& value=out.value[i].mantissa;const auto bytes=bytes_for(value.capacity,8);
+        require(value.capacity>=p.info.series.output.limbs[i]&&value.data&&!(uintptr_t(value.data)&63)&&
+                !overlaps(value.data,bytes,&p,p.extent)&&!overlaps(value.data,bytes,begin,available),
+                SBN3_FATAL_ARGUMENT,"finite frame output resources");
+    }
+    FrameMark lifetime(phase);
+    void* tables=phase.allocate(p.info.series.prepared_bytes,p.info.series.prepared_alignment);
+    void* work=phase.allocate(p.info.series.workspace_bytes,p.info.series.workspace_alignment);
+    materialize_frame_stages(p,tables,shared_pool);
+    FiniteBinding binding;binding.plan=p.plan;binding.schedule=p.schedule;binding.team=static_cast<sbn3_team*>(scope->team);
+    binding.frame_prepared=tables;binding.run_context=run_context;
+    struct alignas(64) RootStorage {unsigned char bytes[(sizeof(Frame)+63)&~size_t(63)];};
+    RootStorage roots[32];
+    sbn3_team_scope grant{scope->team,scope->first,p.plan.options.workers,false,scope->epoch};
+    for(unsigned i=grant.first;i<grant.first+grant.width;++i){
+        auto* root=::new(roots[i].bytes)Frame(Frame::external(work,p.info.series.workspace_bytes));
+        root->allocate(p.info.series.workspace_bytes);binding.scratch_roots[i]=root;
+    }
+    const sbn3_series_executor executor{&binding,leaf,merge};
+    execute_schedule_on_scope(p.schedule,&executor,&grant,&out,work,p.info.series.workspace_bytes);
+    for(unsigned i=grant.first;i<grant.first+grant.width;++i){binding.scratch_roots[i]->~Frame();binding.scratch_roots[i]=nullptr;}
+}
+void finite_frame_visit_products(const FiniteFramePrepared& prepared,
+    void (*visit)(void*,const ProductProgramPlan&),void* context) noexcept {
+    require(prepared.state&&visit,SBN3_FATAL_ARGUMENT,"finite frame product visitor");
+    const auto& p=*static_cast<const FrameProgram*>(prepared.state);
+    require(p.marker==frame_magic,SBN3_FATAL_LIFETIME,"finite frame prepared visitor");
+    for(size_t i=0;i<p.info.series.stages;++i)for(unsigned j=0;j<p.stages[i].stage.count;++j)
+        if(p.stages[i].accelerated[j])visit(context,p.stages[i].product[j]);
 }
 } // namespace sbn::v3::series

@@ -1,4 +1,5 @@
 #include "product/spectrum_contract.hpp"
+#include "product/crt.hpp"
 #include "common/identity.hpp"
 /* Shared native p48 LIN instance. Mathematical kernels retain the cr implementation;
  * this TU supplies the pure query and the explicit resource-binding recipe. */
@@ -6,6 +7,7 @@
 #include "product/tuning_native.hpp"
 #include "tuning/native_policy.hpp"
 #include "runtime/team.hpp"
+#include "runtime/bound_owner.hpp"
 #include "backend/ntt_p48/engine.hpp"
 #include "backend/ntt_p48/flat.hpp"
 #include <new>
@@ -38,6 +40,7 @@ struct ExecutionPlan {
     p::XposeCtx transpose_a{},transpose_b{}; // address fields remain NULL in a plan
     size_t pitch_alignment=64,tail_bytes=0,journal_bytes=0,spill_bytes=0;
     unsigned emit_tasks=0;
+    bool flat_output_work=false;
 };
 struct Recipe {
     unsigned kind=0,cached_mask=0;
@@ -95,6 +98,7 @@ struct Binding {
     sbn3_mul_binding header;
     ProductPlan plan;
     RunBindings run;
+    BoundOwner owner;
     Frame root;
     p::Ctx context{};
     p::Garner garner{};
@@ -214,6 +218,24 @@ size_t worker_bytes(const p::Plan &g,bool fused,const p::XposeCtx &x,unsigned co
     }
     size_t rounded=0;require(align_size(largest,64,rounded),SBN3_FATAL_SIZE,"scratch round");return rounded;
 }
+size_t flat_transform_bytes(const p::Plan &g,unsigned kind,unsigned cached_mask,bool output_work=false) {
+    const unsigned buffers=(p::flat_packa_active(g) && kind==SBN3_PRODUCT_MUL && !cached_mask)?1:kind==SBN3_PRODUCT_SQR?1:
+        (kind==SBN3_PRODUCT_MAC2?4:2)-unsigned(bool(cached_mask&1))-unsigned(bool(cached_mask&2));
+    return (buffers-unsigned(output_work))*(g.M2+16)*64;
+}
+size_t worker_region_bytes(const ProductPlan &q,unsigned rank) {
+    const auto &i=q.execution.info;const auto &g=q.arithmetic.transform;
+    if(i.algorithm!=SBN3_MUL_FLAT)return i.per_worker_bytes;
+    // The experimental tail scheduler may assign forwards to arbitrary spare
+    // ranks. The production NP10 W4/W8 tail schedule has no rank >= PN.
+    if constexpr(CR_FLAT_TAIL_PAIR==1)return i.per_worker_bytes;
+    // Transform frames occupy [0,min(NP,W)); the spread schedule permutes
+    // those frame pointers while preserving its CPU assignment. CRT uses
+    // the ordinary rank mapping. Flat C=1 has ceil(ntp/OCH) emit tasks.
+    const size_t transform=rank<PN?flat_transform_bytes(g,q.recipe.kind,q.recipe.cached_mask,q.execution.flat_output_work):0;
+    const size_t emit=rank<(g.ntp+p::OCH-1)/p::OCH?PN*(p::OCH/8+3)*64:0;
+    return std::max(size_t(64),std::max(transform,emit));
+}
 // Integrity of every semantic plan field. Padding is deliberately excluded;
 // this is an accidental-corruption guard, not a security/content identity.
 uint64_t plan_seal(const ProductPlan &q) {
@@ -278,6 +300,7 @@ uint64_t plan_seal(const ProductPlan &q) {
     }
     for(auto v:q.arithmetic.scale_a)h=feed(h,v);
     const auto &e=q.execution;const auto &i=e.info;
+    h=feed(h,uint64_t(e.flat_output_work));
     h=feed(h,uint64_t(i.np));
     h=feed(h,i.algorithm);h=feed(h,i.fused_start_skew_us);h=feed(h,i.crt_mode);h=feed(h,i.codec_mode);
     h=feed(h,uint64_t(i.trunk_bits));
@@ -345,22 +368,24 @@ ProductPlan load_plan(const sbn3_mul_plan &opaque) {
 // Keep the historical spectrum upper bound, including its alignment slack.
 size_t owned_table_bytes(size_t entries,size_t levels,size_t M2,bool flat) {
     Sizer tables;tables.take(sizeof(p::Primes));
-    for(unsigned k=0;k<PN;++k){tables.take(p::tower_bytes(p::clog2(entries)));tables.take(p::tower_zero_slots*8);}
-    for(unsigned k=0;k<PN;++k)for(int d=0;d<2;++d)tables.take(levels*M2*8+64);
+    if(!p::published_tower(p::clog2(entries)))for(unsigned k=0;k<PN;++k){tables.take(p::tower_bytes(p::clog2(entries)));tables.take(p::tower_zero_slots*8);}
+    if(!flat&&!p::published_factors(M2,levels-1))for(unsigned k=0;k<PN;++k)for(int d=0;d<2;++d)tables.take(levels*M2*8+64);
     if(flat)tables.take(sizeof(p::FlatConstants));
     size_t bytes=0;return tables.ok && align_size(tables.at,64,bytes)?bytes:0;
 }
 template<bool materialize=true>
 sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_options &options,
-                          sbn3_mul_plan &out,sbn3_mul_info &info) {
+                          sbn3_mul_plan &out,sbn3_mul_info &info,bool future_cache=false) {
     if constexpr(LEAF!=8)if(request.cyclic_limbs || request.kind!=SBN3_PRODUCT_MUL || request.cached_a[0] || request.cached_a[1] ||
         !options.column_log2 || !options.row_log2 || options.algorithm==SBN3_MUL_FLAT || options.codec_mode>1)return SBN3_UNSUPPORTED;
     if(request.negacyclic)return SBN3_UNSUPPORTED;
+    if(request.window_limbs&&request.kind==SBN3_PRODUCT_MAC2)return SBN3_UNSUPPORTED;
     if(request.window_limbs&&(!request.cyclic_limbs||request.window_limbs>request.cyclic_limbs||
         request.a_limbs+(request.kind==SBN3_PRODUCT_SQR?request.a_limbs:request.b_limbs)>=request.cyclic_limbs))return SBN3_UNSUPPORTED;
-    if(request.cyclic_limbs && (request.kind!=SBN3_PRODUCT_MUL && request.kind!=SBN3_PRODUCT_SQR))return SBN3_UNSUPPORTED;
+    if(request.cyclic_limbs && request.kind==SBN3_PRODUCT_TMP)return SBN3_UNSUPPORTED;
     if(request.cyclic_limbs>(size_t(1)<<31))return SBN3_QUERY_CAPACITY;
-    if(request.cyclic_limbs && (request.a_limbs>request.cyclic_limbs || request.b_limbs>request.cyclic_limbs))return SBN3_UNSUPPORTED;
+    if(request.cyclic_limbs && (request.a_limbs>request.cyclic_limbs || request.b_limbs>request.cyclic_limbs ||
+        request.a1_limbs>request.cyclic_limbs || request.b1_limbs>request.cyclic_limbs))return SBN3_UNSUPPORTED;
     if(request.kind>SBN3_PRODUCT_MAC2 || (request.kind!=SBN3_PRODUCT_MAC2 && (request.a1_limbs || request.b1_limbs || request.cached_a[1])) ||
        (request.kind==SBN3_PRODUCT_SQR && request.b_limbs))return SBN3_UNSUPPORTED;
     for(auto n:{request.a_limbs,request.b_limbs,request.a1_limbs,request.b1_limbs})if(n>(size_t(1)<<31))return SBN3_QUERY_CAPACITY;
@@ -413,7 +438,9 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     // the finite codec set before refusing a period that the widest T misses.
     if(request.cyclic_limbs){
         auto fits=[&](int t){const size_t bits=request.cyclic_limbs*64,n=bits/size_t(t);
-            return bits%size_t(t)==0 && n>=128 && !(n&(n-1)) && p::plan_T_ok(t,(spec.a_limbs*64+t-1)/t,(spec.b_limbs*64+t-1)/t);};
+            return bits%size_t(t)==0 && n>=128 && !(n&(n-1)) &&
+                (r.kind==SBN3_PRODUCT_MAC2?p::plan_T_ok(t,terms(t),terms(t)):
+                 p::plan_T_ok(t,(spec.a_limbs*64+t-1)/t,(spec.b_limbs*64+t-1)/t));};
         if(!q.options.trunk_bits)while(T>=p::plan_T_min() && !fits(T))T-=p::plan_T_step();
         if(T<p::plan_T_min() || !fits(T))return SBN3_UNSUPPORTED;
     }
@@ -435,12 +462,16 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
             }
         }
     }
-    if(r.kind==SBN3_PRODUCT_MAC2){g.outcap=(r.lengths[0]+r.lengths[1]>r.lengths[2]+r.lengths[3]?r.lengths[0]+r.lengths[1]:r.lengths[2]+r.lengths[3])+1;
+    if(r.kind==SBN3_PRODUCT_MAC2&&!request.cyclic_limbs){g.outcap=(r.lengths[0]+r.lengths[1]>r.lengths[2]+r.lengths[3]?r.lengths[0]+r.lengths[1]:r.lengths[2]+r.lengths[3])+1;
         if(g.outcap>g.nl)return SBN3_QUERY_CAPACITY;}
     if(r.kind==SBN3_PRODUCT_TMP){r.window={uint64_t(T)*g.t0,uint64_t(T)*g.nwt,uint64_t(T+1+p::clog2(g.nat))};
         if(r.window.error_bits>=r.window.width_bits)return SBN3_UNSUPPORTED;}
     if(request.window_limbs)r.window={0,64*request.window_limbs,0};
     for(unsigned t=0;t<2;++t)if((r.cached_mask>>t)&1)if(!compatible(r.cached[t],g,r.lengths[2*t]))return SBN3_UNSUPPORTED;
+    // The producer's geometry is already resolved. A future same-basis A
+    // cache changes resource liveness, not that geometry. Scaling and real
+    // descriptor compatibility remain the full query's responsibility.
+    if constexpr(!materialize)if(future_cache)r.cached_mask|=1;
     if(flat){if(options.codec_mode>1)return SBN3_UNSUPPORTED;q.options.codec_mode=1;q.options.prime_batch=PN;}
     else if(!options.codec_mode)q.options.codec_mode=default_codec(T,g.M2);
     if constexpr(LEAF!=8)q.options.codec_mode=1;
@@ -511,6 +542,10 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     const size_t row_bytes=g.C*p::padded_row_stride(g.lbw*SLOT,1)+4096;
     const size_t need=i.fused && row_bytes>g.plane_bytes?row_bytes:g.plane_bytes;
     e.pitch_alignment=flat?64:need>=work_alignment?work_alignment:4096;
+    // The outer workspace needs only the strongest alignment of its actual
+    // subregions. Small planes have 4 KiB alignment; requiring 2 MiB anyway
+    // wastes two gaps when a caller places tables and a stage pool beside it.
+    i.workspace_alignment=e.pitch_alignment;
     unsigned plane_sets=(r.kind==SBN3_PRODUCT_SQR?1:2)-unsigned(bool(r.cached_mask&1));
     if(r.kind==SBN3_PRODUCT_MAC2)plane_sets+=2-unsigned(bool(r.cached_mask&2));
     unsigned slots=PN*plane_sets+(i.fused?i.prime_batch:0);
@@ -525,8 +560,21 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     if(!mul_size(i.plane_pitch,slots,i.pool_bytes))return SBN3_QUERY_CAPACITY;
     if(i.pool_bytes<i.transpose_bytes)i.pool_bytes=i.transpose_bytes; // prepare borrows idle pool
     if(flat){
-        const unsigned buffers=(p::flat_packa_active(g) && r.kind==SBN3_PRODUCT_MUL && !r.cached_mask)?1:r.kind==SBN3_PRODUCT_SQR?1:(r.kind==SBN3_PRODUCT_MAC2?4:2)-unsigned(bool(r.cached_mask&1))-unsigned(bool(r.cached_mask&2));
-        const size_t temp=buffers*(g.M2+16)*64,emit=PN*(p::OCH/8+3)*64;align_size(temp>emit?temp:emit,64,i.per_worker_bytes);
+        const size_t temp=flat_transform_bytes(g,r.kind,r.cached_mask),emit=PN*(p::OCH/8+3)*64;
+        align_size(temp>emit?temp:emit,64,i.per_worker_bytes);
+        if(r.kind==SBN3_PRODUCT_MUL&&!r.cached_mask&&!p::flat_packa_active(g)){
+            // Keep Y in its result plane until inverse+48-bit compaction.
+            // Enlarging every prime plane is useful only if it saves more
+            // worker scratch; this exact inequality also covers W < NP.
+            const size_t pitch=std::max(i.plane_pitch,(g.M2+16)*64+128);
+            size_t before=0,after=0;for(unsigned k=0;k<i.workers;++k)before+=worker_region_bytes(q,k);
+            e.flat_output_work=true;
+            for(unsigned k=0;k<i.workers;++k)after+=worker_region_bytes(q,k);
+            if(before>after&&PN*(pitch-i.plane_pitch)<before-after){
+                i.plane_pitch=pitch;i.pool_bytes=PN*pitch;
+                i.per_worker_bytes=std::max(flat_transform_bytes(g,r.kind,r.cached_mask,true),emit);
+            }else e.flat_output_work=false;
+        }
     }else {
         const auto &largest_x=e.transpose_a.xrs>=e.transpose_b.xrs?e.transpose_a:e.transpose_b;
         i.per_worker_bytes=worker_bytes(g,i.fused,largest_x,i.codec_mode,r.kind);
@@ -547,17 +595,17 @@ sbn3_query_result query_impl(const sbn3_product_request &request,const sbn3_mul_
     work.take(i.pool_bytes,e.pitch_alignment);
     if(!i.borrow_output)work.take(i.transpose_bytes);
     work.take(e.tail_bytes);if(e.journal_bytes)work.take(e.journal_bytes);if(e.spill_bytes)work.take(e.spill_bytes);
-    for(unsigned k=0;k<i.workers;++k)work.take(i.per_worker_bytes);
+    for(unsigned k=0;k<i.workers;++k)work.take(worker_region_bytes(q,k));
     if(!work.ok || !align_size(work.at,64,i.workspace_bytes))return SBN3_QUERY_CAPACITY;
     if constexpr(materialize) {
     for(uint64_t n:{uint64_t(i.workers),uint64_t(i.prime_batch),uint64_t(i.fused),uint64_t(i.borrow_output),
                    i.table_bytes,i.plane_pitch,i.workspace_bytes,i.per_worker_bytes,i.transpose_bytes,i.block_stride,i.product_row_stride,
                    uint64_t(i.row_task_grain),uint64_t(i.fused_row_grain),uint64_t(i.fused_items)})h=feed(h,n);
-    h=feed(h,i.algorithm);h=feed(h,i.fused_start_skew_us);h=feed(h,i.codec_mode);h=feed(h,r.cached_mask);for(const auto &d:r.cached)h=feed(h,d.frontier);i.execution_id=h;
+    h=feed(h,i.algorithm);h=feed(h,i.fused_start_skew_us);h=feed(h,i.codec_mode);h=feed(h,r.cached_mask);h=feed(h,uint64_t(e.flat_output_work));for(const auto &d:r.cached)h=feed(h,d.frontier);i.execution_id=h;
     }
     info=i;
     if(options.workspace_budget && i.workspace_bytes>options.workspace_budget) {
-        if(!flat && !options.prime_batch && q.options.prime_batch>1){auto smaller=options;smaller.prime_batch=1;return query_impl<materialize>(request,smaller,out,info);}
+        if(!flat && !options.prime_batch && q.options.prime_batch>1){auto smaller=options;smaller.prime_batch=1;return query_impl<materialize>(request,smaller,out,info,future_cache);}
         return SBN3_QUERY_CAPACITY;
     }
     if constexpr(materialize){q.seal=plan_seal(q);memset(&out,0,sizeof out);memcpy(out.opaque,&q,sizeof q);}
@@ -568,6 +616,10 @@ sbn3_query_result geometry_query(const sbn3_product_request &r,const sbn3_mul_op
     if(r.cached_a[0] || r.cached_a[1])return SBN3_UNSUPPORTED;
     sbn3_mul_plan unused;
     return query_impl<false>(r,o,unused,i);
+}
+sbn3_query_result geometry_query_cached_a(const sbn3_product_request &r,const sbn3_mul_options &o,sbn3_mul_info &i) {
+    i={};if(r.cached_a[0]||r.cached_a[1]||r.kind!=SBN3_PRODUCT_MUL||!r.cyclic_limbs)return SBN3_UNSUPPORTED;
+    sbn3_mul_plan unused;return query_impl<false>(r,o,unused,i,true);
 }
 sbn3_query_result query(const sbn3_product_spec &spec,const sbn3_mul_options &opt,sbn3_mul_plan &out,sbn3_mul_info &info){
     sbn3_product_request r{};r.a_limbs=spec.a_limbs;r.b_limbs=spec.b_limbs;return query_impl(r,opt,out,info);
@@ -586,8 +638,8 @@ sbn3_query_result product_query(const sbn3_product_request &req,const sbn3_mul_o
 Binding &binding(sbn3_mul_binding *b) {return *reinterpret_cast<Binding *>(b);}
 const Binding &binding(const sbn3_mul_binding *b) {return *reinterpret_cast<const Binding *>(b);}
 void idle_owner(const Binding &b) {
-    require(pthread_equal(b.run.team->creator,pthread_self()) && !b.run.team->busy,
-            SBN3_FATAL_TEAM,"binding owner/active");
+    b.owner.check(*b.run.team);
+    require(!__atomic_load_n(&b.active,__ATOMIC_ACQUIRE),SBN3_FATAL_LIFETIME,"binding active");
 }
 void execute_ptrs(sbn3_mul_binding *,const uint64_t *,const uint64_t *,uint64_t *);
 void initialize_workspace(Binding *b,const sbn3_spectrum *const cached[2],
@@ -616,7 +668,7 @@ void initialize_workspace(Binding *b,const sbn3_spectrum *const cached[2],
     b->run.tail=static_cast<uint64_t *>(b->root.allocate(q.execution.tail_bytes));
     if(q.execution.journal_bytes)b->run.journal=static_cast<uint8_t *>(b->root.allocate(q.execution.journal_bytes));
     if(q.execution.spill_bytes)b->run.spill=static_cast<uint64_t (*)[8]>(b->root.allocate(q.execution.spill_bytes));
-    for(unsigned k=0;k<i.workers;++k)b->run.workers[k]=::new(b->worker_objects+k*sizeof(Frame))Frame(b->root.subframe(i.per_worker_bytes));
+    for(unsigned k=0;k<i.workers;++k)b->run.workers[k]=::new(b->worker_objects+k*sizeof(Frame))Frame(b->root.subframe(worker_region_bytes(q,k)));
     b->work_used=b->root.used();
     require(b->table_used<=i.table_bytes && b->work_used<=i.workspace_bytes,SBN3_FATAL_WORKSPACE,"p48 sizing mismatch");
     auto &c=b->context;const auto &g=b->plan.arithmetic.transform;
@@ -632,11 +684,11 @@ void initialize_workspace(Binding *b,const sbn3_spectrum *const cached[2],
     // Context pointers must refer to the persistent plan copy, never the bind stack.
     for(unsigned t=0;t<2;++t){c.leaf_k[t]=b->plan.recipe.k[t];c.leaf_rec[t]=b->plan.recipe.kr[t];}
 }
-void product_bind(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease &tables,
-            const sbn3_lease &workspace,sbn3_team &team,const sbn3_spectrum *cache0,const sbn3_spectrum *cache1,sbn3_mul_binding **out) {
+void product_bind_impl(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease &tables,
+            const sbn3_lease &workspace,sbn3_team &team,const sbn3_spectrum *cache0,const sbn3_spectrum *cache1,
+            sbn3_mul_binding **out,sbn3_team_scope *scope) {
     ProductPlan q=load_plan(opaque);const auto &i=q.execution.info;
-    require(team.arena==&arena && team.width>=i.workers && pthread_equal(team.creator,pthread_self()) && !team.busy,
-            SBN3_FATAL_TEAM,"p48 team binding");
+    BoundOwner owner;owner.bind(arena,team,scope,i.workers);
     require(tables.bytes>=i.table_bytes && workspace.bytes>=i.workspace_bytes &&
             !(reinterpret_cast<uintptr_t>(tables.data)&63) &&
             !(reinterpret_cast<uintptr_t>(workspace.data)&(i.workspace_alignment-1)) &&
@@ -653,6 +705,7 @@ void product_bind(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease
             cache_matches(sp.desc,q.recipe.cached[t],q.arithmetic.transform,q.recipe.lengths[t*2]),SBN3_FATAL_ARGUMENT,"incompatible spectrum");}}
     arena.claim_unshared(tables);arena.claim_unshared(workspace);
     auto *b=::new(workspace.data) Binding(q,arena,tables,workspace,team);
+    b->owner=owner;
     b->header.execute_fast=execute_ptrs;
     b->root.allocate(sizeof(Binding));
     ComputeLease setup(arena);
@@ -683,6 +736,17 @@ void product_bind(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease
     }
     initialize_workspace(b,cached);arena.release(workspace);
     *out=&b->header;
+}
+void product_bind(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease &tables,
+            const sbn3_lease &workspace,sbn3_team &team,const sbn3_spectrum *cache0,const sbn3_spectrum *cache1,
+            sbn3_mul_binding **out) {
+    product_bind_impl(opaque,arena,tables,workspace,team,cache0,cache1,out,nullptr);
+}
+void product_bind_scope(const sbn3_mul_plan &opaque,sbn3_arena &arena,const sbn3_lease &tables,
+            const sbn3_lease &workspace,sbn3_team_scope *scope,const sbn3_spectrum *cache0,const sbn3_spectrum *cache1,
+            sbn3_mul_binding **out) {
+    require(scope&&scope->team,SBN3_FATAL_TEAM,"p48 scoped binding");
+    product_bind_impl(opaque,arena,tables,workspace,*static_cast<sbn3_team *>(scope->team),cache0,cache1,out,scope);
 }
 void bind(const sbn3_mul_plan &opaque,sbn3_arena &a,const sbn3_lease &t,const sbn3_lease &w,sbn3_team &team,sbn3_mul_binding **out){
     const auto q=load_plan(opaque);require(!q.arithmetic.transform.ring_rn && !q.recipe.cached_mask && q.recipe.kind==SBN3_PRODUCT_MUL,SBN3_FATAL_ARGUMENT,"mul binding recipe");
@@ -773,7 +837,8 @@ void execute_action(void *argument,sbn3_team_scope *scope) {
     for(unsigned k=0;k<PN;++k)c.fp[k]=b.run.b_planes[k];c.dsc=nullptr;
     forward_rows(b,scope,c,x.prepared_a?transpose_shape(g,x.y.count):e.transpose_b,x.y.data,x.output.data,x.y.count);c.xp=nullptr;
     const uint64_t t2=tick_ns();uint64_t t3=0;
-    const KernelForFn tile=c.writeback_a?p::block_fn4<8,0,0,0,false,true>:p::block_fn4<8,0,0>;
+    const KernelForFn tile=c.writeback_a?p::block_fn4<8,0,0,0,false,true>:
+        b.plan.recipe.scaled?p::block_fn4<8,0,0,0,true>:p::block_fn4<8,0,0>;
     if(i.fused) {
         uint8_t *spare[PN];for(unsigned k=0;k<i.prime_batch;++k)spare[k]=b.run.spares[k];
         const size_t nbi=(g.nblk+7)&~size_t(7);
@@ -824,15 +889,15 @@ void validate_values(Binding &b,sbn3_const_limbs a,sbn3_const_limbs y,sbn3_limbs
 }
 void execute(sbn3_mul_binding *opaque,sbn3_const_limbs a,sbn3_const_limbs y,sbn3_limbs out) {
     auto &b=binding(opaque);idle_owner(b);validate_values(b,a,y,out);
-    Execute x{&b,a,y,out};sbn3_team_run(b.run.team,execute_action,&x);
+    Execute x{&b,a,y,out};b.owner.run(*b.run.team,execute_action,&x);
 }
 void execute_ptrs(sbn3_mul_binding *opaque,const uint64_t *a,const uint64_t *y,uint64_t *out){
     const auto &q=binding(opaque).plan;
     execute(opaque,{a,q.recipe.lengths[0]},{y,q.recipe.lengths[1]},{out,sbn3_mul_output_capacity(&q.execution.info)});
 }
 void execute_scope(sbn3_mul_binding *opaque,sbn3_team_scope *scope,sbn3_const_limbs a,sbn3_const_limbs y,sbn3_limbs out) {
-    auto &b=binding(opaque);require_scope_leader(scope);
-    require(scope->team==b.run.team && scope->width==b.plan.options.workers,SBN3_FATAL_TEAM,"p48 borrowed scope");
+    auto &b=binding(opaque);scope=b.owner.resolve(*b.run.team,scope,b.plan.options.workers);
+    require(scope&&(b.owner.scoped()||scope->width==b.plan.options.workers),SBN3_FATAL_TEAM,"p48 borrowed scope");
     validate_values(b,a,y,out);Execute x{&b,a,y,out};execute_action(&x,scope);
 }
 void metrics(const sbn3_mul_binding *opaque,sbn3_mul_metrics &m) {
@@ -865,22 +930,25 @@ sbn3_mul_options program_options(const sbn3_mul_plan &opaque) {
 }
 unsigned program_contract(const sbn3_mul_plan &opaque) {
     const auto q=load_plan(opaque);
-    // Ordinary LIN only. FLAT finishes all prime transforms before emission;
+    // The frame-owned cyclic entry initially promises exact input lengths
+    // and disjoint output only. Linear programs retain their wider contract.
+    if(q.arithmetic.transform.ring_rn||q.recipe.kind!=SBN3_PRODUCT_MUL)return 0;
+    // FLAT finishes all prime transforms before emission;
     // Bailey finishes both operand row passes before any inverse-row emission.
     // E1 must not borrow output storage while raw inputs are still live.
     return program_bounded_inputs | (!q.execution.info.borrow_output ? program_consume_inputs : 0u);
 }
 SharedPreparation program_tables(const sbn3_mul_plan &opaque) {
     const auto q=load_plan(opaque);const auto &i=q.execution.info;
-    if(q.recipe.kind!=SBN3_PRODUCT_MUL || q.recipe.cached_mask || q.arithmetic.transform.ring_rn)return {};
+    if((q.recipe.kind!=SBN3_PRODUCT_MUL&&q.recipe.kind!=SBN3_PRODUCT_MAC2&&q.recipe.kind!=SBN3_PRODUCT_SQR) || q.recipe.cached_mask)return {};
     const bool flat=i.algorithm==SBN3_MUL_FLAT;
     Sizer z;z.take(sizeof(p::Primes));
-    for(unsigned k=0;k<PN;++k){z.take(p::tower_bytes(p::clog2(i.table_entries)));z.take(p::tower_zero_slots*8);}
-    if(!flat)for(unsigned k=0;k<PN;++k)for(unsigned d=0;d<2;++d)z.take(i.factor_levels*i.M2*8+64);
+    if(!p::published_tower(p::clog2(i.table_entries)))for(unsigned k=0;k<PN;++k){z.take(p::tower_bytes(p::clog2(i.table_entries)));z.take(p::tower_zero_slots*8);}
+    if(!flat&&!p::published_factors(i.M2,i.factor_levels-1))for(unsigned k=0;k<PN;++k)for(unsigned d=0;d<2;++d)z.take(i.factor_levels*i.M2*8+64);
     size_t bytes=0;if(!z.ok || !align_size(z.at,128,bytes))return {};
     // Version/prime family/tower extent/factor geometry. No codec, scale,
     // input support, CRT mode, worker count or destination address is in this key.
-    return {{0x5034385441423032ULL,PN,LEAF,i.table_entries,flat?0:i.M2,flat?0:i.factor_levels,0,0},bytes,128};
+    return {{0x5034385441423033ULL,PN,LEAF,i.table_entries,flat?0:i.M2,flat?0:i.factor_levels,0,0},bytes,128};
 }
 size_t program_local_bytes(const sbn3_mul_plan &opaque) {
     const auto q=load_plan(opaque);size_t header=0,constants=0;
@@ -923,26 +991,65 @@ const void *program_prepare(const sbn3_mul_plan &opaque,Frame &f) {
     const void *shared=program_tables_prepare(opaque,tf);
     program_finish(*v,q,f,shared);return v;
 }
+#include "backend/ntt_p48/product_recipes.hpp"
 void program_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs a,sbn3_const_limbs y,sbn3_limbs out) {
     const auto &v=*static_cast<const Program *>(ptr);const auto &q=v.plan;const auto &i=q.execution.info;
+    require(q.recipe.kind==SBN3_PRODUCT_MUL||q.recipe.kind==SBN3_PRODUCT_SQR,SBN3_FATAL_ARGUMENT,"p48 product program recipe");
     void *memory=f.allocate(i.workspace_bytes,i.workspace_alignment);
     auto *b=::new(memory) Binding(q,f,memory,*static_cast<sbn3_team *>(scope->team));
     b->root.allocate(sizeof(Binding));b->run.primes=v.primes;b->run.flat_constants=v.constants;
     b->table_used=v.table_used;const sbn3_spectrum *cached[2]{};
     initialize_workspace(b,cached,&v.garner,&v.emit);
-    Execute x{b,a,y,out};execute_action(&x,scope);
+    if(q.recipe.kind==SBN3_PRODUCT_SQR||q.arithmetic.transform.ring_rn){
+        ProductCall x{b,{a,q.recipe.kind==SBN3_PRODUCT_SQR?sbn3_const_limbs{}:y,{},{}},out,false};product_action(&x,scope);
+    }else{Execute x{b,a,y,out};execute_action(&x,scope);}
     for(unsigned k=0;k<i.workers;++k)b->run.workers[k]->~Frame();
     b->~Binding();
 }
-#include "backend/ntt_p48/product_recipes.hpp"
+void program_sum_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,const sbn3_product_inputs &in,sbn3_limbs out) {
+    const auto &v=*static_cast<const Program *>(ptr);const auto &q=v.plan;const auto &i=q.execution.info;
+    require(q.recipe.kind==SBN3_PRODUCT_MAC2&&!q.recipe.cached_mask,SBN3_FATAL_ARGUMENT,"p48 sum program recipe");
+    void *memory=f.allocate(i.workspace_bytes,i.workspace_alignment);
+    auto *b=::new(memory) Binding(q,f,memory,*static_cast<sbn3_team *>(scope->team));
+    b->root.allocate(sizeof(Binding));b->run.primes=v.primes;b->run.flat_constants=v.constants;b->table_used=v.table_used;
+    const sbn3_spectrum *cached[2]{};initialize_workspace(b,cached,&v.garner,&v.emit);
+    ProductCall call{b,in,out,false};product_action(&call,scope);
+    for(unsigned k=0;k<i.workers;++k)b->run.workers[k]->~Frame();b->~Binding();
+}
 size_t program_pair_bytes(const sbn3_mul_plan &opaque) {
     const auto q=load_plan(opaque);const auto &i=q.execution.info;
-    if(LEAF!=8 || !program_bytes(opaque) || i.borrow_output)return 0;
+    if(LEAF!=8 || q.recipe.kind!=SBN3_PRODUCT_MUL || !program_bytes(opaque) || i.borrow_output || q.arithmetic.transform.ring_rn)return 0;
     if(i.algorithm!=SBN3_MUL_FLAT)return i.workspace_bytes;
     return i.workspace_bytes+PN*(q.arithmetic.transform.lbw*48+128)+128;
 }
-void program_pair_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs common,
-                          sbn3_const_limbs x,sbn3_const_limbs y,sbn3_limbs out0,sbn3_limbs out1) {
+void trim_pair_support(Binding&b,size_t common,size_t fresh){
+    auto&g=b.plan.arithmetic.transform;
+    // A completed spectrum on this fixed root basis has prefix-stable
+    // frequencies. Trim the second product's active support, not its period,
+    // prime set or codec. Full -> truncated changes row normalization by M2;
+    // compensate exactly in the existing scaled point-product normalization.
+    if(g.arm!=p::ARM_LIN||!common||!fresh)return;
+    p::Plan next{};const bool flat=b.plan.execution.info.algorithm==SBN3_MUL_FLAT;
+    const bool ok=flat?p::plan_flat(next,p::ARM_LIN,common,fresh,g.T,0,g.M2):
+        p::plan_make(next,p::ARM_LIN,common,fresh,g.T,8,p::clog2(g.M),p::clog2(g.M2),1u<<3,0,0,1,1);
+    if(!ok||next.lbw>=g.lbw)return;
+    if(g.full&&next.lbv*100>=g.M2*p48_geometry::lattice_fill_percent)return;
+    require(next.C==g.C&&next.M2==g.M2&&next.N==g.N&&
+        next.bstride==g.bstride&&next.outcap<=g.outcap,SBN3_FATAL_MATH,"paired TFT support trim");
+    if(next.rowscale!=g.rowscale){
+        require(g.rowscale==g.M2&&next.rowscale==1&&!b.plan.recipe.scaled,SBN3_FATAL_MATH,"paired normalization transition");
+        auto&r=b.plan.recipe;r.scaled=true;
+        for(unsigned k=0;k<PN;++k){r.k[0][k]=g.M2;r.kr[0][k]=uint64_t((p::u128(g.M2)<<52)/p::PR[k]);}
+    }
+    // Shrinking the integer can increase padding in its final emit quantum.
+    // Use the still-owned output prefix for those zero words instead of
+    // increasing the old separately allocated tail sink.
+    next.outcap=std::min(g.outcap,next.nl);
+    require(next.nl-next.outcap<=g.nl-g.outcap,SBN3_FATAL_WORKSPACE,"paired emit tail bound");
+    g=next;b.context.rms=p::padded_row_stride(g.lbw*SLOT,1);
+}
+void program_pair_impl(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs common,
+                          sbn3_const_limbs x,sbn3_const_limbs y,sbn3_limbs out0,sbn3_limbs out1,ProductPairContinuation continuation={}) {
     const auto &v=*static_cast<const Program *>(ptr);const auto &q=v.plan;const auto &i=q.execution.info;
     void *memory=f.allocate(i.workspace_bytes,i.workspace_alignment);
     auto *b=::new(memory) Binding(q,f,memory,*static_cast<sbn3_team *>(scope->team));
@@ -962,10 +1069,26 @@ void program_pair_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_c
     }
     Execute first{b,{},x,out0,true};execute_action(&first,scope);
     b->context.writeback_a=0;b->context.frontier[0]=1;
-    Execute second{b,{},y,out1,true};execute_action(&second,scope);
+    if(!continuation.next||continuation.next(continuation.context,y,out1)){
+        if(y.count){
+            const size_t capacity=g.outcap;trim_pair_support(*b,common.count,y.count);
+            Execute second{b,{},y,out1,true};execute_action(&second,scope);
+            if(g.outcap<capacity)memset(out1.data+g.outcap,0,(capacity-g.outcap)*8);
+        }
+        else memset(out1.data,0,(q.product.a_limbs+q.product.b_limbs)*8);
+    }
     for(unsigned k=0;k<i.workers;++k)b->run.workers[k]->~Frame();
     b->~Binding();
 }
+void program_pair_execute(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs common,
+                          sbn3_const_limbs x,sbn3_const_limbs y,sbn3_limbs out0,sbn3_limbs out1) {
+    program_pair_impl(ptr,f,scope,common,x,y,out0,out1);
+}
+void program_pair_continue(const void *ptr,Frame &f,sbn3_team_scope *scope,sbn3_const_limbs common,
+                          sbn3_const_limbs x,sbn3_limbs out,ProductPairContinuation next) {
+    program_pair_impl(ptr,f,scope,common,x,{},out,{},next);
+}
+#include "backend/ntt_p48/matrix_program.hpp"
 }
 #ifdef CR_FLAT_PROFILE
 extern "C" unsigned sbn3_bench_flat_profile(const sbn3_mul_binding *ptr,uint64_t *out){
@@ -1021,6 +1144,7 @@ const Backend &SBN3_P48_BACKEND() noexcept {
         .program_contract = program_contract,
         .program_pair_bytes = program_pair_bytes,
         .program_pair_execute = program_pair_execute,
+        .program_pair_continue = program_pair_continue,
         .program_tables = program_tables,
         .program_local_bytes = program_local_bytes,
         .program_tables_prepare = program_tables_prepare,
@@ -1028,13 +1152,20 @@ const Backend &SBN3_P48_BACKEND() noexcept {
         .program_options = program_options,
         .spectrum_multiply = compute_multiply,
         .geometry_query = geometry_query,
+        .geometry_query_cached_a = geometry_query_cached_a,
         .product_execute_live = product_execute_live,
         .product_fresh_supported = product_fresh_supported,
         .product_execute_fresh = product_execute_fresh,
         .product_live_contract = product_live_contract,
         .product_scratch_bytes = product_scratch_bytes,
         .with_product_scratch = with_product_scratch,
+        .program_sum_execute = program_sum_execute,
+        .program_matrix_bytes = program_matrix_bytes,
+        .program_matrix_execute = program_matrix_execute,
+        .product_bind_scope = product_bind_scope,
     };
     return instance;
 }
 }
+
+#include "backend/ntt_p48/external_crt.hpp"

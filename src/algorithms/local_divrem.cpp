@@ -1,5 +1,6 @@
 #include "algorithms/local_divrem.hpp"
 #include "algorithms/local_inverse.hpp"
+#include "algorithms/normalized_local.hpp"
 #include "algorithms/newton_contract.hpp"
 #include "product/difference.hpp"
 #include "product/local_product.hpp"
@@ -77,19 +78,35 @@ LocalDivisionPlan local_fused_division_plan(size_t nn,size_t dn,unsigned reuse_h
     p.storage_bytes=std::max(p.persistent_bytes+p.work_bytes,divisor+local_inverse_approximate_bytes(m)+256)+128;
     return p;
 }
-LocalDivisionDivisor local_division_prepare(const LocalDivisionPlan&p,const uint64_t*d,Frame&space) noexcept {
+namespace {
+LocalDivisionDivisor prepare_divisor(const LocalDivisionPlan&p,const uint64_t*d,Frame&space,
+                                    const NormalizedLocalPrepared*compiled) noexcept {
     const size_t dn=p.denominator_limbs,m=p.block_limbs;
     require(d&&d[dn-1],SBN3_FATAL_ARGUMENT,"local division divisor");
     const size_t begin=space.used();
     auto *D=space.alloc<uint64_t>(dn),*U=space.alloc<uint64_t>(m+1);
     LocalDivisionDivisor v;v.divisor=D;v.shift=unsigned(__builtin_clzll(d[dn-1]));
     if(v.shift)divrem_words::shift_left(D,d,dn,v.shift);else memcpy(D,d,dn*8);
-    local_inverse_approximate(U,D+dn-m,m,space);
+    if(compiled){
+        require(!p.fused_precision&&!v.shift&&compiled->info.kind==NormalizedLocalKind::inverse&&compiled->info.n==m,
+                SBN3_FATAL_ARGUMENT,"compiled local divisor inverse");
+        FrameMark phase(space);
+        auto work=space.subframe(compiled->info.workspace_bytes,compiled->info.alignment);
+        normalized_local_execute(*compiled,{}, {D+dn-m,m},{U,m+1},work);
+    }else local_inverse_approximate(U,D+dn-m,m,space);
     v.quotient=product::local_product_prepare(p.quotient,U,space);
     v.residual=product::local_product_prepare(p.residual,D,space,local_division_shares_tables(p)?v.quotient.tables:nullptr);
     v.head_inverse=divrem_words::invert_pi1(D[dn-1],D[dn-2]);
     require(space.used()-begin<=p.persistent_bytes,SBN3_FATAL_WORKSPACE,"local retained divisor bound");
     return v;
+}
+}
+LocalDivisionDivisor local_division_prepare(const LocalDivisionPlan&p,const uint64_t*d,Frame&space) noexcept {
+    return prepare_divisor(p,d,space,nullptr);
+}
+LocalDivisionDivisor local_division_prepare_compiled(const LocalDivisionPlan&p,const uint64_t*d,Frame&space,
+                                                    const NormalizedLocalPrepared&compiled) noexcept {
+    return prepare_divisor(p,d,space,&compiled);
 }
 namespace {
 uint64_t fused_apply(const LocalDivisionPlan&p,const LocalDivisionDivisor &prepared,
@@ -119,19 +136,20 @@ uint64_t fused_apply(const LocalDivisionPlan&p,const LocalDivisionDivisor &prepa
         while(value[dn]||divrem_words::compare(value,D,dn)>=0){require(++corrections<=8,SBN3_FATAL_MATH,"fused exact positive correction");limbs::sub_from(value,L,D,dn);}
         const uint64_t c=corrections;require(!limbs::add_to(estimate,qn,&c,1),SBN3_FATAL_MATH,"fused exact quotient overflow");
     }
-    memcpy(q,estimate,qn*8);memcpy(r,value,dn*8);if(shift)divrem_words::shift_right(r,r,dn,shift);
+    if(q)memcpy(q,estimate,qn*8);memcpy(r,value,dn*8);if(shift)divrem_words::shift_right(r,r,dn,shift);
     if(metrics)*metrics={0,0,4};return corrections;
 }
 }
 uint64_t local_division_apply(const LocalDivisionPlan&p,const LocalDivisionDivisor &prepared,
                              uint64_t*q,uint64_t*r,const uint64_t*n,size_t nn,Frame&space,
-                             LocalDivisionMetrics *metrics) noexcept {
+                             LocalDivisionMetrics *metrics,uint64_t*discard_block) noexcept {
     const size_t dn=p.denominator_limbs,m=p.block_limbs;
     require(nn<=p.numerator_limbs,SBN3_FATAL_ARGUMENT,"local division numerator");
     if(metrics)*metrics={};
     if(nn<dn){if(nn)memcpy(r,n,nn*8);memset(r+nn,0,(dn-nn)*8);return 0;}
     if(p.fused_precision)return fused_apply(p,prepared,q,r,n,nn,space,metrics);
     const size_t qn=nn-dn+1;FrameMark mark(space);
+    auto *discard=q?nullptr:discard_block?discard_block:space.alloc<uint64_t>(m);
     auto *value=space.alloc<uint64_t>(dn+m+2),*x=value;
     // The quotient estimate is retired into caller-owned Q before the
     // residual product starts. Both outputs fit this one transient buffer.
@@ -146,13 +164,14 @@ uint64_t local_division_apply(const LocalDivisionPlan&p,const LocalDivisionDivis
     if(head){
         pos-=head;for(size_t j=0;j<head;++j)x[j]=shifted(n,nn,pos+j,shift);
         memcpy(x+head,r,dn*8);const auto inverse=prepared.head_inverse;
-        for(size_t j=head;j-->0;){uint64_t corrections=0;q[pos+j]=head_word(x+j,D,dn,inverse,corrections);head_corrections+=corrections;}
+        for(size_t j=head;j-->0;){uint64_t corrections=0;const auto digit=head_word(x+j,D,dn,inverse,corrections);
+            if(q)q[pos+j]=digit;head_corrections+=corrections;}
         memcpy(r,x,dn*8);
     }
     while(pos){
         const size_t ic=std::min(m,pos);pos-=ic;
         product::local_product_apply(p.quotient,prepared.quotient,estimate,r+dn-ic,ic,space,{m,ic,1});
-        auto *block=q+pos;
+        auto *block=q?q+pos:discard;
         if(sbn3i_add_n(block,estimate+m,r+dn-ic,long(ic)))memset(block,0xff,ic*8);
         product::local_product_apply(p.residual,prepared.residual,value,block,ic,space);
         products+=2;

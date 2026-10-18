@@ -6,54 +6,70 @@
 // criterion and are re-verified by the leaf gate against the scalar reference.
 #include "radix/leaf.hpp"
 #include "radix/word_base.hpp"
+#include "radix/digit_bounds.hpp"
 #include "common/checked.hpp"
 #include "radix_leaf_group.hpp"
+#include "radix_digit_constants.hpp"
+#include "radix_leaf_tree.hpp"
+#include "radix_leaf_serial.hpp"
+#include "radix_leaf_parse.hpp"
+#include "radix_limb.hpp"
+#include "radix_bits.hpp"
+#include "radix_decimal.hpp"
 #include <immintrin.h>
 #include <cstring>
+#include "radix/decimal_small.hpp"
 namespace sbn::v3::radix {
 namespace {
-using u128 = __uint128_t;
-// Largest shift with an exact magic: floor(x * m / 2^(W+s)) == x / d for all x < limit.
-bool magic(uint64_t d, uint64_t limit, unsigned W, uint64_t cap, uint64_t &m_out, unsigned &s_out) {
-    for (unsigned s = W; s-- > 0;) {
-        if (s < 63 && d <= (uint64_t(1) << s))
-            continue; // m would reach the cap
-        const u128 k = u128(1) << (W + s);
-        const uint64_t m = uint64_t((k + d - 1) / d);
-        if (m >= cap)
-            continue;
-        if ((u128(m) * d - k) * (limit - 1) < k) {
-            m_out = m;
-            s_out = s;
-            return true;
-        }
+consteval auto make_identity_plans(){
+    std::array<DigitPlan,65> out{};
+    for(unsigned b=2;b<=64;++b){auto &p=out[b];p.base=b;
+        const auto &c=leaf_detail::digit_constants[b];
+        p.b2=c.b2;p.b4=c.b4;p.b8=c.b8;p.m4=c.m4;p.m2=c.m2;
+        p.s4=c.s4;p.s2=c.s2;p.m1=c.m1;p.s1=c.s1;
+        for(unsigned j=0;j<64;++j)p.encode[j]=uint8_t(j);
+        for(unsigned j=0;j<256;++j)p.decode[j]=j<b?uint8_t(j):uint8_t(0xff);
     }
-    return false;
+    return out;
 }
-} // namespace
+constexpr auto identity_plans=make_identity_plans();
+constexpr auto ascii_plan=[] {
+    auto p=identity_plans[10];p.identity=false;p.decimal_ascii=true;
+    for(auto &v:p.decode)v=0xff;
+    for(unsigned j=0;j<10;++j){p.encode[j]=uint8_t('0'+j);p.decode['0'+j]=uint8_t(j);}
+    return p;
+}();
+}
+const DigitPlan &identity_digit_plan(unsigned base) noexcept {return identity_plans[base];}
+const DigitPlan &decimal_ascii_plan() noexcept {return ascii_plan;}
+size_t first_nonzero_digit(const uint8_t *digits,size_t count,uint8_t zero) noexcept {
+    const auto z=_mm512_set1_epi8(char(zero));
+    for(size_t at=0;at<count;at+=64){
+        const uint64_t mask=_mm512_cmpneq_epi8_mask(_mm512_loadu_si512(digits+at),z);
+        if(mask)return at+unsigned(__builtin_ctzll(mask));
+    }
+    return count;
+}
+size_t digit_constant_bytes() noexcept {return sizeof(leaf_detail::digit_constants)+sizeof(word_bases)+leaf_detail::block_constant_bytes+sizeof(leaf_detail::serial_radices)+sizeof(leaf_detail::serial_maps)+sizeof(bit_detail::maps)+sizeof(leaf_detail::parse_radices)+sizeof(inverse_logs)+sizeof(identity_plans)+sizeof(ascii_plan)+sizeof(leaf_detail::limb_radices)+4*sizeof(leaf_detail::IntegerPackMap)+decimal_constant_bound_bytes;}
 bool digit_plan_init(DigitPlan &p, unsigned base, const uint8_t *table) noexcept {
+    if(base==10&&table&&decimal_alphabet(table)){p=ascii_plan;return true;}
     p = {};
     if (base < 3 || base > 63 || !(base & (base - 1)))
         return false;
     p.base = base;
-    p.b2 = uint64_t(base) * base;
-    p.b4 = p.b2 * p.b2;
-    p.b8 = p.b4 * p.b4;
-    uint64_t m = 0;
-    unsigned s = 0;
-    if (!magic(p.b4, p.b8, 52, uint64_t(1) << 52, m, s))
-        return false;
-    p.m4 = m;
-    p.s4 = s;
-    if (!magic(p.b2, p.b4, 52, uint64_t(1) << 52, m, s))
-        return false;
-    p.m2 = m;
-    p.s2 = s;
-    if (!magic(base, p.b2, 16, uint64_t(1) << 16, m, s))
-        return false;
-    p.m1 = uint16_t(m);
-    p.s1 = s;
+    const auto &c=leaf_detail::digit_constants[base];
+    p.b2=c.b2;p.b4=c.b4;p.b8=c.b8;
+    p.m4=c.m4;p.m2=c.m2;p.s4=c.s4;p.s2=c.s2;p.m1=c.m1;p.s1=c.s1;
     std::memset(p.decode, 0xff, sizeof p.decode);
+    if(!table){
+        const auto bytes=_mm512_setr_epi64(0x0706050403020100LL,0x0f0e0d0c0b0a0908LL,
+            0x1716151413121110LL,0x1f1e1d1c1b1a1918LL,0x2726252423222120LL,0x2f2e2d2c2b2a2928LL,
+            0x3736353433323130LL,0x3f3e3d3c3b3a3938LL);
+        _mm512_storeu_si512(p.encode,bytes);
+        _mm512_storeu_si512(p.decode,_mm512_mask_blend_epi8((__mmask64(1)<<base)-1,
+                                                            _mm512_set1_epi8(-1),bytes));
+        return true;
+    }
     for (unsigned v = 0; v < 64; ++v) {
         p.encode[v] = table && v < base ? table[v] : uint8_t(v);
         p.identity = p.identity && p.encode[v] == v;
@@ -65,43 +81,38 @@ bool digit_plan_init(DigitPlan &p, unsigned base, const uint8_t *table) noexcept
     }
     return true;
 }
-void emit_words(uint8_t *out, const uint64_t *words, size_t count, const DigitPlan &p) noexcept {
-    require(!(count & 7), SBN3_FATAL_ARGUMENT, "radix emit word count");
-    const __m512i zero = _mm512_setzero_si512();
-    const __m512i M4 = _mm512_set1_epi64((long long)p.m4), M2 = _mm512_set1_epi64((long long)p.m2);
-    const __m512i B4 = _mm512_set1_epi64((long long)p.b4), B2 = _mm512_set1_epi64((long long)p.b2);
-    const __m512i M1 = _mm512_set1_epi16(short(p.m1)), B1 = _mm512_set1_epi16(short(p.base));
-    const __m512i table = _mm512_loadu_si512(p.encode);
-    const __m128i s4 = _mm_cvtsi32_si128(int(p.s4)), s2 = _mm_cvtsi32_si128(int(p.s2)),
-                  s1 = _mm_cvtsi32_si128(int(p.s1));
-    for (size_t i = 0; i < count; i += 8) {
-        const __m512i x = _mm512_loadu_si512(words + i);
-        // level 1: a = x / b^4 (digits 7..4), b = x mod b^4 (digits 3..0)
-        const __m512i a = _mm512_srl_epi64(_mm512_madd52hi_epu64(zero, x, M4), s4);
-        const __m512i b = _mm512_sub_epi64(x, _mm512_mullo_epi64(a, B4));
-        // level 2: quarters, each below b^2
-        const __m512i qa = _mm512_srl_epi64(_mm512_madd52hi_epu64(zero, a, M2), s2);
-        const __m512i ra = _mm512_sub_epi64(a, _mm512_mullo_epi64(qa, B2));
-        const __m512i qb = _mm512_srl_epi64(_mm512_madd52hi_epu64(zero, b, M2), s2);
-        const __m512i rb = _mm512_sub_epi64(b, _mm512_mullo_epi64(qb, B2));
-        // per lane, u16s [qa, ra, qb, rb] are already in memory (MSD) order
-        const __m512i y = _mm512_or_si512(_mm512_or_si512(qa, _mm512_slli_epi64(ra, 16)),
-                                          _mm512_or_si512(_mm512_slli_epi64(qb, 32), _mm512_slli_epi64(rb, 48)));
-        // level 3: every u16 pair into two digit bytes
-        const __m512i qy = _mm512_srl_epi16(_mm512_mulhi_epu16(y, M1), s1);
-        const __m512i ry = _mm512_sub_epi16(y, _mm512_mullo_epi16(qy, B1));
-        const __m512i digits = _mm512_or_si512(qy, _mm512_slli_epi16(ry, 8));
-        _mm512_storeu_si512(out + i * 8, _mm512_permutexvar_epi8(digits, table));
-    }
+namespace {
+// Keep the digit cascade in registers when its producer already has eight
+// residues. The word-chunk codec shares these constants across its groups.
+using WordEmitter=leaf_detail::Emitter;
+}
+void emit_words(uint8_t *out,const uint64_t *words,size_t count,const DigitPlan &p) noexcept {
+    require(!(count&7),SBN3_FATAL_ARGUMENT,"radix emit word count");
+    const WordEmitter emit(p);
+    for(size_t i=0;i<count;i+=8)_mm512_storeu_si512(out+i*8,emit(_mm512_loadu_si512(words+i)));
 }
 void emit_word_chunks(uint8_t *out,const uint64_t *words,unsigned count,const DigitPlan &p) noexcept {
     require(count<=8,SBN3_FATAL_ARGUMENT,"radix chunk count");
     const auto wb=word_bases[p.base];
     const unsigned groups=(wb.digits+7)/8,prefix=groups*8-wb.digits;
+    if(count*groups<=8){
+        // A short final batch otherwise decodes one mostly empty vector per
+        // group. Pack its scalar residues into one full digit-cascade call.
+        alignas(64) uint64_t chunks[8]{};
+        alignas(64) uint8_t bytes[64];
+        for(unsigned lane=0;lane<count;++lane){uint64_t value=words[lane];
+            for(unsigned g=groups;g-- >0;)
+                chunks[lane*groups+g]=g?split_radix_word(value,p.b8,wb.reciprocal8):value;
+        }
+        emit_words(bytes,chunks,8,p);
+        for(unsigned lane=0;lane<count;++lane)
+            memcpy(out+size_t(lane)*wb.digits,bytes+8*lane*groups+prefix,wb.digits);
+        return;
+    }
     const __m512i zero=_mm512_setzero_si512(),M=_mm512_set1_epi64((long long)wb.reciprocal8),
                   B=_mm512_set1_epi64((long long)p.b8),one=_mm512_set1_epi64(1);
     __m512i q=_mm512_maskz_loadu_epi64(__mmask8((1u<<count)-1),words);
-    alignas(64) uint64_t remainders[8];
+    const WordEmitter emit(p);
     alignas(64) uint8_t digits[8][64];
     for(unsigned j=groups;j-->0;){
         __m512i r=q;
@@ -119,7 +130,7 @@ void emit_word_chunks(uint8_t *out,const uint64_t *words,unsigned count,const Di
             q=_mm512_mask_add_epi64(quotient,correction,quotient,one);
             r=_mm512_mask_sub_epi64(r,correction,r,B);
         }
-        _mm512_store_si512(remainders,r);emit_words(digits[j],remainders,8,p);
+        _mm512_store_si512(digits[j],emit(r));
     }
     for(unsigned lane=0;lane<count;++lane){
         auto *dst=out+size_t(lane)*wb.digits;
@@ -130,9 +141,30 @@ void emit_word_chunks(uint8_t *out,const uint64_t *words,unsigned count,const Di
         for(unsigned j=1;j<groups;++j){memcpy(dst,digits[j]+8*lane,8);dst+=8;}
     }
 }
+unsigned format_limb(uint8_t *out,uint64_t value,const DigitPlan &p) noexcept {
+    if(p.base==10&&(p.identity||p.decimal_ascii))return decimal_detail::format_limb(out,value,p.decimal_ascii);
+    const auto &r=leaf_detail::limb_radices[p.base];
+    const auto zero=_mm512_setzero_si512(),x=_mm512_set1_epi64((long long)value);
+    const auto d=_mm512_load_si512(r.divisor),m=_mm512_load_si512(r.reciprocal);
+    auto lo=_mm512_madd52hi_epu64(zero,x,m);
+    const auto upper=_mm512_srli_epi64(x,52);
+    lo=_mm512_madd52lo_epu64(lo,upper,m);
+    const auto hi=_mm512_madd52hi_epu64(zero,upper,m);
+    auto q=_mm512_add_epi64(_mm512_srli_epi64(lo,12),_mm512_slli_epi64(hi,40));
+    const auto rem=_mm512_sub_epi64(x,_mm512_mullo_epi64(q,d));
+    const auto correct=__mmask8(r.active)&_mm512_cmp_epu64_mask(rem,d,_MM_CMPINT_NLT);
+    q=_mm512_mask_add_epi64(q,correct,q,_mm512_set1_epi64(1));q=_mm512_mask_mov_epi64(q,1,x);
+    const auto next=_mm512_maskz_permutexvar_epi64(0x7f,_mm512_setr_epi64(1,2,3,4,5,6,7,0),q);
+    const auto residues=_mm512_sub_epi64(q,_mm512_mullo_epi64(next,_mm512_set1_epi64((long long)p.b8)));
+    WordEmitter emit(p);const auto bytes=emit(_mm512_permutexvar_epi64(_mm512_setr_epi64(7,6,5,4,3,2,1,0),residues));
+    _mm512_storeu_si512(out,bytes);
+    const uint64_t nonzero=_mm512_cmpneq_epi8_mask(bytes,_mm512_set1_epi8(char(p.encode[0])));
+    return nonzero?unsigned(__builtin_ctzll(nonzero)):64;
+}
 bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const DigitPlan &p) noexcept {
     require(!(count & 7), SBN3_FATAL_ARGUMENT, "radix parse word count");
     const bool identity = p.identity;
+    const bit_detail::Decode decode(identity?nullptr:p.decode);
     const __m512i top = _mm512_set1_epi8(char(p.base - 1));
     const __m512i C1 = _mm512_set1_epi16(short(0x0100 | p.base));       // [b, 1] per byte pair
     const __m512i C2 = _mm512_set1_epi32(int(0x00010000u | uint32_t(p.b2))); // [b^2, 1] per u16 pair
@@ -140,14 +172,7 @@ bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const Dig
     uint64_t bad = 0;
     for (size_t i = 0; i < count; i += 8) {
         __m512i d = _mm512_loadu_si512(digits + i * 8);
-        if (!identity) {
-            // Alphabet bytes -> values through the 256-entry table (rare path: scalar).
-            alignas(64) uint8_t raw[64], value[64];
-            _mm512_store_si512(raw, d);
-            for (unsigned j = 0; j < 64; ++j)
-                value[j] = p.decode[raw[j]];
-            d = _mm512_load_si512(value);
-        }
+        d=decode(d);
         bad |= uint64_t(_mm512_cmpgt_epu8_mask(d, top));
         const __m512i v16 = _mm512_maddubs_epi16(d, C1); // two digits per u16
         const __m512i v32 = _mm512_madd_epi16(v16, C2);  // four digits per u32
@@ -156,6 +181,122 @@ bool parse_words(uint64_t *words, const uint8_t *digits, size_t count, const Dig
         _mm512_storeu_si512(words + i, _mm512_add_epi64(low, high));
     }
     return !bad;
+}
+namespace {
+// Constant bit geometry for eight u64 outputs. No scalar division by 52,
+// temporary digit array or data-dependent carry is needed for the packing.
+template<unsigned Block,unsigned Digits> __m512i pack_integer(__m512i lo,__m512i hi) noexcept {
+    static constexpr auto map=[] {leaf_detail::IntegerPackMap m;
+        for(unsigned lane=0;lane<8;++lane){const unsigned bit=64*(8*Block+lane),index=bit/52,shift=bit%52;
+            m.i[lane]=index;m.j[lane]=index+1;m.k[lane]=index+2;
+            m.right[lane]=shift;m.left[lane]=52-shift;m.extra[lane]=104-shift;
+            if(index<Digits)m.m0|=1u<<lane;
+            if(index+1<Digits)m.m1|=1u<<lane;
+            if(index+2<Digits&&shift>40)m.m2|=1u<<lane;
+        }return m;}();
+    const auto a=_mm512_maskz_permutex2var_epi64(map.m0,lo,_mm512_loadu_si512(map.i.data()),hi);
+    const auto b=_mm512_maskz_permutex2var_epi64(map.m1,lo,_mm512_loadu_si512(map.j.data()),hi);
+    const auto c=_mm512_maskz_permutex2var_epi64(map.m2,lo,_mm512_loadu_si512(map.k.data()),hi);
+    return _mm512_ternarylogic_epi64(_mm512_srlv_epi64(a,_mm512_loadu_si512(map.right.data())),
+        _mm512_sllv_epi64(b,_mm512_loadu_si512(map.left.data())),
+        _mm512_sllv_epi64(c,_mm512_loadu_si512(map.extra.data())),0xfe);
+}
+template<unsigned N> void assemble_integer(uint64_t *out,size_t stride,const uint64_t *words,unsigned groups,
+                                           const leaf_detail::ParseRadix &table) noexcept {
+    const auto zero=_mm512_setzero_si512(),mask=_mm512_set1_epi64((uint64_t(1)<<52)-1);
+    const auto previous=_mm512_setr_epi64(0,0,1,2,3,4,5,6);
+    __m512i low[N][4],high[N][4],lo[N],hi[N];
+    for(unsigned k=0;k<N;++k)for(unsigned part=0;part<4;++part)low[k][part]=high[k][part]=zero;
+    low[0][0]=_mm512_maskz_set1_epi64(1,(long long)words[15]);
+    auto term=[&]<unsigned Part>(unsigned j){
+        const auto value=_mm512_set1_epi64((long long)words[15-j]);
+        for(unsigned k=0;k<N;++k){const auto coefficient=_mm512_load_si512(table.power[j]+8*k);
+            low[k][Part]=_mm512_madd52lo_epu64(low[k][Part],value,coefficient);
+            high[k][Part]=_mm512_madd52hi_epu64(high[k][Part],value,coefficient);}
+    };
+    // Independent accumulators hide IFMA latency; the decomposition is by
+    // instruction scheduling, not a length-dependent arithmetic recipe.
+    unsigned j=1;
+    for(;j+3<groups;j+=4){term.template operator()<0>(j);term.template operator()<1>(j+1);
+        term.template operator()<2>(j+2);term.template operator()<3>(j+3);}
+    if(j<groups)term.template operator()<0>(j++);
+    if(j<groups)term.template operator()<1>(j++);
+    if(j<groups)term.template operator()<2>(j);
+    for(unsigned k=0;k<N;++k){
+        lo[k]=_mm512_add_epi64(_mm512_add_epi64(low[k][0],low[k][1]),_mm512_add_epi64(low[k][2],low[k][3]));
+        hi[k]=_mm512_add_epi64(_mm512_add_epi64(high[k][0],high[k][1]),_mm512_add_epi64(high[k][2],high[k][3]));}
+    uint64_t overflow=0;
+    if constexpr(N==1)if(stride>6)overflow=uint64_t(_mm256_extract_epi64(_mm512_extracti64x4_epi64(hi[0],1),3));
+    __m512i value[N],carry[N];
+    for(unsigned k=0;k<N;++k){auto shifted=_mm512_maskz_permutexvar_epi64(0xfe,previous,hi[k]);
+        if(k)shifted=_mm512_mask_permutexvar_epi64(shifted,1,_mm512_set1_epi64(7),hi[k-1]);
+        value[k]=_mm512_add_epi64(lo[k],shifted);carry[k]=_mm512_srli_epi64(value[k],52);
+        value[k]=_mm512_and_si512(value[k],mask);}
+    while(_mm512_test_epi64_mask(carry[0],carry[0])||(N==2&&_mm512_test_epi64_mask(carry[N-1],carry[N-1]))){
+        if constexpr(N==1)if(stride>6)overflow+=uint64_t(_mm256_extract_epi64(_mm512_extracti64x4_epi64(carry[0],1),3));
+        for(unsigned k=N;k-->0;){auto shifted=_mm512_maskz_permutexvar_epi64(0xfe,previous,carry[k]);
+            if(k)shifted=_mm512_mask_permutexvar_epi64(shifted,1,_mm512_set1_epi64(7),carry[k-1]);
+            value[k]=_mm512_add_epi64(value[k],shifted);carry[k]=_mm512_srli_epi64(value[k],52);
+            value[k]=_mm512_and_si512(value[k],mask);}
+    }
+    const auto upper=N==2?value[N-1]:_mm512_maskz_set1_epi64(1,(long long)overflow);
+    constexpr unsigned digits=N==2?16:9;
+    const unsigned first=unsigned(std::min<size_t>(8,stride));
+    _mm512_mask_storeu_epi64(out,__mmask8((1u<<first)-1),pack_integer<0,digits>(value[0],upper));
+    if(stride>8)_mm512_mask_storeu_epi64(out+8,__mmask8((1u<<(stride-8))-1),pack_integer<1,digits>(value[0],upper));
+}
+}
+namespace {
+template<bool Decimal> [[gnu::noinline]] bool parse_integer_blocks_impl(uint64_t *out,size_t stride,const uint8_t *digits,size_t count,
+                          unsigned block_digits,const DigitPlan &p) noexcept {
+    const bit_detail::Decode decode(Decimal||p.identity?nullptr:p.decode);
+    const auto offset=_mm512_set1_epi8(p.decimal_ascii?'0':0);
+    const auto top=_mm512_set1_epi8(Decimal?9:char(p.base-1));
+    const auto C1=_mm512_set1_epi16(short(0x0100|(Decimal?10:p.base)));
+    const auto C2=_mm512_set1_epi32(int(0x00010000u|(Decimal?100:uint32_t(p.b2))));
+    const auto B4=_mm512_set1_epi64(Decimal?10000:(long long)p.b4);
+    const auto indices=_mm512_setr_epi64(0x0706050403020100LL,0x0f0e0d0c0b0a0908LL,
+        0x1716151413121110LL,0x1f1e1d1c1b1a1918LL,0x2726252423222120LL,0x2f2e2d2c2b2a2928LL,
+        0x3736353433323130LL,0x3f3e3d3c3b3a3938LL);
+    uint64_t bad=0;size_t length=((count-1)&(block_digits-1))+1;
+    while(count){
+        alignas(64) uint64_t words[16];
+        size_t first=(length-1)%64+1,at=0,index=length>64?0:8;
+        while(at<length){
+            const auto active=__mmask64(~uint64_t(0)>>(64-first));
+            auto d=decode(_mm512_maskz_loadu_epi8(active,digits+at));
+            if constexpr(Decimal)d=_mm512_sub_epi8(d,offset);
+            bad|=uint64_t(_mm512_cmpgt_epu8_mask(d,top)&active);
+            if(first<64){const unsigned missing=64-unsigned(first);
+                d=_mm512_maskz_permutexvar_epi8(__mmask64(~uint64_t(0)<<missing),
+                    _mm512_sub_epi8(indices,_mm512_set1_epi8(char(missing))),d);}
+            const auto pairs=_mm512_maddubs_epi16(d,C1),quads=_mm512_madd_epi16(pairs,C2);
+            _mm512_store_si512(words+index,_mm512_add_epi64(_mm512_mul_epu32(quads,B4),_mm512_srli_epi64(quads,32)));
+            at+=first;index+=8;first=64;
+        }
+        const unsigned groups=unsigned((length+7)/8);
+        if(length<=word_bases[p.base].digits){
+            uint64_t value=words[16-groups];
+            for(unsigned j=17-groups;j<16;++j)value=value*p.b8+words[j];
+            out[0]=value;for(size_t j=1;j<stride;++j)out[j]=0;
+        }else if(groups<=leaf_detail::parse_radices[p.base].one_vector_words)assemble_integer<1>(out,stride,words,groups,leaf_detail::parse_radices[p.base]);
+        else assemble_integer<2>(out,stride,words,groups,leaf_detail::parse_radices[p.base]);
+        digits+=length;count-=length;out+=stride;length=block_digits;
+    }
+    return !bad;
+}
+}
+bool parse_integer_blocks(uint64_t *out,size_t stride,const uint8_t *digits,size_t count,
+                          unsigned block_digits,const DigitPlan &p) noexcept {
+    require(count&&count<=512&&stride<=16&&(block_digits==64||block_digits==128),SBN3_FATAL_ARGUMENT,"integer block shape");
+    if(p.base==10&&(p.identity||p.decimal_ascii)){
+        if(count<=38)return decimal_detail::parse_small(out,stride,digits,unsigned(count),p.decimal_ascii);
+        return parse_integer_blocks_impl<true>(out,stride,digits,count,block_digits,p);
+    }
+    return parse_integer_blocks_impl<false>(out,stride,digits,count,block_digits,p);
+}
+bool parse_integer_fragments(uint64_t *out,size_t stride,const uint8_t *digits,size_t count,const DigitPlan &p) noexcept {
+    return parse_integer_blocks(out,stride,digits,count,64,p);
 }
 void extract_words(uint64_t *words, const uint64_t *const fraction[8], unsigned limbs, unsigned u52_digits,
                    unsigned rounds, const DigitPlan &p) noexcept {

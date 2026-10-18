@@ -181,27 +181,18 @@ inline Binding &get(sbn3_divrem_binding *p) noexcept {
 }
 inline void idle(const Binding &b) noexcept {
     if constexpr(SBN3_CHECK_SMALL)
-        require(!b.team->busy&&pthread_equal(b.team->creator,pthread_self()),SBN3_FATAL_TEAM,"prepared division owner");
+        require(!b.team||(!b.team->busy&&pthread_equal(b.team->creator,pthread_self())),SBN3_FATAL_TEAM,"prepared division owner");
 }
 inline void span(const Binding &b,const void *data,size_t bytes) noexcept {
     valid_span(data,bytes,"prepared division span");
     require(!(uintptr_t(data)&7)&&!overlaps(data,bytes,&b,b.bytes),SBN3_FATAL_ARGUMENT,"prepared division alias");
-    for(unsigned j=0;j<b.team->width;++j){
+    for(unsigned j=0;b.team&&j<b.team->width;++j){
         const auto &l=j?b.team->stacks[j]:b.team->storage;
         require(!overlaps(data,bytes,l.data,l.bytes),SBN3_FATAL_ARGUMENT,"prepared division team alias");
     }
 }
-[[gnu::always_inline]] inline void bind_plan(const Plan &p,sbn3_arena *arena,size_t offset,sbn3_team *team,
-                                             sbn3_divrem_binding **out) noexcept {
-    require(arena&&team&&out&&p.marker==magic&&team->arena==arena,SBN3_FATAL_TEAM,"prepared division bind");
-    auto *data=arena->base+offset;
-    require(!(uintptr_t(data)&127),SBN3_FATAL_WORKSPACE,"prepared division range");
-    uint64_t token=0;
-    if constexpr(SBN3_CHECK_SMALL){
-        require(team->width&&!team->busy&&pthread_equal(team->creator,pthread_self()),SBN3_FATAL_TEAM,"prepared division owner");
-        require(arena->unleased(offset,p.bytes),SBN3_FATAL_WORKSPACE,"prepared division exclusive range");
-        token=arena->acquire(offset,p.bytes).token;
-    }
+[[gnu::always_inline]] inline void construct(const Plan &p,unsigned char *data,sbn3_team *team,
+                                            uint64_t token,sbn3_divrem_binding **out) noexcept {
     Binding *b;
     if(p.algorithm==SBN3_DIVREM_BARRETT){
         auto *v=::new(data)LocalBinding;
@@ -216,6 +207,28 @@ inline void span(const Binding &b,const void *data,size_t bytes) noexcept {
     initialize(*b,p.nn,p.dn,p.bytes,p.algorithm,p.timing?timed:0,team,token);
     if(p.timing)::new(data+record_bytes(p.algorithm))Timing{};
     *out=reinterpret_cast<sbn3_divrem_binding *>(b);
+}
+// Raw resident lowering for C++ prepared values: caller grants the exclusive
+// lifetime, as with Frame::external. Checked builds still audit value spans.
+inline sbn3_divrem_binding *bind_raw(const sbn3_divrem_plan &opaque,void *data,size_t bytes) noexcept {
+    Plan p;std::memcpy(&p,opaque.opaque,offsetof(Plan,geometry));
+    require(p.marker==magic&&bytes>=p.bytes&&!(uintptr_t(data)&127),SBN3_FATAL_WORKSPACE,"raw division range");
+    if(p.algorithm==SBN3_DIVREM_BARRETT)std::memcpy(&p.geometry.local,
+        reinterpret_cast<const char *>(opaque.opaque)+offsetof(Plan,geometry),sizeof p.geometry.local);
+    sbn3_divrem_binding *out;construct(p,static_cast<unsigned char *>(data),nullptr,0,&out);return out;
+}
+[[gnu::always_inline]] inline void bind_plan(const Plan &p,sbn3_arena *arena,size_t offset,sbn3_team *team,
+                                             sbn3_divrem_binding **out) noexcept {
+    require(arena&&team&&out&&p.marker==magic&&team->arena==arena,SBN3_FATAL_TEAM,"prepared division bind");
+    auto *data=arena->base+offset;
+    require(!(uintptr_t(data)&127),SBN3_FATAL_WORKSPACE,"prepared division range");
+    uint64_t token=0;
+    if constexpr(SBN3_CHECK_SMALL){
+        require(team->width&&!team->busy&&pthread_equal(team->creator,pthread_self()),SBN3_FATAL_TEAM,"prepared division owner");
+        require(arena->unleased(offset,p.bytes),SBN3_FATAL_WORKSPACE,"prepared division exclusive range");
+        token=arena->acquire(offset,p.bytes).token;
+    }
+    construct(p,data,team,token,out);
 }
 [[gnu::always_inline]] inline void bind(const sbn3_divrem_plan *opaque,sbn3_arena *arena,size_t offset,sbn3_team *team,
                                        sbn3_divrem_binding **out) noexcept {
@@ -328,12 +341,12 @@ inline sbn3_divrem_metrics metrics(Binding &b) noexcept {
 inline void unbind(Binding &b) noexcept {
     idle(b);const unsigned algorithm=b.algorithm;
     sbn3_arena *arena=nullptr;sbn3_lease lease{};
-    if constexpr(SBN3_CHECK_SMALL){arena=static_cast<sbn3_arena *>(b.team->arena);lease={&b,b.bytes,b.diagnostic_lease};}
+    if constexpr(SBN3_CHECK_SMALL)if(b.team){arena=static_cast<sbn3_arena *>(b.team->arena);lease={&b,b.bytes,b.diagnostic_lease};}
     b.run=nullptr;
     if(algorithm==SBN3_DIVREM_BARRETT)local(b).~LocalBinding();
     else if(algorithm==SBN3_DIVREM_DC)native(b).~NativeBinding();
     else word(b).~WordBinding();
-    if constexpr(SBN3_CHECK_SMALL)arena->release(lease);
+    if constexpr(SBN3_CHECK_SMALL){if(arena)arena->release(lease);}
     else {(void)arena;(void)lease;}
 }
 } // namespace sbn::v3::divrem_prepared

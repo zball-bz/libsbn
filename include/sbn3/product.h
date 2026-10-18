@@ -26,7 +26,7 @@ typedef struct sbn3_product_request {
     /* Optional read-only cached A for term 0/1. SQR uses only a_limbs/A0;
      * MUL/TMP use term 0; MAC2 uses both terms. Descriptors are copied. */
     const sbn3_spectrum_desc *cached_a[2];
-    /* MUL/SQR only: nonzero means modulo 2^(64*cyclic_limbs)-1.
+    /* MUL/SQR/MAC2: nonzero means modulo 2^(64*cyclic_limbs)-1.
      * Each input has at most cyclic_limbs limbs; the all-one input is legal.
      * Output is exactly cyclic_limbs limbs, canonical in [0, modulus).
      * Query supports native transform periods, never silently pads the ring

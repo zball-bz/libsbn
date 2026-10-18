@@ -15,13 +15,14 @@ static void apply(void *ptr, sbn3_team_scope *scope) {
     Frame f(*t.fixture->arena, t.work);
     product_program_pair(*t.program, f, scope, t.common, t.x, t.y, t.out0, t.out1, t.common_on_right);
 }
-static void one(size_t an, size_t bn, unsigned workers, unsigned algorithm, unsigned np = 0, unsigned batch = 0) {
+static void one(size_t an, size_t bn, unsigned workers, unsigned algorithm, unsigned np = 0, unsigned batch = 0,int T=0,unsigned lgC=0,unsigned lgM=0) {
     Fixture f(workers, false);
     sbn3_mul_options options{};
     options.workers = workers;
     options.algorithm = algorithm;
     options.prime_count = np;
     options.prime_batch = batch;
+    options.trunk_bits=T;options.column_log2=lgC;options.row_log2=lgM;
     ProductProgramPlan plan{};
     assert(product_program_query(an, bn, options, plan) == SBN3_SUPPORTED);
     assert(plan.pair_workspace_bytes);
@@ -66,8 +67,9 @@ static void one(size_t an, size_t bn, unsigned workers, unsigned algorithm, unsi
     auto *out0 = static_cast<uint64_t *>(f.allocate((an + bn + 8) * 8, 64).data);
     auto *out1 = static_cast<uint64_t *>(f.allocate((an + bn + 8) * 8, 64).data);
     for (unsigned right = 0; right < 2; ++right) {
-        const size_t cn = (right ? bn : an) - 7, xn = (right ? an : bn) - 9, yn = xn - 3;
+        const size_t cn = (right ? bn : an) - 7, xn = (right ? an : bn) - 9;
         for (unsigned repeat = 0; repeat < 2; ++repeat) {
+            const size_t yn = repeat ? xn * 5 / 8 : xn - 3;
             auto *common = out0;
             auto *x = out0 + up(cn, 8);
             auto *y = out1;
@@ -81,8 +83,14 @@ static void one(size_t an, size_t bn, unsigned workers, unsigned algorithm, unsi
             allocation_watch_start();
             sbn3_team_run(f.team, apply, &task);
             assert(!allocation_watch_stop());
-            verify_product(cv.data(), cn, xv.data(), xn, out0);
-            verify_product(cv.data(), cn, yv.data(), yn, out1);
+            const bool ok0=ref_product_equal(cv.data(),cn,xv.data(),xn,out0,cn+xn);
+            const bool ok1=ref_product_equal(cv.data(),cn,yv.data(),yn,out1,cn+yn);
+            if(!ok0||!ok1)fprintf(stderr,"pair mismatch an%zu bn%zu W%u alg%u NP%u repeat%u right%u first%d second%d live%zu/%zu/%zu T%u C%zu M%zu L%zu full%u\n",
+                an,bn,workers,algorithm,np,repeat,right,ok0,ok1,cn,xn,yn,plan.info.trunk_bits,plan.info.C,plan.info.M2,plan.info.lbv,plan.info.full);
+            assert(ok0&&ok1);
+            const auto&selected=repeat?pooled:program;
+            if(selected.backend->id>=4&&selected.backend->id<=10)
+                for(size_t j=cn+yn;j<selected.an+selected.bn;++j)assert(out1[j]==0);
             assert(!memcmp(saved.data(), tables.data, tables.bytes));
             assert(!memcmp(saved_roots.data(), roots.data, roots.bytes));
             for (unsigned j = 0; j < 8; ++j)
@@ -94,7 +102,35 @@ static void one(size_t an, size_t bn, unsigned workers, unsigned algorithm, unsi
     printf("engine pool T%u/T%u, table=%zu local=%zu bytes PASS\n", plan.info.trunk_bits, second.info.trunk_bits,
            product_program_tables(plan).bytes, product_program_local_bytes(second));
 }
+static void program_recipes(){
+    for(bool cyclic:{false,true})for(unsigned pattern:{0u,1u}){
+        const size_t an=cyclic?32768:3079,bn=cyclic?991:an;
+        Fixture f(4,false);sbn3_mul_options o{};o.workers=4;o.algorithm=SBN3_MUL_BAILEY;o.prime_count=6;o.trunk_bits=128;
+        o.column_log2=5;o.row_log2=6;
+        sbn3_product_request r{};r.kind=cyclic?SBN3_PRODUCT_MUL:SBN3_PRODUCT_SQR;r.a_limbs=an;r.b_limbs=cyclic?bn:0;r.cyclic_limbs=cyclic?an:0;
+        ProductProgramPlan plan;sbn3_product_info info{};
+        assert(sbn3_product_query(&r,&o,&plan.plan,&info)==SBN3_SUPPORTED);plan.info=info.mul;
+        assert(product_program_describe(an,bn,plan)==SBN3_SUPPORTED);
+        auto tables=f.allocate(plan.prepared_bytes,128),work=f.allocate(plan.info.workspace_bytes,plan.info.workspace_alignment);
+        auto out=f.allocate(sbn3_mul_output_capacity(&plan.info)*8,64);
+        std::vector<uint64_t>a(an),b(bn),expected(sbn3_mul_output_capacity(&plan.info));
+        for(auto&v:a)v=pattern?UINT64_MAX:random_word();for(auto&v:b)v=random_word();if(!cyclic)b=a;
+        ref_int x,y,h;ref_inits(x,y,h,nullptr);ref_import(x,an,-1,8,0,0,a.data());ref_import(y,bn,-1,8,0,0,b.data());ref_mul(x,x,y);
+        if(cyclic){ref_set_ui(h,1);ref_mul_2exp(h,h,64*an);ref_sub_ui(h,h,1);ref_mod(x,x,h);}
+        size_t used=0;ref_export(expected.data(),&used,-1,8,0,0,x);ref_clears(x,y,h,nullptr);
+        ProductProgram p;{auto prepared=Frame(*f.arena,tables);p=product_program_prepare(plan,prepared);}
+        struct Call {const ProductProgram*p;Fixture*f;sbn3_lease work;sbn3_const_limbs a,b;sbn3_limbs out;} call{&p,&f,work,{a.data(),an},{b.data(),bn},{static_cast<uint64_t*>(out.data),expected.size()}};
+        allocation_watch_start();sbn3_team_run(f.team,[](void*ptr,sbn3_team_scope*scope){auto&c=*static_cast<Call*>(ptr);Frame frame(*c.f->arena,c.work);
+            product_program_execute(*c.p,frame,scope,c.a,c.b,c.out);},&call);assert(!allocation_watch_stop());
+        assert(!memcmp(expected.data(),out.data,info.mul.output_limbs*8));
+    }
+    puts("Frame-owned native SQR and CYC: independent exact value and canonical wrap PASS");
+}
 int main() {
+    setvbuf(stdout,nullptr,_IOLBF,0);
+    program_recipes();
+    one(4096,4096,4,SBN3_MUL_FLAT,6,0,128);
+    one(4096,4096,4,SBN3_MUL_BAILEY,6,0,128,4,5);
     {
         sbn3_mul_options o{};o.workers=16;o.algorithm=SBN3_MUL_BAILEY;o.prime_count=5;o.trunk_bits=104;
         ProductProgramPlan p{},q{},replayed{};

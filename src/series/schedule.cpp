@@ -58,6 +58,22 @@ static unsigned closure(sbn3_series_recipe recipe, unsigned n) {
     needs(recipe, n, l, r);
     return l | r;
 }
+bool choose_split(sbn3_series_range r,double fraction,const sbn3_series_oracle&q,
+                  const ScheduleRefinement&refinement,uint64_t&out) noexcept {
+    if(r.end<=r.begin||r.end-r.begin<2||!(fraction>0&&fraction<1))return false;
+    if(refinement.split_point){
+        const uint64_t m=refinement.split_point(refinement.context,r,fraction);
+        if(m<=r.begin||m>=r.end)return false;out=m;return true;
+    }
+    if(!q.work)return false;
+    bool valid=true;auto cost=[&](sbn3_series_range a){const double c=q.work(q.context,a);if(!(c>0)||!std::isfinite(c))valid=false;return c;};
+    const double target=cost(r)*fraction;uint64_t lo=r.begin+1,hi=r.end-1;
+    while(lo<hi){const uint64_t m=lo+(hi-lo)/2;if(cost({r.begin,m})<target)lo=m+1;else hi=m;}
+    if(lo>r.begin+1&&std::abs(cost({r.begin,lo-1})-target)<std::abs(cost({r.begin,lo})-target))--lo;
+    const uint64_t margin=(r.end-r.begin)/4;
+    if(!valid)return false;
+    out=std::clamp(lo,r.begin+std::max(uint64_t(1),margin),r.end-std::max(uint64_t(1),margin));return true;
+}
 struct Summary {
     size_t index = 0, workspace = 0;
     sbn3_series_shape shape{};
@@ -149,27 +165,9 @@ struct Builder {
         return c;
     }
     uint64_t split(sbn3_series_range r, double fraction) {
-        if (refinement.split_point) {
-            const uint64_t m = refinement.split_point(refinement.context, r, fraction);
-            if (m <= r.begin || m >= r.end)
-                status = SBN3_UNSUPPORTED;
-            return m;
-        }
-        const double target = cost(r) * fraction;
-        uint64_t lo = r.begin + 1, hi = r.end - 1;
-        while (lo < hi) {
-            const uint64_t m = lo + (hi - lo) / 2;
-            if (cost({r.begin, m}) < target)
-                lo = m + 1;
-            else
-                hi = m;
-        }
-        if (lo > r.begin + 1 &&
-            std::abs(cost({r.begin, lo - 1}) - target) < std::abs(cost({r.begin, lo}) - target))
-            --lo;
-        // Bound recursion depth even for a badly conditioned performance proxy.
-        const uint64_t margin = (r.end - r.begin) / 4;
-        return std::clamp(lo, r.begin + std::max(uint64_t(1), margin), r.end - std::max(uint64_t(1), margin));
+        uint64_t result=r.begin+1;
+        if(!choose_split(r,fraction,oracle,refinement,result))status=SBN3_UNSUPPORTED;
+        return result;
     }
     size_t reserve(unsigned d) {
         depth = std::max(depth, d);
@@ -613,6 +611,15 @@ sbn3_query_result sbn::v3::series::query_schedule(const sbn3_series_spec &spec,
     }
     return have ? (fit ? SBN3_SUPPORTED : SBN3_QUERY_CAPACITY) : rejection;
 }
+sbn3_query_result sbn::v3::series::query_schedule_prefix(const sbn3_series_spec &spec,
+    const sbn3_series_options &options, const sbn3_series_oracle &oracle, unsigned prefix,
+    sbn3_series_info &result, const ScheduleRefinement &refinement) {
+    if (!valid(&spec, &options, &oracle) || prefix > 4) return SBN3_UNSUPPORTED;
+    const auto rc = candidate(spec, options, oracle, prefix, result, nullptr, 0, refinement);
+    if (rc != SBN3_SUPPORTED) return rc;
+    return options.workspace_budget && result.workspace_bytes > options.workspace_budget
+               ? SBN3_QUERY_CAPACITY : SBN3_SUPPORTED;
+}
 extern "C" void sbn3_series_plan_init(const sbn3_series_spec *s, const sbn3_series_options *o,
                                       const sbn3_series_oracle *q, void *storage, size_t bytes,
                                       sbn3_series_plan **out) {
@@ -709,11 +716,12 @@ void sbn::v3::series::prepare_stages(const sbn3_series_plan *plan, sbn3_team *te
     };
     sbn3_team_run(team, action, &visit);
 }
-extern "C" void sbn3_series_execute(const sbn3_series_plan *plan, const sbn3_series_executor *executor,
-                                    sbn3_team *team, sbn3_series_values *out, void *scratch, size_t bytes) {
+static void execute_schedule_binding(const sbn3_series_plan *plan, const sbn3_series_executor *executor,
+                                    sbn3_team *team, sbn3_team_scope *scope,sbn3_series_values *out, void *scratch, size_t bytes) {
     const auto &p = get(plan);
+    if(scope)require_scope_leader(scope);
     require(executor && executor->leaf && executor->merge && out && team &&
-                sbn3_team_workers(team) == p.workers,
+                (scope?(scope->team==team&&scope->width==p.workers):sbn3_team_workers(team)==p.workers),
             SBN3_FATAL_ARGUMENT, "series run bindings");
     require(scratch && !(uintptr_t(scratch) & 63) && bytes >= p.info.workspace_bytes &&
                 !overlaps(plan, p.info.plan_bytes, scratch, bytes),
@@ -743,12 +751,21 @@ extern "C" void sbn3_series_execute(const sbn3_series_plan *plan, const sbn3_ser
                 work += root.lanes.limbs[j] * 8;
             }
         LaneRun run{p, *executor, 0, p.spec.range, p.spec.need, &lane_values, work};
-        sbn3_team_run(team, LaneRun::action, &run);
+        if(scope)LaneRun::action(&run,scope);else sbn3_team_run(team, LaneRun::action, &run);
         for (unsigned j = 0; j < 3; ++j)
             if (p.spec.need & (1u << j))
                 out->value[j] = lane_values.value[j];
     } else {
         Run run{p, *executor, 0, p.spec.range, p.spec.need, out, static_cast<unsigned char *>(scratch)};
-        sbn3_team_run(team, Run::action, &run);
+        if(scope)Run::action(&run,scope);else sbn3_team_run(team, Run::action, &run);
     }
+}
+extern "C" void sbn3_series_execute(const sbn3_series_plan *plan, const sbn3_series_executor *executor,
+                                    sbn3_team *team, sbn3_series_values *out, void *scratch, size_t bytes) {
+    execute_schedule_binding(plan,executor,team,nullptr,out,scratch,bytes);
+}
+void sbn::v3::series::execute_schedule_on_scope(const sbn3_series_plan *plan,const sbn3_series_executor *executor,
+    sbn3_team_scope *scope,sbn3_series_values *out,void *scratch,size_t bytes) {
+    require_scope_leader(scope);
+    execute_schedule_binding(plan,executor,static_cast<sbn3_team*>(scope->team),scope,out,scratch,bytes);
 }

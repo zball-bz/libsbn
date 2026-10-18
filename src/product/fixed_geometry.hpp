@@ -10,6 +10,7 @@ struct FixedNttGeometry {
     int T=0;
     size_t ring=0;
 };
+enum class FixedNttProduct { multiply, sum2, middle_matrix };
 inline sbn3_mul_options fixed_ntt_options(const FixedNttGeometry &g) noexcept {
     sbn3_mul_options o{};o.prime_count=g.np;o.algorithm=g.algorithm;
     o.workers=g.workers;o.trunk_bits=g.T;o.borrow_output=1;return o;
@@ -19,7 +20,8 @@ inline sbn3_mul_options fixed_ntt_options(const FixedNttGeometry &g) noexcept {
 // changing that order. No T/layout/column grid and no bindable trial plans.
 inline bool fixed_ntt_geometry(size_t a,size_t b,size_t minimum_ring,unsigned workers,
                                unsigned prime_count,FixedNttGeometry &out,size_t flat_span=size_t(1)<<19,
-                               size_t flat_trunks=0,bool repeated=false) {
+                               size_t flat_trunks=0,bool repeated=false,
+                               FixedNttProduct product=FixedNttProduct::multiply,size_t maximum_ring=SIZE_MAX) {
     if(!native_available())return false;
     const unsigned first=prime_count?prime_count:4,last=prime_count?prime_count:(workers==32||(workers>=16&&repeated)?10:8);
     bool found=false;double least=0;
@@ -27,6 +29,11 @@ inline bool fixed_ntt_geometry(size_t a,size_t b,size_t minimum_ring,unsigned wo
         const auto *backend=backend_lookup(np);if(!backend||!backend->geometry_query)continue;
         FixedNttGeometry c{np,std::max(a,b)<=(size_t(1)<<19)?SBN3_MUL_FLAT:SBN3_MUL_BAILEY,workers,0,0};
         sbn3_product_request r{};r.kind=SBN3_PRODUCT_MUL;r.a_limbs=a;r.b_limbs=b;
+        auto operands=[&](size_t left,size_t right){
+            r.a_limbs=left;r.b_limbs=right;
+            if(product!=FixedNttProduct::multiply){r.kind=SBN3_PRODUCT_MAC2;r.a1_limbs=left;r.b1_limbs=right;}
+        };
+        operands(a,b);
         sbn3_mul_info i{};
         if(backend->geometry_query(r,fixed_ntt_options(c),i)!=SBN3_SUPPORTED)continue;
         c.T=int(i.trunk_bits);
@@ -37,6 +44,13 @@ inline bool fixed_ntt_geometry(size_t a,size_t b,size_t minimum_ring,unsigned wo
             const int needed=int((need+factor-1)/factor);
             c.T=std::max(minimum,(needed+step-1)/step*step);
             c.ring=factor*size_t(c.T);r.cyclic_limbs=c.ring;
+            if(c.ring>maximum_ring)continue;
+            // Admit the actual dot-product support at this period. A MUL
+            // certificate omits the extra accumulation bit; checking MAC2
+            // only after selecting a basis can incorrectly reject every
+            // recursive use even though another basis is supported.
+            if(product!=FixedNttProduct::multiply)
+                operands(c.ring,product==FixedNttProduct::middle_matrix?c.ring/2:b);
             // Integer reconstruction guards live outside the transform and
             // do not change its layout class. Serial window groups bound
             // actual coefficients per prime, independently of codec width.

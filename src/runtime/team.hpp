@@ -25,6 +25,7 @@ public:
     cpu_set_t original_affinity{};
     bool pinned=false,busy=false;
     uint64_t epoch=0;
+    uint64_t idle_spin_ns=1000000; // atomic access: idle workers may read during owner policy changes
     Worker workers[32]{};
     sbn3_lease stacks[32]{},guards[32]{};
 
@@ -34,8 +35,22 @@ public:
     void stop_workers() noexcept;
     void release_stacks() noexcept;
 };
+// The owning controller may shorten idle/join polling around an IO operation.
+// Arithmetic region barriers keep their existing wait policy. Restore the
+// previous setting on every return; no allocation or additional worker.
+class TeamWaitScope {
+    Team&team_;uint64_t old_;
+public:
+    TeamWaitScope(Team&t,uint64_t ns) noexcept:team_(t),old_(__atomic_exchange_n(&t.idle_spin_ns,ns,__ATOMIC_ACQ_REL)){}
+    ~TeamWaitScope(){__atomic_store_n(&team_.idle_spin_ns,old_,__ATOMIC_RELEASE);}
+    TeamWaitScope(const TeamWaitScope&)=delete;
+    TeamWaitScope&operator=(const TeamWaitScope&)=delete;
+};
 using KernelForFn=void (*)(void *,uint64_t,uint64_t,int,Frame *);
 void require_scope_leader(const sbn3_team_scope *);
+// Allocation-free W1 root for algorithms using caller-owned raw scratch.
+// No arena, page work, worker creation or persistent runtime object.
+void serial_team_run(sbn3_action_fn,void *);
 /* Private bridge for existing pass signatures; no allocator or TLS scratch. */
 void kernel_for(sbn3_team_scope *,uint64_t,uint64_t,uint64_t,sbn3_schedule,
                  KernelForFn,void *,Frame *const *frames);

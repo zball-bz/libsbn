@@ -18,6 +18,7 @@ void execute_flat(Binding &b,sbn3_team_scope *scope,const sbn3_product_inputs &i
     uint32_t expected=0;require(__atomic_compare_exchange_n(&b.active,&expected,1,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED),SBN3_FATAL_LIFETIME,"concurrent flat binding");
     for(auto &v:b.counts)v={};const uint64_t t0=tick_ns();memset(b.run.tail,0,b.plan.execution.tail_bytes);
     p::FlatCtx c{};c.pl=&g;c.primes=b.run.primes;c.constants=b.run.flat_constants;c.counts=counters?b.counts:nullptr;
+    c.output_work=b.plan.execution.flat_output_work;
 #ifdef CR_FLAT_PROFILE
     memset(b.flat_phase,0,sizeof b.flat_phase);c.phase=b.flat_phase;
 #endif
@@ -40,8 +41,8 @@ void execute_flat(Binding &b,sbn3_team_scope *scope,const sbn3_product_inputs &i
             p::flat_product_packed_a<false>(*static_cast<p::FlatCtx *>(arg),lo,hi,w,space);
         };
     }else if(program_cache){
-        require(r.kind==SBN3_PRODUCT_MUL && !r.cached_mask && !r.scaled,SBN3_FATAL_MATH,"private packed flat pair");
-        fn=p::flat_program_apply48;
+        require(r.kind==SBN3_PRODUCT_MUL && !r.cached_mask,SBN3_FATAL_MATH,"private packed flat pair");
+        fn=r.scaled?p::flat_program_apply48<true>:p::flat_program_apply48<false>;
     } else switch(r.kind){
         case SBN3_PRODUCT_MUL:fn=r.scaled?p::flat_product_fn<0,true>:p::flat_product_fn<0,false>;break;
         case SBN3_PRODUCT_SQR:fn=r.scaled?p::flat_product_fn<1,true>:p::flat_product_fn<1,false>;break;
@@ -58,11 +59,17 @@ void execute_flat(Binding &b,sbn3_team_scope *scope,const sbn3_product_inputs &i
     }else
 #endif
 #if CR_FLAT_PRIME_SPREAD
-    if(i.workers==16 && (PN==8 || PN==10) && g.M2>=16384){
+    if(p::flat_spread_active(g,i.workers)){
         struct Launch {KernelForFn fn;p::FlatCtx *context;unsigned width;} launch{fn,&c,i.workers};
         auto spread=[](void *arg,uint64_t lo,uint64_t hi,int worker,Frame *frame){auto &l=*static_cast<Launch *>(arg);
             for(auto rank=lo;rank<hi;++rank){const uint64_t a=rank*PN/l.width,z=(rank+1)*PN/l.width;if(a<z)l.fn(l.context,a,z,worker,frame);}};
-        kernel_for(scope,0,i.workers,1,SBN3_STATIC,spread,&launch,b.run.workers);
+        // Preserve the measured CPU spread, but only PN scratch frames need
+        // transform capacity. Idle ranks receive the remaining distinct
+        // frames; even their FrameMarks must not alias active workers.
+        Frame *frames[32];unsigned active=0,idle=PN;
+        for(unsigned rank=0;rank<i.workers;++rank)
+            frames[rank]=b.run.workers[rank*PN/i.workers<(rank+1)*PN/i.workers?active++:idle++];
+        kernel_for(scope,0,i.workers,1,SBN3_STATIC,spread,&launch,frames);
     }else
 #endif
     {kernel_for(scope,0,PN,1,SBN3_STATIC,fn,&c,b.run.workers);}

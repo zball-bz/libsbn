@@ -175,7 +175,14 @@
         "libsbn/tests/e2_swapmul_test.c"
       ],
       "license_review": "retain original notices; verify per file at import",
-      "fresh_gate_status": "not_run"
+      "fresh_gate_status": "not_run",
+      "uring_port": {
+        "status": "optional_provider_native_tsan_verified",
+        "destination": "src/runtime/linux/uring.cpp",
+        "source": "libsbn/src/base/pal_uring.c",
+        "source_sha256": "b6c8202c83f5063a53001656cd61dac000b0edcbbb4ff323efd4f00026eb406b",
+        "note": "Original project raw wrapper; donor notices retained; explicit owner replaces calloc handle. Joined batch and product gates pass; optional provider, no default performance promotion."
+      }
     },
     {
       "id": "ios_protocol_fi",
@@ -195,6 +202,128 @@
       ],
       "license_review": "retain original notices; verify per file at import",
       "fresh_gate_status": "not_run"
+    },
+    {
+      "id": "gcd_head_gmp",
+      "phase": "small_mid_gcd",
+      "status": "ported_with_original_notices",
+      "sources": [
+        "GNU MP mpn/generic/hgcd2.c",
+        "GNU MP mpn/generic/hgcd2-div.h"
+      ],
+      "reference_paths": [
+        "/home/dev/bigint/GIMP/mpn/generic/hgcd2.c",
+        "/home/dev/bigint/GIMP/mpn/generic/hgcd2-div.h"
+      ],
+      "source_sha256": {
+        "hgcd2.c": "334f9cf99e46f0c86e39ec611f440110bff59e994dbe3f1329a7e0cc4ccfe1cc",
+        "hgcd2-div.h": "bcbc3409e24b069a2544aaa3c4e3a87326d8849c9cd3b7d42ef944e2b62c032c"
+      },
+      "local_files": [
+        "src/kernels/x86v4ifma/gcd_head.hpp",
+        "src/kernels/x86v4ifma/gcd-head-notice.txt"
+      ],
+      "license_review": "GNU MP original LGPL-3.0-or-later / GPL-2.0-or-later dual notice retained; no upstream notice replaced",
+      "changes": "64-bit namespaced head reducer, exact hardware quotient with bitwise fallback; reused for one guarded two-word terminal batch and delayed u52 entry",
+      "fresh_gate_status": "2026-09-26 structural revision: native/ASan/no-GMP PASS; fresh random-balanced GMP targets PASS; strict smoothness limits remain open"
+    },
+    {
+      "id": "gcd_odd_gmp",
+      "phase": "small_mid_gcd",
+      "status": "adapted_with_original_notice",
+      "sources": [
+        "GNU MP mpn/generic/mode1o.c"
+      ],
+      "reference_paths": [
+        "/home/dev/bigint/GIMP/mpn/generic/mode1o.c"
+      ],
+      "source_sha256": {
+        "mode1o.c": "74e477537529cb79cfde00d4042a0ffb26701f4514e331c5c7436ed1ba5e670d"
+      },
+      "local_files": [
+        "src/kernels/x86v4ifma/gcd_odd_reduce.hpp"
+      ],
+      "license_review": "Original GNU MP LGPLv3+ / GPLv2+ notice retained",
+      "changes": "Scalar cancellation recurrence adapted; libsbn adds four independent chunks and length-aware recombination, reused by internal short-divisor exits",
+      "fresh_gate_status": "2026-09-26 structural revision: native/ASan/no-GMP PASS; used without added caller scratch"
+    },
+    {
+      "id": "gcd_hgcd_gmp",
+      "phase": "hgcd",
+      "status": "adapted_with_original_notice",
+      "sources": [
+        "GNU MP mpn/generic/hgcd.c",
+        "GNU MP mpn/generic/hgcd_step.c",
+        "GNU MP mpn/generic/hgcd_appr.c"
+      ],
+      "reference_paths": [
+        "/home/dev/bigint/GIMP/mpn/generic/hgcd.c",
+        "/home/dev/bigint/GIMP/mpn/generic/hgcd_step.c",
+        "/home/dev/bigint/GIMP/mpn/generic/hgcd_appr.c"
+      ],
+      "source_sha256": {
+        "hgcd.c": "2c03faa41b64dc805d5fd7286d57fc8340f6b3bbf65929658bfe13b8e144f0e7",
+        "hgcd_step.c": "b7824498df8156b8f2b0d946b6e1361043b8cb53bb903953d689a8adc473f52f",
+        "hgcd_appr.c": "e67d6979e07d664f2970e332e1eda65c8134bc174582c5c2badc0bef759d7e75"
+      },
+      "local_files": [
+        "src/gcd/hgcd.cpp",
+        "src/gcd/leaf.cpp"
+      ],
+      "license_review": "Original GNU MP LGPLv3+ / GPLv2+ notice retained",
+      "changes": "Limb stop/recursive control adapted to allocation-free views, row-selective cofactor matrices and native product episodes; no GMP runtime calls; matrix-only second-child control follows hgcd_appr.c (2011, 2012), with original notice retained",
+      "fresh_gate_status": "implementation in progress"
+    },
+    {
+      "id": "gcd_matrix_gmp",
+      "phase": "hgcd",
+      "status": "adapted_with_original_notice",
+      "sources": [
+        "GNU MP mpn/generic/matrix22_mul.c"
+      ],
+      "reference_paths": [
+        "/home/dev/bigint/GIMP/mpn/generic/matrix22_mul.c"
+      ],
+      "source_sha256": {
+        "matrix22_mul.c": "26992150fdf9fcda3ac1403594a2c26af038c2f921ff77423c739412ee506dcb"
+      },
+      "local_files": [
+        "src/gcd/matrix_strassen.cpp"
+      ],
+      "license_review": "GNU MP LGPLv3+ / GPLv2+ notice and Bodrato attribution retained",
+      "changes": "Seven-product schedule rewritten with normalized signed views and quoted native products",
+      "fresh_gate_status": "implementation in progress"
+    },
+    {
+      "id": "jacobi_word_gmp",
+      "phase": "jacobi",
+      "status": "adapted_with_original_notice",
+      "sources": [
+        "GNU MP mpn/generic/jacobi_2.c (methods 1 and 2)"
+      ],
+      "reference_paths": [
+        "/home/dev/bigint/GIMP/mpn/generic/jacobi_2.c"
+      ],
+      "source_sha256": {
+        "jacobi_2.c": "6146ccdfc8e5c1924275cb91d74bd75e25dd41f51da13235e7da392f7f32e097"
+      },
+      "local_files": [
+        "src/kernels/x86v4ifma/jacobi_word.hpp"
+      ],
+      "license_review": "GNU MP LGPLv3+ / GPLv2+ notice retained",
+      "changes": "Half-odd word representation and directional two-word binary reduction, bounded variable shifts and native odd-residue terminal; no GMP runtime calls",
+      "fresh_gate_status": "validation in progress"
+    },
+    {
+      "id": "xxhash_0_8_3",
+      "phase": "OOC",
+      "status": "imported_unmodified",
+      "sources": [
+        "https://github.com/Cyan4973/xxHash/tree/v0.8.3"
+      ],
+      "local": "third_party/xxhash",
+      "license_review": "BSD-2-Clause; upstream header and LICENSE unmodified, pinned SHA-256",
+      "usage": "XXH3-64 wrapper, private native AVX-512 TU; unchanged upstream accumulate/scramble/finalize over header48 plus payload, no streaming state or payload-sized copy; bit-compatible with scalar one-shot XXH3; XXH_NO_STDLIB, no dynamic allocation"
     }
   ]
 }

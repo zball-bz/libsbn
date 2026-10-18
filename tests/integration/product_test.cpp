@@ -18,8 +18,8 @@ static uint64_t hash_cache(const sbn3_spectrum *s,const sbn3_spectrum_desc &d){
     // Whole storage is initialized below by the fixture before prepare; skip the mutable header.
     for(size_t k=1024;k<d.storage_bytes;++k)h=(h^p[k])*1099511628211ULL;return h;
 }
-static void scenario(unsigned np,int T,unsigned kind,unsigned mask,unsigned frontier,size_t an=129,size_t bn=513,bool full=false,unsigned crt=0,unsigned rowlog=4,unsigned algorithm=0){
-    Fixture f(3);sbn3_mul_options opt{};opt.workers=3;opt.prime_count=np;opt.trunk_bits=T;opt.crt_mode=crt;opt.column_log2=6;opt.row_log2=rowlog;opt.borrow_output=1;opt.algorithm=algorithm;if(algorithm==SBN3_MUL_FLAT)opt.column_log2=opt.row_log2=0;
+static void scenario(unsigned np,int T,unsigned kind,unsigned mask,unsigned frontier,size_t an=129,size_t bn=513,bool full=false,unsigned crt=0,unsigned rowlog=4,unsigned algorithm=0,unsigned workers=3){
+    Fixture f(workers);sbn3_mul_options opt{};opt.workers=workers;opt.prime_count=np;opt.trunk_bits=T;opt.crt_mode=crt;opt.column_log2=6;opt.row_log2=rowlog;opt.borrow_output=1;opt.algorithm=algorithm;if(algorithm==SBN3_MUL_FLAT)opt.column_log2=opt.row_log2=0;
     if(full){an=size_t(4096)*T/64;bn=an;if(kind==SBN3_PRODUCT_TMP){an=256*T/64;bn=8184*T/64;}}
     if(kind==SBN3_PRODUCT_SQR)bn=an;
     auto *a=f.guarded(an),*b=f.guarded(bn),*a1=f.guarded(an),*b1=f.guarded(bn);
@@ -63,7 +63,31 @@ static void scenario(unsigned np,int T,unsigned kind,unsigned mask,unsigned fron
 }
 #include "product_reuse_tests.hpp"
 #include "small_policy_tests.hpp"
+static void flat_spread_frames(){
+    // A closed-form oracle keeps the large spread-domain gate linear-time.
+    const size_t n=140001;
+    for(unsigned np:{8u,10u})for(unsigned kind:{unsigned(SBN3_PRODUCT_MUL),unsigned(SBN3_PRODUCT_SQR)})for(unsigned cached:{0u,1u}){
+        Fixture f(16);auto *a=f.guarded(n);std::fill_n(a,n,UINT64_MAX);
+        sbn3_mul_options o{};o.workers=16;o.prime_count=np;o.trunk_bits=24*np-8;o.algorithm=SBN3_MUL_FLAT;
+        sbn3_product_request r{};r.kind=sbn3_product_kind(kind);r.a_limbs=n;r.b_limbs=kind==SBN3_PRODUCT_MUL?n:0;
+        sbn3_product_info i{};sbn3_mul_plan p;auto *b=f.product(r,o,i,p);
+        sbn3_spectrum *s=nullptr;sbn3_spectrum_desc desc{};
+        if(cached){s=f.cache(b,{a,n},SBN3_SPECTRUM_COLUMNS,i,desc);f.unbind(b);r.cached_a[0]=&desc;b=f.product(r,o,i,p,s);}
+        assert(i.mul.M2>=16384&&i.mul.workers==16);
+        auto *out=f.guarded(up(sbn3_mul_output_capacity(&i.mul),8));sbn3_product_inputs in{};
+        if(!cached)in.a={a,n};if(kind==SBN3_PRODUCT_MUL)in.b={a,n};
+        allocation_watch_start();sbn3_product_execute(b,&in,{out,i.mul.output_limbs});assert(!allocation_watch_stop());
+        for(size_t k=0;k<2*n;++k)assert(out[k]==(k==0?uint64_t(1):k<n?uint64_t(0):k==n?UINT64_MAX-1:UINT64_MAX));
+        for(size_t k=0;k<n;++k)assert(a[k]==UINT64_MAX);
+        if(s)sbn3_spectrum_release(s);
+    }
+    puts("Flat NP8/NP10 spread frames, W16 fresh/cached MUL/SQR closed-form oracle PASS");
+}
 int main(){
+    flat_spread_frames();
+    // More workers than prime transforms: spare ranks need CRT scratch only.
+    for(unsigned np=4;np<=10;++np)for(unsigned kind=0;kind<=3;++kind)
+        scenario(np,24*np-8,kind,kind%2,1,1025,1033,false,0,4,SBN3_MUL_FLAT,16);
     small_policy_query_gate();for(unsigned w:{1u,2u,4u,8u,16u})small_batch_gate(w);
     distinct_mac_reuse();distinct_mac_reuse(SBN3_MUL_FLAT);reuse_gate(0,SBN3_MUL_FLAT);reuse_gate(1,SBN3_MUL_FLAT);capacity_gate();reuse_gate(0);reuse_gate(1);unequal_mac();
     for(unsigned np:{6u,8u})for(unsigned kind=1;kind<=3;++kind)scenario(np,24*np-8,kind,1,1,129,513,false,0,14);

@@ -39,6 +39,52 @@ def snapshot_id(rows):
     return hashlib.sha256(encoded).hexdigest()
 
 
+def check_donor(item, snapshot_names, verify):
+    """Validate each recorded provenance format without changing its base.
+
+    The initial migration inventory names files in the historical snapshot.
+    Later adapted donors retain explicit original paths/hashes, while an
+    unmodified vendored dependency carries a local pinned-file manifest.
+    Descriptive upstream names are not paths in the old migration snapshot.
+    """
+    if "gate_donors" in item:
+        for name in item["sources"] + item["gate_donors"]:
+            if verify:
+                require(inside(REPO, name).is_file(), f"missing donor: {name}")
+            require(name in snapshot_names, f"donor not covered by snapshot: {name}")
+        return
+    if "reference_paths" in item:
+        originals = [Path(name) for name in item["reference_paths"]]
+        hashes = item["source_sha256"]
+        require(len(originals) == len(item["sources"]), f"donor reference count: {item['id']}")
+        require(all(path.is_absolute() for path in originals), f"donor reference base: {item['id']}")
+        require(len({path.name for path in originals}) == len(originals), f"duplicate donor basename: {item['id']}")
+        require({path.name for path in originals} == set(hashes), f"donor hash coverage: {item['id']}")
+        for path in originals:
+            expected = hashes[path.name]
+            require(re.fullmatch(r"[0-9a-f]{64}", expected), f"bad donor hash: {path.name}")
+            if verify:
+                require(path.is_file(), f"original donor missing: {path}")
+                require(hashlib.sha256(path.read_bytes()).hexdigest() == expected,
+                        f"original donor hash changed: {path}")
+        require(bool(item["local_files"]), f"missing donor destinations: {item['id']}")
+        for name in item["local_files"]:
+            require(inside(V3, name).is_file(), f"adapted donor destination missing: {name}")
+        return
+    if "local" in item:
+        directory = inside(V3, item["local"])
+        provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
+        require(bool(provenance["files"]), f"empty vendor manifest: {item['id']}")
+        for name, record in provenance["files"].items():
+            path = inside(directory, name)
+            require(path.is_file(), f"vendor file missing: {path}")
+            require(re.fullmatch(r"[0-9a-f]{64}", record["sha256"]), f"bad vendor hash: {path}")
+            require(hashlib.sha256(path.read_bytes()).hexdigest() == record["sha256"],
+                    f"vendor file changed: {path}")
+        return
+    raise ValueError(f"unsupported donor provenance format: {item['id']}")
+
+
 def check_documents():
     paths = [V3 / "README.md", *sorted((V3 / "docs").glob("*.md"))]
     for path in paths:
@@ -81,10 +127,7 @@ def check(verify_donors):
     require(sum(r["bytes"] for r in rows) == snapshot["total_bytes"], "snapshot size mismatch")
     require(snapshot_id(rows) == snapshot["snapshot_id"], "snapshot manifest ID mismatch")
     for item in donors["items"]:
-        for name in item["sources"] + item["gate_donors"]:
-            if verify_donors:
-                require(inside(REPO, name).is_file(), f"missing donor: {name}")
-            require(name in names, f"donor not covered by snapshot: {name}")
+        check_donor(item, set(names), verify_donors)
     for row in rows:
         path = inside(REPO, row["path"])
         if verify_donors:

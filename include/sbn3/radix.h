@@ -26,7 +26,9 @@ typedef struct sbn3_radix_options {
     unsigned workers;           /* 1..32 */
     size_t memory_budget;       /* 0: no filter; otherwise an upper bound of storage_bytes */
     unsigned repeated;          /* nonzero: the binding converts many values; plan for execute time alone
-                                 * (bind may then cost several conversions). 0: plan for bind + one execute. */
+                                 * (bind may then cost several conversions). 0: plan for bind + one execute.
+                                 * This is a strategy hint, not a restriction on subsequent execute
+                                 * calls. Both modes use the same API and can reuse the binding. */
     unsigned use_alphabet;      /* 0: bytes are digit values */
     unsigned char alphabet[64]; /* use_alphabet: byte written/read for digit value j, distinct */
 } sbn3_radix_options;
@@ -41,8 +43,10 @@ typedef struct sbn3_format_spec {
     uint64_t fraction_digits; /* requested digits after the point */
     sbn3_radix_mode mode;
 } sbn3_format_spec;
-/* A plan is a plain value: the layout, the Newton plan of the reciprocal and the winners of the product
- * searches, so that bind plans nothing a second time. */
+/* A plan is a plain value: storage layout, any reciprocal plan and resolved
+ * product recipes. Bind replays those recipes without ranking them again.
+ * Unused opaque bytes are unspecified; copy the value but do not compare or
+ * serialize its entire byte envelope. plan_id identifies the queried recipe. */
 typedef struct sbn3_format_plan {uint64_t opaque[512];} sbn3_format_plan;
 typedef struct sbn3_format_info {
     unsigned workers, lease_peak;
@@ -65,10 +69,15 @@ sbn3_query_result sbn3_format_query(const sbn3_format_spec *, const sbn3_radix_o
                                     sbn3_format_info *);
 /* Storage: an unleased prepared arena range of info.storage_bytes at an offset aligned to
  * info.storage_alignment, exclusively the binding's until unbind. Bind builds the power rail and
- * every product program (it runs products on the team). A binding converts any number of values. */
+ * every product program (it runs products on the team). A binding converts any number of values.
+ * Direct leaf/bit recipes borrow this caller-owned range; checked builds also
+ * register its leases and check its lifetime. The range remains resident and
+ * exclusive throughout the binding lifetime in either build. */
 void sbn3_format_bind(const sbn3_format_plan *, sbn3_arena *, size_t offset, sbn3_team *, sbn3_format_binding **);
 /* mantissa.count == spec.limbs; digits has info.digit_bytes bytes; both are disjoint from the storage.
- * Bytes of the two areas beyond the reported digits are unspecified. */
+ * Bytes of the two areas beyond the reported digits are unspecified.
+ * Direct recipes trust these caller preconditions in normal builds; checked
+ * builds additionally audit sizes, alignment and aliasing on every execute. */
 void sbn3_format_execute(sbn3_format_binding *, sbn3_const_limbs mantissa, unsigned char *digits,
                          sbn3_format_result *);
 void sbn3_format_unbind(sbn3_format_binding *);
@@ -110,9 +119,54 @@ sbn3_query_result sbn3_parse_query(const sbn3_parse_spec *, const sbn3_radix_opt
                                    sbn3_parse_info *);
 void sbn3_parse_bind(const sbn3_parse_plan *, sbn3_arena *, size_t offset, sbn3_team *, sbn3_parse_binding **);
 /* digits: integer_digits + fraction_digits bytes, most significant first, no point. out: info.limbs limbs,
- * 64-byte aligned, disjoint from the storage and from the digits. All info.limbs limbs are written. */
+ * 64-byte aligned, disjoint from the storage and from the digits. All info.limbs limbs are written.
+ * Small integer recipes trust these caller preconditions in normal builds;
+ * checked builds additionally audit capacities, alignment, overlap and leases.
+ * Input digits are validated in both builds. */
 void sbn3_parse_execute(sbn3_parse_binding *, const unsigned char *digits, sbn3_limbs out, sbn3_parse_result *);
 void sbn3_parse_unbind(sbn3_parse_binding *);
+
+/* One-shot conversion. Same value, alphabet, output layout and validity
+ * contracts as the planned services above. A small request dispatches
+ * directly to its arithmetic leaf; no plan or binding is constructed.
+ * Other requests perform query/bind/execute/unbind inside this call.
+ *
+ * The optional sizing queries return complete output and workspace bounds.
+ * A leaf with storage_bytes == 0 needs no workspace, arena or team. Otherwise
+ * workspace designates a prepared, unleased, exclusive arena range and its
+ * idle caller-owned team. No allocation, reserve or page operation occurs.
+ * An existing service query also gives sufficient capacities for once.
+ *
+ * The spec/options must be supported and all spans must have the queried
+ * capacities. Unsupported shapes or insufficient supplied workspace violate
+ * caller preconditions, as for execute. Checked builds diagnose small-call
+ * precondition violations; planned execution rejects insufficient workspace
+ * fatally. Input digits are always validated.
+ * Query/bind remain useful when retaining a plan or prepared conversion state.
+ * plan_id == 0 in a once query means a direct leaf with no materialized plan. */
+typedef struct sbn3_radix_workspace {
+    sbn3_arena *arena;
+    sbn3_team *team;
+    size_t offset, bytes;
+} sbn3_radix_workspace;
+typedef struct sbn3_format_once_result {
+    uint64_t integer_first;
+    uint64_t integer_digits;  /* integer area ends here; fraction starts here */
+    uint64_t fraction_digits;
+    unsigned exact_fallback;
+} sbn3_format_once_result;
+typedef struct sbn3_parse_once_result {
+    unsigned valid;
+    uint64_t invalid_index;
+    size_t limbs;             /* complete output width (high zeros allowed); 0 if invalid */
+    unsigned exact_fallback;
+} sbn3_parse_once_result;
+sbn3_query_result sbn3_format_once_query(const sbn3_format_spec *,const sbn3_radix_options *,sbn3_format_info *);
+sbn3_query_result sbn3_parse_once_query(const sbn3_parse_spec *,const sbn3_radix_options *,sbn3_parse_info *);
+void sbn3_format_once(const sbn3_format_spec *,const sbn3_radix_options *,const uint64_t *mantissa,
+                      unsigned char *digits,const sbn3_radix_workspace *,sbn3_format_once_result *);
+void sbn3_parse_once(const sbn3_parse_spec *,const sbn3_radix_options *,const unsigned char *digits,
+                     uint64_t *out,const sbn3_radix_workspace *,sbn3_parse_once_result *);
 #ifdef __cplusplus
 }
 #endif

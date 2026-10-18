@@ -2,6 +2,7 @@
 #include "sbn3/product.h"
 namespace sbn::v3 {
 struct ProductStage;
+namespace product {struct LowLiftProgram;}
 /* One normalized reciprocal rung, B=2^64, 3<=m<n<=2m-1.
  * D has n limbs with its top bit set. U has m+1 limbs, U[m]==1,
  * and differs by at most 8 from B^(2m)/floor(D/B^(n-m)).
@@ -27,6 +28,8 @@ struct InverseRung {
     size_t correction_input_words = 0; // zero preserves the legacy n-word binding
     bool consume_residual = false;
     size_t repair_bytes = 0;
+    sbn3_team_scope* scope=nullptr;
+    const product::LowLiftProgram* low_lift=nullptr;
 };
 // Native residual metrics include the initial cache-build/apply episode;
 // correction metrics describe only the subsequent cached product.

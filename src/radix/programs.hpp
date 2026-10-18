@@ -5,6 +5,7 @@
 #include "algorithms/local_inverse.hpp"
 #include "product/program.hpp"
 #include "product/table_pool.hpp"
+#include <cstring>
 namespace sbn::v3::radix {
 inline constexpr unsigned max_rail = 36, max_shared_tables = 48;
 // Schedule policy of the conversion trees (measured on Zen 5, see docs/radix-conversion-results).
@@ -20,19 +21,32 @@ struct TreePolicy {
     // 50K-250K limbs), four-worker groups do not.
     size_t fork_node_limbs = 800000;
     unsigned fork_min_workers = 4;
-    size_t wide_product_limbs = 600000; // smaller products run on at most eight workers (one chiplet)
-    // Integer parts are formatted by schoolbook division by b^8 while that is cheaper. Repeated conversions: its
-    // execute time crosses the tree's at 32 limbs. One conversion also pays the tree's plan, rail, programs and
-    // reciprocal; the schoolbook work is (limbs of the integer part) x (its eight-digit words), and the two
-    // complete calls cross at about 40 000 limb-words in every base measured (2026-09-19, Zen 5, one worker:
-    // 94 limbs in base 3, 124 in base 10, 160 in base 36), so that rule is in limb-words, not in limbs.
-    size_t integer_tree_work = 40000, integer_tree_limbs_repeated = 32;
-    unsigned fraction_recipe = 0; // 0: complete-cost policy; probes may pin 1: direct or 2: tree
+    size_t wide_product_limbs = 0; // full available team; nonzero is a legacy probe override
+    // Integer parts use maximal-word preinverse division below the SRT
+    // crossover. Fresh work = input limbs times maximal radix-word chunks;
+    // the complete-call threshold includes fused root normalization.
+    // A retained tree has a lower, execution-oriented crossover.
+    size_t integer_tree_work = 2600, integer_tree_limbs_repeated = 32;
+    size_t integer_scaled_work = 160; // maximal-word work before direct fractional normalization wins
+    unsigned fraction_recipe = 0; // 0: work policy; probes: 1 scalar, 2 tree, 3 IFMA
+    // Serial fresh calls use a scaled ladder in the coupled FFT regime;
+    // local-prefix and parallel trees retain the regular grid. Probes may
+    // pin 1: grid or 2: scaled in either regime.
+    unsigned format_split_policy = 0;
+    unsigned format_seed_fragments = 0; // 0: serial 16 / parallel 31; otherwise a probe override
+    bool reuse_fft_squares = true;       // consume an existing eligible FFT cache while constructing powers
+    size_t cyclic_min_fresh = 400;
+    bool block_leaves = true;
+    unsigned block_tree_limbs=0;        // 0: widen only with two vector batches per worker
+    bool short_tail_prefix = true;
     // Bounded leaf products: pay for U52 conversion only above this many
     // scalar limb products (Zen5 native, r12-leaf-split-volume evidence).
     size_t group_u52_work = 128;
     bool cyclic_products = true;        // frontier splits as wrap-around products with cached rail spectra
     bool ring_products = true;          // staged splits in the NTT band as wrap-around products (product service)
+    unsigned ring_prime_batch=0;        // 0: backend policy; explicit probe override for Bailey stages
+    bool prefer_short_ring=false;       // experimental: prefer a period shorter than the linear product
+    bool staged_serial_fft=true;        // keep a cache-sized window kernel serial; parallelize independent nodes
     size_t ring_node_limbs = 40000;     // from this node size on
     unsigned ring_min_count = 8;        // and only for stages with this many nodes (the spectrum is built per run)
 };
@@ -48,10 +62,19 @@ inline constexpr size_t rail_basecase_limbs = 12;
 // identity of the whole replayed plan with the sealed one.
 struct PlanTranscript {
     static constexpr unsigned capacity = 176;
-    uint64_t entry[capacity]{};
+    uint64_t entry[capacity];
     uint32_t count = 0, cursor = 0;
     uint32_t searched = 0; // replay: products that had to be searched after all
     bool replay = false;   // false: the query records; true: bind consumes
+    // Only the recorded prefix exists. Small direct queries have no entries
+    // and should not clear the capacity-sized transcript buffer.
+    PlanTranscript() noexcept {}
+    PlanTranscript(const PlanTranscript &r) noexcept { *this=r; }
+    PlanTranscript &operator=(const PlanTranscript &r) noexcept {
+        if(this!=&r){count=r.count;cursor=r.cursor;searched=r.searched;replay=r.replay;
+            if(count)std::memcpy(entry,r.entry,size_t(count)*sizeof(uint64_t));}
+        return *this;
+    }
     static uint64_t check(uint64_t a, uint64_t b, uint64_t c, uint64_t identity) noexcept;
     void record(ProductChoice choice, uint64_t check) noexcept {
         if (count < capacity)
@@ -119,6 +142,12 @@ void run_product(sbn3_team *, TeamProduct &) noexcept;
 // planned winner of this product's search (0: search here).
 void temporary_product(sbn3_team *, unsigned workers, Frame &scratch, const uint64_t *a, size_t an, const uint64_t *b,
                        size_t bn, uint64_t *out, size_t out_capacity, ProductChoice choice = 0) noexcept;
+// Bounded local products used by setup chains and exceptional digit witnesses.
+// Their scratch query and execution share the multiplication layer's compact
+// word/FFT recipe; no complete service plan is constructed just to price them.
+bool local_temporary_supported(size_t an,size_t bn,unsigned workers) noexcept;
+size_t local_temporary_bytes(size_t an,size_t bn) noexcept;
+void local_temporary_product(Frame &,const uint64_t *,size_t,const uint64_t *,size_t,uint64_t *) noexcept;
 // ---- rail: odd^(64 * 2^k), k < count, each zero padded to its capacity -------------------------------
 struct RailPlan {
     unsigned count = 0;
@@ -148,10 +177,13 @@ void reciprocal_basecase(const uint64_t *d, size_t n, uint64_t *out, Frame &scra
 inline constexpr size_t chain_basecase_limbs = 24;
 struct Chain {
     unsigned first = 0, steps = 0;
+    size_t first_limbs=0;
     struct Step {
         unsigned level;
-        size_t acc_limbs, out_limbs;
+        size_t acc_limbs, out_limbs, power_limbs;
         ProductChoice choice; // set by chain_bytes
+        int cache_slot=-1;
+        size_t cache_bytes=0;
     } step[max_rail]{};
     size_t limbs = 0, widest = 0; // capacity of the result; largest intermediate product
     size_t resident_bytes() const noexcept {
@@ -163,5 +195,5 @@ Chain chain_of(const BaseInfo &, uint64_t fragments) noexcept;
 sbn3_query_result chain_bytes(const BaseInfo &, Chain &, unsigned workers, size_t &bytes, PlanTranscript * = nullptr) noexcept;
 // The result (c.limbs limbs, zero padded) lives in `scratch`, below whatever the caller allocates next.
 const uint64_t *chain_evaluate(const Chain &, const RailPlan &, const uint64_t *const *rail, sbn3_team *, unsigned workers,
-                               Frame &scratch) noexcept;
+                               Frame &scratch,const struct RailProduct *caches=nullptr) noexcept;
 } // namespace sbn::v3::radix

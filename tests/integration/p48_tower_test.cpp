@@ -31,7 +31,7 @@ int main(){
         Frame frame(*fixture.arena,tables);Primes primes{};
         const size_t before=frame.used();primes.init(frame,lg);
         size_t expected=0;
-        for(unsigned q=0;q<NP;++q){expected=(expected+63)&~size_t(63);expected+=tower_bytes(lg);expected=(expected+63)&~size_t(63);expected+=tower_zero_slots*8;}
+        if(!published_tower(lg))for(unsigned q=0;q<NP;++q){expected=(expected+63)&~size_t(63);expected+=tower_bytes(lg);expected=(expected+63)&~size_t(63);expected+=tower_zero_slots*8;}
         assert(frame.used()-before==expected);
         for(unsigned q=0;q<NP;++q){
             const auto &P=primes.P[q];const uint64_t p=P.p;const auto ref=reference(lg,p);const size_t n=size_t(1)<<lg;
@@ -67,15 +67,27 @@ int main(){
     }
     // Bailey factor tables: F[d][k*M2+b] = rec(w_d[2^k b]), including a row
     // length that is not a multiple of the vector width.
-    for(size_t M2:{1u,2u,4u,8u,16u,32u,512u})for(unsigned lgC:{0u,3u,7u}){
+    for(size_t M2:{1u,2u,4u,8u,16u,32u,256u,512u})for(unsigned lgC:{0u,3u,7u}){
         Frame frame(*fixture.arena,tables);Primes primes{};
         unsigned lgM=0;while((size_t(1)<<lgM)<M2)++lgM;
         const unsigned lg=lgC+lgM+1;primes.init(frame,lg);primes.factors_for(frame,M2,lgC);
         for(unsigned q=0;q<NP;++q){const auto &P=primes.P[q];const auto ref=reference(lg,P.p);
-            assert(P.M2f==M2 && P.lgF==lgC);
+            assert(P.M2f>=M2 && P.lgF>=lgC);
             for(unsigned k=0;k<=lgC;++k)for(size_t b=0;b<M2;++b){
-                assert(P.F[0][k*M2+b]==rec_of(ref.w[(size_t(1)<<k)*b],P.p));
-                assert(P.F[1][k*M2+b]==rec_of(ref.wi[(size_t(1)<<k)*b],P.p));checked+=2;
+                assert(P.F[0][k*P.M2f+b]==rec_of(ref.w[(size_t(1)<<k)*b],P.p));
+                assert(P.F[1][k*P.M2f+b]==rec_of(ref.wi[(size_t(1)<<k)*b],P.p));checked+=2;
+            }
+        }
+    }
+    // All published factor rows, including the highest row, against the
+    // bit-reversed exponent definition rather than a table recurrence.
+    for(unsigned q=0;q<NP;++q){const uint64_t p=PR[q],g=generator(p);
+        for(unsigned d=0;d<2;++d){const auto *f=p48_root_bank::factors(q,d,256,13);
+            for(unsigned k=0;k<=13;++k)for(unsigned b=0;b<256;++b){
+                uint32_t v=b<<k,reverse=0;for(unsigned j=0;j<32;++j){reverse=(reverse<<1)|(v&1);v>>=1;}
+                const uint64_t exponent=((p-1)>>32)*reverse;
+                const uint64_t value=powm(g,d&&exponent?p-1-exponent:exponent,p);
+                assert(f[k*256+b]==rec_of(value,p));++checked;
             }
         }
     }

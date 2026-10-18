@@ -1,12 +1,15 @@
 #include "algorithms/inverse_program.hpp"
 #include "algorithms/inverse_seed.hpp"
 #include "algorithms/local_inverse.hpp"
+#include "algorithms/normalized_local.hpp"
 #include "runtime/scratch.hpp"
 #include "common/checked.hpp"
 namespace sbn::v3 {
 void inverse_program(const InverseProgram &p, const uint64_t *D, uint64_t *U) noexcept {
     require(p.target && p.seed_limbs <= p.target && p.seed_limbs >= 1 &&
-                (p.local_seed_bytes?(p.seed_limbs<=local_inverse_max_limbs||local_refinement_supported(p.seed_limbs,false)):
+                (p.prepared_local_seed?(p.prepared_local_seed->info.kind==NormalizedLocalKind::inverse&&
+                                        p.prepared_local_seed->info.n==p.seed_limbs):
+                 p.local_seed_bytes?(p.seed_limbs<=local_inverse_max_limbs||local_refinement_supported(p.seed_limbs,false)):
                                     p.seed_limbs<=15) &&
                 p.rung_count <= 32,
             SBN3_FATAL_ARGUMENT, "inverse program shape");
@@ -14,7 +17,9 @@ void inverse_program(const InverseProgram &p, const uint64_t *D, uint64_t *U) no
         if(p.local_seed_bytes){
             require(p.local_seed_workspace,SBN3_FATAL_WORKSPACE,"local inverse prefix workspace");
             auto f=Frame::external(p.local_seed_workspace,p.local_seed_bytes);
-            local_inverse_approximate(out,d,p.seed_limbs,f);
+            if(p.prepared_local_seed)normalized_local_execute(*p.prepared_local_seed,{},
+                {d,p.seed_limbs},{out,p.seed_limbs+1},f);
+            else local_inverse_approximate(out,d,p.seed_limbs,f);
         }else inverse_seed(out,d,p.seed_limbs);
     };
     if (!p.rung_count) {

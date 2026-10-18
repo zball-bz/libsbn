@@ -1,4 +1,5 @@
 #include "runtime/team.hpp"
+#include "runtime/linux/sync.hpp"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 #include <unistd.h>
 #include <new>
 #include <initializer_list>
+#include <limits.h>
 using namespace sbn::v3;
 
 static uint64_t now() {timespec t{};clock_gettime(CLOCK_MONOTONIC,&t);return uint64_t(t.tv_sec)*1000000000+t.tv_nsec;}
@@ -27,9 +29,16 @@ static void leaf_region(void *p,sbn3_team_region *region) {
     c.gate->threads[global]=pthread_self();
     uint64_t bit=uint64_t(1)<<global;
     assert(!(__atomic_fetch_or(&c.gate->bits,bit,__ATOMIC_ACQ_REL)&bit));
-    __atomic_add_fetch(&c.gate->arrived,1,__ATOMIC_RELEASE);
-    while(__atomic_load_n(&c.gate->arrived,__ATOMIC_ACQUIRE)<c.gate->width) {
-        assert(now()<c.gate->deadline);sched_yield();
+    if(__atomic_add_fetch(&c.gate->arrived,1,__ATOMIC_RELEASE)==c.gate->width)os::wake(&c.gate->arrived,INT_MAX);
+    for(;;){const unsigned arrived=__atomic_load_n(&c.gate->arrived,__ATOMIC_ACQUIRE);if(arrived==c.gate->width)break;
+        const auto time=now();if(time>=c.gate->deadline)fprintf(stderr,"nested gate timeout: width=%u arrived=%u bits=%llx worker=%u\n",
+            c.gate->width,__atomic_load_n(&c.gate->arrived,__ATOMIC_ACQUIRE),
+            (unsigned long long)__atomic_load_n(&c.gate->bits,__ATOMIC_ACQUIRE),global);
+        assert(time<c.gate->deadline);
+        // All workers must still arrive within the same deadline. Sleeping
+        // avoids starving TSAN's atomic bookkeeping with 32 busy pollers.
+        const timespec interval{0,50000000};
+        (void)syscall(SYS_futex,&c.gate->arrived,FUTEX_WAIT_PRIVATE,arrived,&interval,nullptr,0);
     }
     // Each independent child barrier must synchronize just its own team.
     for(unsigned round=0;round<100;++round) {
@@ -100,6 +109,7 @@ static void kernel_action(void *p,sbn3_team_scope *s) {
     for(unsigned i=0;i<k.width;++i)assert(!k.frames[i]->used());
 }
 int main() {
+    setvbuf(stdout,nullptr,_IOLBF,0);
     for(unsigned w:{1u,3u,5u,16u,32u}) {
         sbn3_arena *arena=nullptr;sbn3_arena_config ac{size_t(1)<<32,12u<<20};sbn3_error e{};
         assert(sbn3_arena_create(&ac,&arena,&e)==SBN3_OK);
@@ -118,6 +128,7 @@ int main() {
         {
             Frame f(*arena,memory);
             for(bool skew:{false,true}) {
+                printf("team nested gate: W=%u skew=%u\n",w,unsigned(skew));
                 Gate gate{w,0,0,now()+5000000000ULL,{}};Node node{&f,&gate,skew};
                 sbn3_team_run(team,node_action,&node);
                 assert(node.result==uint64_t(w)*(w+1)/2 && f.used()==0 && f.peak()<=f.capacity());

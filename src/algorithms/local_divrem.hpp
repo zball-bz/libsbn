@@ -4,6 +4,7 @@
 #include <stdint.h>
 namespace sbn::v3 {
 class Frame;
+struct NormalizedLocalPrepared;
 inline constexpr size_t local_division_max_limbs=32768;
 using LocalDivisionProduct=product::LocalProductPlan;
 struct LocalDivisionPlan {
@@ -23,6 +24,11 @@ inline bool local_division_shares_tables(const LocalDivisionPlan&p) noexcept {
     return product::local_product_same_tables(p.quotient,p.residual);
 }
 struct LocalDivisionMetrics {uint64_t head_limbs=0,head_corrections=0;unsigned products=0;};
+// Optional quotient discard: one block of estimates must remain live through
+// the residual product. No whole-numerator quotient or input copy is needed.
+inline size_t local_division_remainder_bytes(const LocalDivisionPlan &p) noexcept {
+    return p.storage_bytes+(p.fused_precision?0:((8*p.block_limbs+63)&~size_t(63))+64);
+}
 inline size_t local_division_head(size_t quotient_limbs,size_t block_limbs) noexcept {
     const size_t rem=quotient_limbs%block_limbs;
     return rem==1 || (block_limbs>=128&&rem<=4)?rem:0;
@@ -39,12 +45,18 @@ LocalDivisionPlan local_fused_division_plan(size_t nn,size_t dn,unsigned reuse_h
 // prepare may use the full storage bound transiently. Its retained D/U,
 // tables and spectra fit persistent_bytes; apply uses only work_bytes.
 LocalDivisionDivisor local_division_prepare(const LocalDivisionPlan &,const uint64_t *d,Frame &) noexcept;
+// The divisor is already normalized. Execute the caller's frozen inverse
+// recipe, preserving the ordinary retained divisor/product geometry.
+LocalDivisionDivisor local_division_prepare_compiled(const LocalDivisionPlan &,const uint64_t *d,
+    Frame &,const NormalizedLocalPrepared &) noexcept;
 uint64_t local_division_apply(const LocalDivisionPlan &,const LocalDivisionDivisor &,
                              uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,Frame &,
-                             LocalDivisionMetrics * =nullptr) noexcept;
+                             LocalDivisionMetrics * =nullptr,uint64_t*discard_block=nullptr) noexcept;
 // The plan also covers shorter numerators: the same inverse precision and
 // product geometries are retained. All spans are disjoint and caller-owned.
 // Writes max(nn-dn+1,0) quotient and dn remainder limbs; returns correction count.
+// q may be NULL to discard quotient digits. In that case prepare/apply/execute
+// are covered by local_division_remainder_bytes(p), not p.storage_bytes.
 uint64_t local_division_execute(const LocalDivisionPlan &,uint64_t *q,uint64_t *r,
                                const uint64_t *n,size_t nn,const uint64_t *d,Frame &,
                                LocalDivisionMetrics * =nullptr) noexcept;

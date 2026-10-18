@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "id": "fft-numeric-domain-20260923-o3-emission",
+  "id": "fft-numeric-domain-20260927-matrix-verified-20260928",
   "evidence_level": "adversarially_validated_not_universal_fp_proof",
   "implementation": "src/backend/pq16/numeric_domain.hpp",
-  "implementation_sha256": "e768336b1d9bc6ddda607f035e6de6423828639debd75c1127c31fc06f75b706",
+  "implementation_sha256": "2354df7f3affe5fbb04061117ced723fd30a70ad663f15d5fb31c02828525d51",
   "target": {
     "compiler": "Clang 21.1.8",
     "cpu": "Zen5 Strix Halo",
@@ -21,7 +21,8 @@
     "plus_cyclic_precision",
     "compact_windows_test",
     "rac_window_test",
-    "fft_tail_window_test"
+    "fft_tail_window_test",
+    "fft_matrix_test"
   ],
   "evidence": [
     {
@@ -128,6 +129,26 @@
       "path": "results/division_pow2_roots_2026-09-23/address.log",
       "sha256": "75b0e3d1daf52d0844228aa7e67f82534475e14f63d30bcf4697b0196f823b67",
       "role": "Selective radix-4 level18 and longer PQ prefix: bitwise equality to runtime builder, unchanged smaller prefixes, unsupported radix-8 level rejected, exact products and next dynamic level under ASan; numerical caps unchanged"
+    },
+    {
+      "path": "results/cpp_integer_2026-09-28/numeric-domain-recovery.json",
+      "sha256": "1d0dc536f44d7b746a47f0581b10a235531a33318da815834f7013159f9f388c",
+      "role": "Recovery audit: earlier caps byte-identical; added matrix predicate independently revalidated"
+    },
+    {
+      "path": "results/cpp_integer_2026-09-28/numeric-domain-observer/build-receipt.json",
+      "sha256": "3b95bc32f6b549aa40fef320d17dc63f0d1b821557de921a843b5d457a093018",
+      "role": "Current-source coefficient observer, unchanged transform/rounding code; exact NTL polynomial reference"
+    },
+    {
+      "path": "results/cpp_integer_2026-09-28/numeric-domain-w1.stdout",
+      "sha256": "9fe872fbcd228f5fa77985a71e4dd8aa7eb3a5cdd00a44e04fab17eb17a84553",
+      "role": "666 serial matrix coefficient cases; all error <0.25"
+    },
+    {
+      "path": "results/cpp_integer_2026-09-28/numeric-domain-w16-confirm.stdout",
+      "sha256": "8b2743e7fac34e9028f5a26954210425bde34607edbb8a9831f332bb63df417f",
+      "role": "666 matrix coefficient cases with 16-worker budget; all error <0.25"
     }
   ]
 }

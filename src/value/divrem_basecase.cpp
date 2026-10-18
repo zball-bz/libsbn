@@ -13,14 +13,14 @@
 #include <string.h>
 using namespace sbn::v3;
 namespace sbn::v3::divrem_words {
-uint64_t sbpi1_div_qr(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp, size_t dn,
+template<bool Store>static uint64_t sbpi1_core(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp, size_t dn,
                       uint64_t dinv) noexcept {
     uint64_t qh, n1, n0, d1, d0, cy, cy1, q;
     np += nn;
     qh = compare(np - dn, dp, dn) >= 0;
     if (qh)
         sbn3i_sub_n(np - dn, np - dn, dp, long(dn));
-    qp += nn - dn;
+    if constexpr(Store)qp += nn - dn;
     dn -= 2;
     d1 = dp[dn + 1];
     d0 = dp[dn + 0];
@@ -45,11 +45,13 @@ uint64_t sbpi1_div_qr(uint64_t *qp, uint64_t *np, size_t nn, const uint64_t *dp,
                 q--;
             }
         }
-        *--qp = q;
+        if constexpr(Store)*--qp = q;
     }
     np[1] = n1;
     return qh;
 }
+uint64_t sbpi1_div_qr(uint64_t*q,uint64_t*n,size_t nn,const uint64_t*d,size_t dn,uint64_t inv)noexcept{return sbpi1_core<true>(q,n,nn,d,dn,inv);}
+void sbpi1_remainder(uint64_t*n,size_t nn,const uint64_t*d,size_t dn,uint64_t inv)noexcept{(void)sbpi1_core<false>(nullptr,n,nn,d,dn,inv);}
 uint64_t divrem_1(uint64_t *qp, const uint64_t *up, size_t un, uint64_t d) noexcept {
     const unsigned shift = unsigned(__builtin_clzll(d));
     const uint64_t normalized = d << shift;

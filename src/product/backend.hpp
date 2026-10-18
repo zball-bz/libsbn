@@ -12,6 +12,44 @@ struct ProgramLayout {
     unsigned contract = 0;
     SharedPreparation tables{};
 };
+// Joined boundary between two products sharing a private common spectrum.
+// The consumer finishes output0, then supplies fresh1 and its output buffer.
+// False stops before the second arithmetic call (e.g. external IO failed).
+struct ProductPairContinuation {
+    void*context=nullptr;
+    bool (*next)(void*,sbn3_const_limbs&,sbn3_limbs&)=nullptr;
+};
+// Private canonical-integer 2x2 matrix episode. Missing rows are not read or
+// written. All input reads precede integer output writes, so the left matrix
+// may be consumed in place. No uncarried spectrum escapes this episode.
+struct MatrixSpectrumCache {
+    uint8_t *data=nullptr;size_t bytes=0;uint64_t arithmetic_id=0;
+    unsigned rows=0;bool inverse_order=false;
+};
+inline constexpr size_t matrix_vector_layout=SIZE_MAX-1;
+struct MatrixProductInputs {
+    sbn3_const_limbs left[2][2]{},right[2][2]{};
+    sbn3_limbs out[2][2]{};
+    unsigned rows=3;
+    // Ring plan only: left entries have <= N/2 coefficient digits; right
+    // columns are overlapping N-digit windows shifted by N/2. Return the
+    // concatenated middle coefficient blocks in out[row][0], with a SINGLE
+    // integer carry pass. The caller supplies/interprets any complement bias.
+    bool middle=false;
+    // Optional earlier first block, in coefficient vectors (8 digits).
+    // SIZE_MAX retains [N/2,N) from each input window. An earlier start
+    // must be >= every left entry's digit support, so cyclic wrap cannot
+    // contaminate the extended prefix. The second block still starts N/2.
+    size_t middle_first_vector=SIZE_MAX;
+    MatrixSpectrumCache *left_cache=nullptr;
+    bool use_cached_left=false;
+    // One output column: only right[][0] is read. negative_left is a
+    // coefficient sign mask (bit 2*row+term), admitted by the provider.
+    bool vector=false;
+    // Schedule only the forward transforms whose buffers are live and not cached.
+    bool compact_forward=false;
+    unsigned negative_left=0;
+};
 struct Backend {
     uint64_t id;
     const char *name;
@@ -56,6 +94,8 @@ struct Backend {
     size_t (*program_pair_bytes)(const sbn3_mul_plan &) = nullptr;
     void (*program_pair_execute)(const void *, Frame &, sbn3_team_scope *, sbn3_const_limbs,
                                  sbn3_const_limbs, sbn3_const_limbs, sbn3_limbs, sbn3_limbs) = nullptr;
+    void (*program_pair_continue)(const void *,Frame &,sbn3_team_scope *,sbn3_const_limbs,
+                                 sbn3_const_limbs,sbn3_limbs,ProductPairContinuation) = nullptr;
     SharedPreparation (*program_tables)(const sbn3_mul_plan &) = nullptr;
     size_t (*program_local_bytes)(const sbn3_mul_plan &) = nullptr;
     const void *(*program_tables_prepare)(const sbn3_mul_plan &, Frame &) = nullptr;
@@ -72,6 +112,11 @@ struct Backend {
     // only. A surviving candidate must still pass the ordinary full query.
     sbn3_query_result (*geometry_query)(const sbn3_product_request &, const sbn3_mul_options &,
                                        sbn3_mul_info &) = nullptr;
+    // Geometry/resources for a future columns cache made by this request's
+    // own uncached producer. No descriptor or bindable plan is fabricated;
+    // the selected candidate still goes through the full producer/consumer queries.
+    sbn3_query_result (*geometry_query_cached_a)(const sbn3_product_request &,const sbn3_mul_options &,
+                                               sbn3_mul_info &) = nullptr;
     // Validate/decode a private plain-product plan once and return its immutable
     // metadata together. Older backends can retain the individual callbacks.
     ProgramLayout (*program_layout)(const sbn3_mul_plan &) = nullptr;
@@ -97,6 +142,15 @@ struct Backend {
     // Immutable tables and operand spectra are excluded from this loan.
     size_t (*product_scratch_bytes)(const sbn3_mul_plan &) = nullptr;
     void (*with_product_scratch)(sbn3_mul_binding *,void *,void (*)(void *,Frame &)) = nullptr;
+    // Frame-owned positive MAC2; plain programs keep their thin
+    // two-input entry. Includes exact minus-ring MAC2 when query admits it.
+    void (*program_sum_execute)(const void *,Frame &,sbn3_team_scope *,const sbn3_product_inputs &,sbn3_limbs) = nullptr;
+    size_t (*program_matrix_bytes)(const sbn3_mul_plan &,unsigned rows,size_t first_vector) = nullptr;
+    void (*program_matrix_execute)(const void *,Frame &,sbn3_team_scope *,const MatrixProductInputs &) = nullptr;
+    // Private scope-owned bindings retain all existing cache/layout contracts.
+    // They must execute and close within the borrowed scope's current epoch.
+    void (*product_bind_scope)(const sbn3_mul_plan &,sbn3_arena &,const sbn3_lease &,const sbn3_lease &,
+        sbn3_team_scope *,const sbn3_spectrum *,const sbn3_spectrum *,sbn3_mul_binding **) = nullptr;
 };
 const Backend *backend_lookup(uint64_t) noexcept;
 // The winning candidate of a plain product search (sbn3_mul_query, or sbn3_product_query of a plain square), in
@@ -116,6 +170,7 @@ sbn3_query_result square_query_chosen(size_t limbs, const sbn3_mul_options &, Pr
                                       sbn3_product_info &) noexcept;
 const Backend &short_backend() noexcept;
 const Backend &fft_backend() noexcept;
+const Backend &fft_matrix_backend() noexcept;
 const Backend &np4_backend() noexcept;
 const Backend &np5_backend() noexcept;
 const Backend &np6_backend() noexcept;

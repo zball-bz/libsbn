@@ -1,4 +1,5 @@
 #pragma once
+#include "common/query_audit.hpp"
 #include "product/window.hpp"
 #include "product/window_fft.hpp"
 #include "product/window_policy.hpp"
@@ -18,17 +19,23 @@ inline pq16::Shape linear_shape(size_t a,size_t b) noexcept {
     auto s=pq16::execution_shape(pq16::query(a,b),1);
     return s.nfull&&pq16::supported(s,a,b,1)?s:pq16::Shape{};
 }
-inline size_t full_bytes(size_t a,size_t b) noexcept {
-    const auto s=linear_shape(a,b);
+inline size_t full_selected_bytes(pq16::Shape s,size_t a,size_t b) noexcept {
     return s.nfull?pq16::table_bytes(s)+pq16::scratch_bytes(s,a,b)+512:u52::scratch_bytes(a,b);
 }
-inline void full(uint64_t *out,Span a,Span b,Frame &space) noexcept {
-    const auto s=linear_shape(a.words,b.words);
+inline size_t full_bytes(size_t a,size_t b) noexcept {
+    return full_selected_bytes(linear_shape(a,b),a,b);
+}
+// A zero selected shape deliberately chooses the ordinary integer kernel;
+// it is not a request to search for a transform during execution.
+inline void full_selected(uint64_t *out,Span a,Span b,Frame &space,pq16::Shape s) noexcept {
     if(!s.nfull){u52::multiply(out,a.data,a.words,b.data,b.words,space);return;}
     FrameMark mark(space);auto table=space.subframe(pq16::table_bytes(s)+128,128);
     auto *prepared=pq16::prepare(table,s);
     auto work=space.subframe(pq16::scratch_bytes(s,a.words,b.words)+128,128);
     pq16::multiply(out,a.data,a.words,b.data,b.words,*prepared,work,nullptr);
+}
+inline void full(uint64_t *out,Span a,Span b,Frame &space) noexcept {
+    full_selected(out,a,b,space,linear_shape(a.words,b.words));
 }
 inline bool middle_supported(const WindowProductShape &r) noexcept {
     if(!r.cancellation||r.b.words<128||r.a.words<8||r.a.words>=fft_min_words||
@@ -95,6 +102,7 @@ struct LocalWindowPlan {
     bool middle=false;
 };
 [[gnu::always_inline]] inline LocalWindowPlan local_windows_query(const WindowGroupShape &shape) noexcept {
+    SBN3_QUERY_AUDIT("local_windows_query");
     using namespace local_window_detail;
     require(shape.count==2||shape.count==3,SBN3_FATAL_ARGUMENT,"local window group count");
     LocalWindowPlan p{};p.count=shape.count;p.cancellation=shape.count-2;
@@ -166,6 +174,7 @@ struct LocalWindowPlan {
     return !shared_fft_supported(shape,wide);
 }
 [[gnu::noinline]] inline PeeledWindowPlan peeled_windows_query(const WindowGroupShape &shape,const LocalWindowPlan &p) noexcept {
+    SBN3_QUERY_AUDIT("peeled_windows_query");
     using namespace local_window_detail;
     if(!peel_window_possible(shape))return {};
     const auto &c=shape.products[shape.count-2];
@@ -204,6 +213,7 @@ class LocalWindowProducts {
     Frame &space_;FrameMark lifetime_;
     uint64_t *value_,*correction_,*window_output_;
     const pq16::Tables *tables_=nullptr;double *cache_=nullptr;
+    const pq16::Shape *full_plans_=nullptr;
     void prepare(Span a) noexcept {
         if(tables_)return;
         tables_=pq16::prepare(space_,p_.shared);
@@ -211,9 +221,11 @@ class LocalWindowProducts {
         pq16::forward_spectrum(cache_,a.data,a.words,*tables_,nullptr);
     }
   public:
-    [[gnu::always_inline]] LocalWindowProducts(const LocalWindowPlan &p,Frame &space,uint64_t *window_output=nullptr) noexcept
+    [[gnu::always_inline]] LocalWindowProducts(const LocalWindowPlan &p,Frame &space,uint64_t *window_output=nullptr,
+                                              const pq16::Shape *full_plans=nullptr) noexcept
         :p_(p),space_(space),lifetime_(space),value_(space.alloc<uint64_t>(p.value_words)),
-         correction_(p.correction_words?space.alloc<uint64_t>(p.correction_words):value_),window_output_(window_output) {}
+         correction_(p.correction_words?space.alloc<uint64_t>(p.correction_words):value_),window_output_(window_output),
+         full_plans_(full_plans) {}
     [[gnu::always_inline]] WindowResult multiply(unsigned slot,Span a,Span b,Window w,MagnitudeBound limit) noexcept {
         auto *out=slot==p_.count-1?correction_:value_;
         if(p_.shared.nfull){
@@ -228,6 +240,7 @@ class LocalWindowProducts {
                 pq16::cyclic_multiply(out,a.data,a.words,b.data,b.words,false,cache_,*tables_,space_,nullptr,a.words+b.words);
             }else pq16::apply_spectrum(out,cache_,a.data,a.words,b.data,b.words,false,*tables_,space_,nullptr);
         }
+        else if(full_plans_)local_window_detail::full_selected(out,a,b,space_,full_plans_[slot]);
         else local_window_detail::full(out,a,b,space_);
         local_window_detail::check(out,a.words+b.words,limit);return {out+w.origin,w.words,0,false};
     }
@@ -275,7 +288,9 @@ class LocalWindowProducts {
                 negative=limbs::cyclic_absolute(value_,ring);memset(value_+ring,0,(p_.value_words-ring)*8);
             }
         }else{
-            local_window_detail::full(value_,a,b,space_);const size_t words=a.words+b.words;
+            if(full_plans_)local_window_detail::full_selected(value_,a,b,space_,full_plans_[slot]);
+            else local_window_detail::full(value_,a,b,space_);
+            const size_t words=a.words+b.words;
             memset(value_+words,0,(p_.value_words-words)*8);
             negative=limbs::sub_from(value_+sub.shift,p_.value_words-sub.shift,sub.value.data,sub.value.words);
             if(negative){for(size_t j=0;j<p_.value_words;++j)value_[j]=~value_[j];

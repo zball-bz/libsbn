@@ -1,5 +1,6 @@
 #pragma once
 #include "sbn3/product.h"
+#include "backend/ntt_p48/root_bank.hpp"
 namespace sbn::v3 {
 // Generated from config/tuning/native-root-setup.json.
 // Data SHA-256: SBN3_CFG_DATA_SHA256
@@ -8,7 +9,11 @@ namespace sbn::v3 {
 inline double root_prepare_cost(const sbn3_mul_info &i) {
     if(!i.np)return 0;
     constexpr double c[]={SBN3_CFG_COEFFICIENTS};
-    return c[0]*i.np*double(i.table_entries)+c[1]*i.np*double(i.factor_levels)*i.M2+
-           c[2]*i.np+c[3]*i.np*(i.factor_levels?i.root_order_log2:0);
+    const bool tower=i.table_entries>(size_t(1)<<p48_root_bank::tower_log);
+    const bool factors=i.factor_levels&&(i.M2>p48_root_bank::factor_stride || i.factor_levels>p48_root_bank::factor_log+1);
+    // Price construction only for entries not supplied by the published
+    // bank. Per-prime context initialization still belongs to the call.
+    return c[0]*i.np*double(tower?i.table_entries:0)+c[1]*i.np*double(factors?i.factor_levels:0)*i.M2+
+           c[2]*i.np+c[3]*i.np*((tower||factors)&&i.factor_levels?i.root_order_log2:0);
 }
 }

@@ -1,6 +1,7 @@
 #include "radix/ring_product.hpp"
 #include "radix/programs.hpp"
 #include "product/cost_model.hpp"
+#include "product/backend.hpp"
 #include "product/root_prepare_cost.hpp"
 #include "runtime/arena.hpp"
 #include "common/checked.hpp"
@@ -15,13 +16,14 @@ struct Queried {
     sbn3_spectrum_desc future{};
 };
 bool query(size_t fresh, size_t common, size_t ring, unsigned np, int T, unsigned algorithm, unsigned workers,
-           uint64_t generation, Queried &out, bool cached = true) noexcept {
+           uint64_t generation, Queried &out, bool cached = true,unsigned prime_batch=0) noexcept {
     sbn3_mul_options o{};
     o.workers = workers;
     o.prime_count = np;
     o.trunk_bits = T;
     o.algorithm = algorithm;
-    o.borrow_output = 1;
+    o.borrow_output = 2;
+    o.prime_batch=algorithm==SBN3_MUL_BAILEY?prime_batch:0;
     sbn3_product_request r{};
     r.kind = SBN3_PRODUCT_MUL;
     r.a_limbs = common;
@@ -58,70 +60,71 @@ bool ring_plan(size_t fresh, size_t common, size_t minimum_ring, unsigned worker
     out = {};
     const bool deep = fresh > native_policy::small_model_max_words;
     Queried q{};
-    double best = INFINITY;
-    auto consider = [&](unsigned np, int T, unsigned algorithm) {
-        size_t ring = 2 * size_t(T);
-        while (ring < minimum_ring)
-            ring *= 2;
-        if ((algorithm == SBN3_MUL_FLAT && ring > (size_t(1) << 19)) || (algorithm == SBN3_MUL_BAILEY && ring < 2048))
-            return;
-        const bool cached=applications!=1;
-        if (!query(fresh, common, ring, np, T, algorithm, workers, 1, q, cached))
-            return;
-        const double ordinary = cost_model::cyclic_product(q.consumer_info.mul, deep).nanoseconds;
-        const double apply = cached?cost_model::cached_share(ordinary):ordinary;
-        const double prepare = root_prepare_cost(q.producer_info.mul) + (cached?cost_model::prepare_share(ordinary):0.);
-        const double cost = apply + (applications ? prepare / double(applications) : 0.);
-        if (!(cost < best))
-            return;
-        best = cost;
-        out = {};
-        out.enabled = true;
-        out.cached = cached;
-        out.np = np;
-        out.algorithm = algorithm;
-        out.workers = workers;
-        out.trunk_bits = T;
-        out.ring = ring;
-        out.common_limbs = common;
-        out.fresh_limbs = fresh;
-        out.predicted_ns = apply;
-        out.prepare_ns = prepare;
-        fill(out, q);
+    const bool cached=applications!=1;
+    struct Candidate {unsigned np,algorithm,batch;int T;size_t ring;double cost;};
+    Candidate candidates[7*4*2];unsigned count=0;
+    auto period=[&](int T){size_t n=2*size_t(T);while(n<minimum_ring)n*=2;return n;};
+    auto eligible=[](size_t ring,unsigned algorithm){return
+        !(algorithm==SBN3_MUL_FLAT&&ring>(size_t(1)<<19))&&
+        !(algorithm==SBN3_MUL_BAILEY&&ring<2048);};
+    auto price=[&](const sbn3_mul_info &i){
+        const double ordinary=cost_model::cyclic_product(i,deep).nanoseconds;
+        const double apply=cached?cost_model::cached_share(ordinary):ordinary;
+        const double prepare=root_prepare_cost(i)+(cached?cost_model::prepare_share(ordinary):0.);
+        return apply+(applications?prepare/double(applications):0.);
     };
-    // Transcript entry of the winner: [1][np:7][algorithm:4][0:12][T:12], checked against the request and the
-    // resources of the plan it stands for.
-    auto check = [&] {
-        return PlanTranscript::check(fresh * 3 + common, minimum_ring, workers,
-                                     out.enabled ? out.ring + 31 * (out.table_bytes + 31 * (out.work_bytes + 31 * out.spectrum_bytes)) + uint64_t(out.cached) : 0);
+    auto materialize=[&](const Candidate &c){
+        if(!query(fresh,common,c.ring,c.np,c.T,c.algorithm,workers,1,q,cached,c.batch))return false;
+        const double ordinary=cost_model::cyclic_product(q.consumer_info.mul,deep).nanoseconds;
+        out={};out.enabled=true;out.cached=cached;out.np=c.np;out.algorithm=c.algorithm;
+        out.workers=workers;out.prime_batch=c.batch;out.trunk_bits=c.T;out.ring=c.ring;
+        out.common_limbs=common;out.fresh_limbs=fresh;
+        out.predicted_ns=cached?cost_model::cached_share(ordinary):ordinary;
+        out.prepare_ns=root_prepare_cost(q.producer_info.mul)+(cached?cost_model::prepare_share(ordinary):0.);
+        fill(out,q);return true;
     };
-    if (transcript && transcript->replay) {
-        const uint64_t e = transcript->next();
-        const unsigned np = unsigned(e >> 1 & 127), algorithm = unsigned(e >> 8 & 15);
-        const int T = int(e >> 24 & 4095);
-        if ((e & 1) && (np == 5 || np == 6 || np == 8 || np == 10) && T >= 24 * int(np) - 32 && T <= 24 * int(np) - 8 &&
-            (algorithm == SBN3_MUL_FLAT || algorithm == SBN3_MUL_BAILEY)) {
-            consider(np, T, algorithm);
-            if (out.enabled && check() == e >> product_choice_bits)
-                return true;
-            out = {};
-            best = INFINITY;
-        }
-        ++transcript->searched;
+    // [1][np:7][algorithm:4][batch:6][reserved:6][T:12], plus the resource check.
+    auto check=[&]{return PlanTranscript::check(fresh*3+common,minimum_ring,workers,
+        out.enabled?out.ring+31*(out.table_bytes+31*(out.work_bytes+31*out.spectrum_bytes))+uint64_t(out.cached):0);};
+    if(transcript&&transcript->replay){
+        const uint64_t e=transcript->next();const unsigned np=unsigned(e>>1&127),algorithm=unsigned(e>>8&15),batch=unsigned(e>>12&63);
+        const int T=int(e>>24&4095);
+        if((e&1)&&np>=4&&np<=10&&batch<=np&&T>=24*int(np)-32&&T<=24*int(np)-8&&
+           (algorithm==SBN3_MUL_FLAT||algorithm==SBN3_MUL_BAILEY)&&eligible(period(T),algorithm)&&
+           materialize({np,algorithm,batch,T,period(T),0.})&&check()==e>>product_choice_bits)return true;
+        out={};++transcript->searched;
     }
-    for (unsigned np : {5u, 6u, 8u, 10u})
-        for (int T = 24 * int(np) - 8; T >= 24 * int(np) - 32; T -= 8)
-            for (unsigned algorithm : {unsigned(SBN3_MUL_FLAT), unsigned(SBN3_MUL_BAILEY)})
-                consider(np, T, algorithm);
+    for(unsigned np:{4u,5u,6u,7u,8u,9u,10u})for(int T=24*int(np)-8;T>=24*int(np)-32;T-=8)
+        for(unsigned algorithm:{unsigned(SBN3_MUL_FLAT),unsigned(SBN3_MUL_BAILEY)}){
+            const size_t ring=period(T);if(!eligible(ring,algorithm))continue;
+            sbn3_mul_options options{};options.workers=workers;options.prime_count=np;options.trunk_bits=T;
+            options.algorithm=algorithm;options.borrow_output=2;
+            options.prime_batch=algorithm==SBN3_MUL_BAILEY?(tree_policy().ring_prime_batch?tree_policy().ring_prime_batch:deep?1:0):0;
+            sbn3_product_request request{};request.kind=SBN3_PRODUCT_MUL;request.a_limbs=common;request.b_limbs=fresh;request.cyclic_limbs=ring;
+            const auto *backend=backend_lookup(np);
+            const auto quote=cached?backend->geometry_query_cached_a:backend->geometry_query;
+            sbn3_mul_info info{};
+            if(quote){if(quote(request,options,info)!=SBN3_SUPPORTED)continue;}
+            else{if(!query(fresh,common,ring,np,T,algorithm,workers,1,q,cached,options.prime_batch))continue;info=q.consumer_info.mul;}
+            candidates[count++]={np,algorithm,options.prime_batch,T,ring,price(info)};
+        }
+    // Only the winner receives identities, scales and a future spectrum
+    // descriptor. A failed full admission tries the next unchanged score.
+    for(unsigned attempt=0;attempt<count;++attempt){unsigned best=count;double cost=INFINITY;
+        for(unsigned j=0;j<count;++j)if(candidates[j].cost<cost){best=j;cost=candidates[j].cost;}
+        if(best==count)break;
+        if(materialize(candidates[best]))break;
+        candidates[best].cost=INFINITY;
+    }
     if (transcript && !transcript->replay)
-        transcript->record(out.enabled ? 1 | uint64_t(out.np) << 1 | uint64_t(out.algorithm) << 8 | uint64_t(out.trunk_bits) << 24 : 0,
+        transcript->record(out.enabled ? 1 | uint64_t(out.np) << 1 | uint64_t(out.algorithm) << 8 | uint64_t(out.prime_batch)<<12 | uint64_t(out.trunk_bits) << 24 : 0,
                            check());
     return out.enabled;
 }
 void ring_replay(const RingPlan &p, uint64_t generation, RingStage &stage) noexcept {
     Queried q{};
     RingPlan check = p;
-    require(p.enabled && query(p.fresh_limbs, p.common_limbs, p.ring, p.np, p.trunk_bits, p.algorithm, p.workers, generation, q,p.cached),
+    require(p.enabled && query(p.fresh_limbs, p.common_limbs, p.ring, p.np, p.trunk_bits, p.algorithm, p.workers, generation, q,p.cached,p.prime_batch),
             SBN3_FATAL_MATH, "radix ring replay");
     fill(check, q);
     require(check.table_bytes == p.table_bytes && check.work_bytes == p.work_bytes && check.output_limbs == p.output_limbs &&

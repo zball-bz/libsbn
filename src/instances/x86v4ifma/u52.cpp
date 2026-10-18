@@ -35,6 +35,19 @@ size_t divide_divisor_bytes(size_t dn) noexcept {
 size_t divide_work_bytes(size_t nn,size_t dn) noexcept {
     return divide_scratch_bytes(nn,dn)-divide_divisor_bytes(dn);
 }
+size_t remainder_work_bytes(size_t nn,size_t dn) noexcept {
+    require(dn>=3&&dn<=(size_t(1)<<20)&&nn<=(size_t(1)<<40),SBN3_FATAL_SIZE,"u52 remainder size");
+    if(nn<dn)return 0;
+    const size_t db=std::max<size_t>(division_min_blocks,(64*dn+415)/416);
+    const size_t shift=dn<14?division_min_blocks*416-(64*(dn-1)+1):415;
+    const size_t nb=(64*nn+shift+415)/416;
+    // N, one cross-product, recursive arithmetic. Q aliases N's dead high
+    // words; there is no second numerator-sized quotient representation.
+    return 64*(nb+db+6)+64*((40*db+64+7)/8)+256;
+}
+size_t remainder_scratch_bytes(size_t nn,size_t dn) noexcept {
+    return nn<dn?0:divide_divisor_bytes(dn)+remainder_work_bytes(nn,dn)+128;
+}
 DivisionDivisor divide_prepare(const uint64_t *dp,size_t dn64,Frame &space) noexcept {
     require(dn64>=3 && dn64<=(size_t(1)<<20) && dp[dn64-1],SBN3_FATAL_ARGUMENT,"u52 division divisor");
     DivisionDivisor p;
@@ -48,7 +61,7 @@ DivisionDivisor divide_prepare(const uint64_t *dp,size_t dn64,Frame &space) noex
     div2b_recip(p.inverse,dp,dn64);
     return p;
 }
-template<bool Dyadic=false>
+template<bool Dyadic=false,bool Remainder=false>
 void divide_prepared_impl(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn64,
                          const DivisionDivisor &prepared,Frame &space) noexcept {
     const size_t dn64=prepared.limbs;
@@ -62,7 +75,7 @@ void divide_prepared_impl(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn
     const unsigned half=Dyadic&&full_bits>dbits&&(full_bits-dbits)%832==1;
     const uint64_t nbits=full_bits-half;
     if(nbits<dbits){
-        if(qw)memset(qp,0,qw*8);
+        if constexpr(!Remainder)if(qw)memset(qp,0,qw*8);
         if constexpr(!Dyadic){
             const size_t copy=std::min(nn64,dn64);
             if(copy)memcpy(rp,np,copy*8);
@@ -76,7 +89,11 @@ void divide_prepared_impl(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn
     // Fused conversion may store one full spill vector after its shifted
     // last group, so two padding vectors are required, not just one.
     const auto *d=prepared.digits,*inverse=prepared.inverse;
-    auto *n=zero(nn+2),*q=zero(qn+3),*product=zero(dn+1);
+    auto *n=zero(nn+2),*q=Remainder?n+dn:zero(qn+3),*product=zero(dn+1);
+    // Each quotient block is stored only after its numerator window's high
+    // words are dead. The DC children preserve this boundary too: Qhigh is
+    // beyond the high-child remainder, and Qlow beyond the low-child one.
+    // Cross-products read Q only after those writes and update lower N words.
     u52_from_u64_lsh(n,np,nn64,shift+(Dyadic?64*dn64:0)-half);
     int high;
     const size_t quotient_bits=nbits-dbits,lower_blocks=2*(quotient_bits/832);
@@ -99,7 +116,7 @@ void divide_prepared_impl(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn
     ((sb_limb*)q)[8*qn]=uint64_t(high);
     size_t top=8*qn+1;while(top&&!((sb_limb*)q)[top-1])--top;
     require(!top || 52*(top-1)+64-unsigned(__builtin_clzll(((sb_limb*)q)[top-1]))<=64*qw,SBN3_FATAL_MATH,"u52 division quotient capacity");
-    if(qw)u64_from_u52_canon(qp,q,qw);
+    if constexpr(!Remainder)if(qw)u64_from_u52_canon(qp,q,qw);
     if constexpr(Dyadic){
         if(half){
             uint64_t carry=1;
@@ -119,6 +136,13 @@ void divide_prepared_impl(uint64_t *qp,uint64_t *rp,const uint64_t *np,size_t nn
 void divide_prepared(uint64_t *q,uint64_t *r,const uint64_t *n,size_t nn,
                      const DivisionDivisor &d,Frame &space) noexcept {
     divide_prepared_impl(q,r,n,nn,d,space);
+}
+void remainder_prepared(uint64_t*r,const uint64_t*n,size_t nn,const DivisionDivisor&d,Frame&space)noexcept{
+    divide_prepared_impl<false,true>(nullptr,r,n,nn,d,space);
+}
+void remainder(uint64_t*r,const uint64_t*n,size_t nn,const uint64_t*d,size_t dn,Frame&space)noexcept{
+    if(nn<dn){if(nn)memcpy(r,n,nn*8);memset(r+nn,0,(dn-nn)*8);return;}
+    AssumedFrameMark mark(space);const auto prepared=divide_prepare(d,dn,space);remainder_prepared(r,n,nn,prepared,space);
 }
 void divide_dyadic_quotient(uint64_t *q,const uint64_t *a,const uint64_t *d,size_t n,Frame &space) noexcept {
     require(n>=3&&(d[n-1]>>63)&&a[n]<=1,SBN3_FATAL_ARGUMENT,"dyadic division input");
@@ -250,45 +274,58 @@ Algorithm multiply(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,s
 namespace sbn::v3::u52 {
 size_t middle_scratch_bytes(size_t an,size_t bn) noexcept {
     const size_t a=(an*64+51)/52,b=(bn*64+51)/52;
-    // Conversion/result/padding <= 2*(a+b+64) words. Recursive maximum:
-    // at most 7*m+80 words per halving level, m=a/2. The public TMP
-    // wrapper limits a<=370; the guarded consumer permits a<=1024.
-    return 16*(a+b+64)+8*(8*a+1024)+512;
+    require(a&&b>=a,SBN3_FATAL_ARGUMENT,"middle scratch dimensions");
+    auto padded=[](size_t words){return (words*8+63)&~size_t(63);};
+    // A/B include the exact front and readable tail padding used below;
+    // reserve six guards for every entry. Thin bands use no recursive arena
+    // storage. Balanced blocks run sequentially, and three Karatsuba children
+    // share the same stack suffix, so only one halving path is live.
+    size_t bytes=padded(a+24)+padded(b+56)+padded(b-a+15)+64;
+    if(a>1024)bytes+=padded(b-a+23);
+    if(b-a+7<a)return bytes;
+    for(size_t n=a;n>=MULMID_KARA_THRESHOLD;){
+        const size_t strip=n>=4*MULMID_KARA_THRESHOLD&&(n&7)>=5?n&7:n&1;
+        if(strip){n-=strip;continue;}
+        const size_t m=n/2;
+        bytes+=8*(((3*m+38)&~size_t(7))+((m+15)&~size_t(7))+3*((m+9)&~size_t(7)));
+        n=m;
+    }
+    return bytes;
 }
 template<unsigned Guards>
 static void middle_impl(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f,
                         size_t readable_bn=0) noexcept {
     FrameMark mark(f);const size_t na=(an*64+51)/52,nb=(bn*64+51)/52,rn=nb-na+1;
-    if constexpr(Guards)require(na>Guards && na<=1024 && bn>=an && bn<=8192,SBN3_FATAL_ARGUMENT,"guarded middle shape");
+    if constexpr(Guards)require(na>Guards && bn>=an && bn<=8192 &&
+        (na<=1024||nb-na+Guards+1<=64),SBN3_FATAL_ARGUMENT,"guarded middle shape");
     auto *A=f.alloc<uint64_t>(na+24),*B=f.alloc<uint64_t>(nb+56),*R=f.alloc<uint64_t>(rn+Guards+8);
     memset(A,0,(na+24)*8);memset(B,0,(nb+56)*8);memset(R,0,(rn+Guards+8)*8);
     // Fixed planned counts, including leading zero digits; no value-dependent
     // certificate or allocation. Front padding makes donor masked bases valid.
-    A+=8;B+=8;u52_from_u64((sb_pvec)A,a,an);u52_from_u64((sb_pvec)B,b,readable_bn?readable_bn:bn);
-    mulmid_dc(R+Guards,A,B,int64_t(na),int64_t(nb),&f);
-    if constexpr(Guards){
-        constexpr uint64_t mask=(uint64_t(1)<<52)-1;
-        for(unsigned g=0;g<Guards;++g){
-            const size_t diagonal=na-1-Guards+g;
-            __m512i low=_mm512_setzero_si512(),high=low;
-            const __m512i order=_mm512_setr_epi64(0,1,2,3,4,5,6,7);
-            for(size_t i=0;i<=diagonal;i+=8){
-                const unsigned count=unsigned(std::min<size_t>(8,diagonal-i+1));
-                const __mmask8 lanes=__mmask8((1u<<count)-1);
-                const __m512i x=_mm512_maskz_loadu_epi64(lanes,A+i);
-                const __m512i raw=_mm512_maskz_loadu_epi64(lanes,B+diagonal-i+1-count);
-                const __m512i indices=_mm512_sub_epi64(_mm512_set1_epi64(count-1),order);
-                const __m512i y=_mm512_permutexvar_epi64(indices,raw);
-                low=_mm512_madd52lo_epu64(low,x,y);high=_mm512_madd52hi_epu64(high,x,y);
-            }
-            const __uint128_t sum=(__uint128_t(uint64_t(_mm512_reduce_add_epi64(high)))<<52)+
-                                  uint64_t(_mm512_reduce_add_epi64(low));
-            R[g]+=uint64_t(sum)&mask;R[g+1]+=uint64_t(sum>>52);
+    A+=8;B+=8;u52_from_u64((sb_pvec)A,a,an);
+    // B' = B * X^Guards. Its ordinary middle band [na-1,nb+Guards-1]
+    // is exactly the desired band [na-1-Guards,nb-1] of A*B. Keep the
+    // multiply's B aligned and decode after the leading zero digits. This
+    // computes guard diagonals in the same kernel, without separate dots.
+    u52_from_u64((sb_pvec)(B+Guards),b,readable_bn?readable_bn:bn);
+    if(na>1024&&rn+Guards<=64){
+        // Restrict rows, not the result band. A block A[j..j+m) pairs
+        // with B[na-j-m..nb-j), preserving every requested diagonal.
+        // 512 rows bound each raw signed coefficient below 2^63. Canonical
+        // accumulation between blocks permits a long common operand.
+        const size_t count=rn+Guards;auto *part=f.alloc<uint64_t>(count+16);
+        for(size_t at=0;at<na;){const size_t m=std::min(size_t(512),na-at);
+            memset(part,0,(count+16)*8);
+            mulmid_basecase(part,A+at,B+na-at-m,int64_t(m),int64_t(m+count-1));
+            __int128 carry=0;
+            for(size_t j=0;j<count+2;++j){carry+=(__int128)(int64_t)part[j]+R[j];
+                R[j]=uint64_t(carry)&((uint64_t(1)<<52)-1);carry>>=52;}
+            require(!carry,SBN3_FATAL_MATH,"thin middle strip carry");at+=m;
         }
-    }
+    }else mulmid_dc(R,A,B,int64_t(na),int64_t(nb+Guards),&f);
     __int128 carry=0;uint64_t acc=0;unsigned bits=0;size_t w=0;
     for(size_t j=0;j<rn+Guards+2;++j){
-        if(j<rn+Guards+1)carry+=(__int128)(int64_t)R[j];
+        carry+=(__int128)(int64_t)R[j];
         const uint64_t d=uint64_t(carry)&((uint64_t(1)<<52)-1);carry=(carry-d)>>52;
         acc|=d<<bits;
         if(bits+52>=64){out[w++]=acc;acc=bits?d>>(64-bits):0;bits=bits+52-64;}
@@ -304,6 +341,9 @@ size_t middle_guard_scratch_bytes(size_t an,size_t bn) noexcept {
 }
 void middle_guard(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
     middle_impl<4>(out,a,an,b,bn,f);
+}
+void middle_guard6(uint64_t *out,const uint64_t *a,size_t an,const uint64_t *b,size_t bn,Frame &f) noexcept {
+    middle_impl<6>(out,a,an,b,bn,f);
 }
 void middle_guard_zero2(uint64_t*out,const uint64_t*a,size_t an,const uint64_t*b,size_t bn,Frame&f) noexcept {
     require(bn&&bn<=8190,SBN3_FATAL_ARGUMENT,"middle zero-padding span");

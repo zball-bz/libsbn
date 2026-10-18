@@ -17,6 +17,14 @@ inline constexpr unsigned cyclic_balanced_cap(unsigned bits,unsigned radix) noex
         {4096,6144,5120,3584},{2048,1536,1280,1792}};
     return bits>=16&&bits<=20?caps[bits-16][column]:0;
 }
+// Two-product matrix/cyclic coefficient envelope, independently checked
+// against exact NTL coefficients (2026-09-27). The next unsigned 17-bit
+// M1/M7 orders reach exactly 0.25; use balanced digits there instead.
+inline constexpr unsigned matrix_cap(unsigned bits,unsigned radix,bool balanced) noexcept {
+    if(balanced)return cyclic_balanced_cap(bits,radix)/2;
+    return bits==16?16384:bits==17?(radix==1||radix==7?8192:16384):
+           bits==18?(radix==5?2560:4096):bits==19?1024:bits==20&&radix==1?256:0;
+}
 inline constexpr size_t cyclic_max_words=229376ul*16/32;
 // Independent bounded plus-ring envelope: unsigned 16-bit / balanced 17–18, long support <r
 // and short support <9r/16. The 18-bit M3/N12288 probe reaches 0.25 and is

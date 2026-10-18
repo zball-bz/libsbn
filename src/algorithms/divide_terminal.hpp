@@ -2,6 +2,7 @@
 #include "sbn3/product.h"
 namespace sbn::v3 {
 struct ProductStage;
+namespace product {struct LowLiftProgram;}
 /* Fused quotient terminal, 3<=m<n<=2m-1, B=2^64.
  * D: n normalized limbs. A: n+1 limbs, A[n]<=1.
  * U: m+1 limbs, U[m]==1, error <=8 against B^(2m)/D_hi.
@@ -29,6 +30,8 @@ struct DivideTerminal {
     bool retain_u_across_residual = false;
     bool fresh_residual_in_cached = false;
     size_t repair_bytes = 0;
+    sbn3_team_scope* scope=nullptr;
+    const product::LowLiftProgram* low_lift=nullptr;
 };
 void divide_terminal(const DivideTerminal &, const uint64_t *A, const uint64_t *D, const uint64_t *U,
                      uint64_t *Q) noexcept;

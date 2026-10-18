@@ -13,6 +13,9 @@ inline bool flat_packa_active(const Plan &g){
     if constexpr(CR_FLAT_PACKA==1)return true;
     return (NP==8 && g.M2>=32768) || (NP==10 && g.M2>=16384);
 }
+inline bool flat_spread_active(const Plan &g,unsigned workers){
+    return CR_FLAT_PRIME_SPREAD && workers==16 && (NP==8 || NP==10) && g.M2>=16384;
+}
 struct FlatConstants {Dec a{},b{};};
 struct FlatCtx {
     const Plan *pl=nullptr;const Primes *primes=nullptr;const FlatConstants *constants=nullptr;
@@ -20,6 +23,7 @@ struct FlatCtx {
     const V *cached[2][NP]{};
     bool packed_cache[2]{},packed_output=false;
     uint8_t *output[NP]{};
+    bool output_work=false; // each output plane has an unpacked M2+16 backing span
     const uint64_t *k[2]{},*rec[2]{};
     PassCounts *counts=nullptr;
 #ifdef CR_FLAT_PROFILE
@@ -68,7 +72,7 @@ inline void flat_program_prepare48(void *arg,uint64_t lo,uint64_t hi,int w,Frame
         if(c.counts)++c.counts[w].row_forward;
     }
 }
-inline void flat_program_apply48(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
+template<bool Scaled=false>inline void flat_program_apply48(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
     auto &c=*static_cast<FlatCtx *>(arg);const auto &g=*c.pl;auto *y=space->alloc<V>(g.M2+16);const auto pack=pk52_mk();
     for(unsigned q=lo;q<hi;++q){
         const auto &p=c.primes->P[q];const auto &pv=c.primes->V[q];
@@ -79,7 +83,8 @@ inline void flat_program_apply48(void *arg,uint64_t lo,uint64_t hi,int w,Frame *
         flat_forward(y,g,flat_input_vectors(c.bn[0],g.T),p,pv);flat_pad_frequency(y,g);
         for(size_t v=0;v<g.lbw;v+=8){
             V a[8];for(unsigned j=0;j<8;++j)a[j]=ldslot<48>(saved+(v+j)*48,pack);
-            conv8x8<false,true>(y+v,a,tower8<false>(p,v),pv);
+            if constexpr(Scaled)conv8x8<true,true>(y+v,a,tower8<false>(p,v),pv,vset(c.k[0][q]),vset(c.rec[0][q]));
+            else conv8x8<false,true>(y+v,a,tower8<false>(p,v),pv);
         }
         flat_inverse(y,g,p,pv);flat_pad_frequency(y,g);
         for(size_t v=0;v<g.lbw;++v)st52(c.output[q]+v*SLOT,y[v],pack,pv);
@@ -114,11 +119,12 @@ void flat_product_fn(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
     auto &c=*static_cast<FlatCtx *>(arg);const auto &g=*c.pl;const bool cached0=c.cached[0][0]!=nullptr;
     if constexpr(CR_FLAT_PACKA && Kind==0)if(!cached0 && flat_packa_active(g)){flat_product_packed_a<Scaled>(c,lo,hi,w,space);return;}
     V *a=cached0?nullptr:space->alloc<V>(g.M2+16);
-    V *y=(Kind==1 && !cached0)?a:space->alloc<V>(g.M2+16);
+    V *temporary_y=(Kind==1 && !cached0)?a:c.output_work?nullptr:space->alloc<V>(g.M2+16);
     V *a1=nullptr,*y1=nullptr;
     if constexpr(Kind==3){a1=c.cached[1][0]?nullptr:space->alloc<V>(g.M2+16);y1=space->alloc<V>(g.M2+16);}
     const Pk52 pack=pk52_mk();
     for(unsigned q=lo;q<hi;++q){const auto &p=c.primes->P[q];const auto &pv=c.primes->V[q];
+        V *y=c.output_work?reinterpret_cast<V *>(c.output[q]):temporary_y;
 #ifdef CR_FLAT_PROFILE
         uint64_t stamp[9]{};
 #endif
@@ -162,6 +168,8 @@ void flat_product_fn(void *arg,uint64_t lo,uint64_t hi,int w,Frame *space){
         else {flat_inverse(y,g,p,pv);if(c.counts)++c.counts[w].row_inverse;}
         for(size_t v=g.lbv;v<g.lbw;++v)y[v]=_mm512_setzero_si512();
         FLAT_STAMP(7);
+        // Forward compaction is safe when y aliases output: each 48-byte
+        // store ends before the next unread 64-byte coefficient vector.
         for(size_t v=0;v<g.lbw;++v)st52(c.output[q]+v*SLOT,y[v],pack,pv);
         FLAT_STAMP(8);
 #ifdef CR_FLAT_PROFILE

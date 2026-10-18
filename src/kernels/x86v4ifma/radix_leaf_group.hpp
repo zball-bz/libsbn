@@ -3,6 +3,7 @@
 // round with shared constants, then transpose digit words into fragments.
 #include "radix/leaf.hpp"
 #include <immintrin.h>
+#include "radix_decimal.hpp"
 namespace sbn::v3::radix::leaf_detail {
 [[gnu::always_inline]] inline void transpose(__m512i (&x)[8]) {
     const __m512i a0=_mm512_unpacklo_epi64(x[0],x[1]),a1=_mm512_unpackhi_epi64(x[0],x[1]);
@@ -21,11 +22,15 @@ namespace sbn::v3::radix::leaf_detail {
 struct Emitter {
     __m512i m4,m2,b4,b2,m1,b1,table;
     __m128i s4,s2,s1;
+    bool decimal,identity,ascii;
     explicit Emitter(const DigitPlan &p):m4(_mm512_set1_epi64(p.m4)),m2(_mm512_set1_epi64(p.m2)),
       b4(_mm512_set1_epi64(p.b4)),b2(_mm512_set1_epi64(p.b2)),m1(_mm512_set1_epi16(p.m1)),
       b1(_mm512_set1_epi16(p.base)),table(_mm512_loadu_si512(p.encode)),
-      s4(_mm_cvtsi32_si128(p.s4)),s2(_mm_cvtsi32_si128(p.s2)),s1(_mm_cvtsi32_si128(p.s1)){}
+      s4(_mm_cvtsi32_si128(p.s4)),s2(_mm_cvtsi32_si128(p.s2)),s1(_mm_cvtsi32_si128(p.s1)),
+      decimal(p.base==10),identity(p.identity),ascii(p.decimal_ascii){}
     [[gnu::always_inline]] inline __m512i operator()(__m512i x)const {
+        if(decimal){const auto d=decimal_detail::emit_words(x);
+            return ascii?_mm512_add_epi8(d,_mm512_set1_epi8('0')):identity?d:_mm512_permutexvar_epi8(d,table);}
         const __m512i z=_mm512_setzero_si512();
         const auto a=_mm512_srl_epi64(_mm512_madd52hi_epu64(z,x,m4),s4);
         const auto b=_mm512_sub_epi64(x,_mm512_mullo_epi64(a,b4));
@@ -37,7 +42,8 @@ struct Emitter {
                                     _mm512_or_si512(_mm512_slli_epi64(qb,32),_mm512_slli_epi64(rb,48)));
         const auto q=_mm512_srl_epi16(_mm512_mulhi_epu16(y,m1),s1);
         const auto r=_mm512_sub_epi16(y,_mm512_mullo_epi16(q,b1));
-        return _mm512_permutexvar_epi8(_mm512_or_si512(q,_mm512_slli_epi16(r,8)),table);
+        const auto digits=_mm512_or_si512(q,_mm512_slli_epi16(r,8));
+        return identity?digits:_mm512_permutexvar_epi8(digits,table);
     }
 };
 template<unsigned Digits>
@@ -58,13 +64,16 @@ void emit_full_group(uint8_t *out,uint64_t *first,uint64_t *overlap,const uint64
     }
     #pragma clang loop unroll(full)
     for(unsigned r=0;r<9;++r){
-        __m512i carry=zero;
+        __m512i carry=zero,high=zero;
         #pragma clang loop unroll(full)
         for(unsigned j=0;j<Digits;++j){
-            const auto low=_mm512_madd52lo_epu64(zero,x[j],b),high=_mm512_madd52hi_epu64(zero,x[j],b);
-            const auto t=_mm512_add_epi64(low,carry);
-            carry=_mm512_add_epi64(high,_mm512_srli_epi64(t,52));x[j]=_mm512_and_si512(t,mask);
+            // The preceding high half fits in a u52 digit. Accumulate it
+            // directly into this low product; only a one-bit carry remains
+            // on the serial normalization chain.
+            auto t=_mm512_madd52lo_epu64(high,x[j],b);high=_mm512_madd52hi_epu64(zero,x[j],b);
+            t=_mm512_add_epi64(t,carry);carry=_mm512_srli_epi64(t,52);x[j]=_mm512_and_si512(t,mask);
         }
+        carry=_mm512_add_epi64(high,carry);
         if(!r)_mm512_mask_storeu_epi64(first,active,carry);
         if(r<8)digits[r]=emit(carry);else _mm512_mask_storeu_epi64(overlap,active,carry);
     }

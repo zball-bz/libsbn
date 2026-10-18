@@ -5,6 +5,7 @@
 #include "product/fft_choice.hpp"
 #include "common/checked.hpp"
 #include "common/small_checks.h"
+#include "common/query_audit.hpp"
 using namespace sbn::v3;
 const Backend *sbn::v3::backend_lookup(uint64_t id) noexcept {
     switch (id) {
@@ -12,6 +13,8 @@ const Backend *sbn::v3::backend_lookup(uint64_t id) noexcept {
         return &short_backend();
     case 101:
         return &fft_backend();
+    case 102:
+        return &fft_matrix_backend();
     case 4:
         return &np4_backend();
     case 5:
@@ -359,6 +362,7 @@ sbn3_query_result sbn::v3::square_query_chosen(size_t limbs, const sbn3_mul_opti
 }
 extern "C" sbn3_query_result sbn3_mul_query(const sbn3_product_spec *s, const sbn3_mul_options *o,
                                             sbn3_mul_plan *p, sbn3_mul_info *i) {
+    SBN3_QUERY_AUDIT("sbn3_mul_query");
     require(s && p && i, SBN3_FATAL_ARGUMENT, "mul query arguments");
     *i = {};
     if (!native_available())
@@ -419,6 +423,7 @@ extern "C" void sbn3_mul_unbind(sbn3_mul_binding *b) {
 }
 extern "C" sbn3_query_result sbn3_product_query(const sbn3_product_request *s, const sbn3_mul_options *o,
                                                 sbn3_mul_plan *p, sbn3_product_info *i) {
+    SBN3_QUERY_AUDIT("sbn3_product_query");
     require(s && p && i, SBN3_FATAL_ARGUMENT, "product query arguments");
     *i = {};
     const sbn3_mul_options defaults{1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};

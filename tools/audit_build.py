@@ -23,9 +23,11 @@ def main():
     actual={str(p.relative_to(ROOT)) for p in (ROOT/'src').rglob('*') if p.suffix in {'.cpp','.c','.s','.S'}}
     require(actual==registered,'production TU set differs from explicit manifest')
     public=[]
-    for p in (ROOT/'include').rglob('*.h'):
+    for p in (ROOT/'include').rglob('*'):
+        if p.suffix not in {'.h','.hpp'}:continue
         s=p.read_text()
         require(not re.search(r'__m(?:128|256|512)|immintrin|x86intrin|src/backend',s),f'ISA/private header leak: {p}')
+        if p.suffix=='.hpp':continue  # C++ definitions are exercised by baseline-TU callers.
         # Audit external declarations, not names mentioned in comments,
         # callback return types such as sbn3_query_result (*bounds)(...), or
         # static inline definitions supplied by the public header itself.
@@ -36,7 +38,7 @@ def main():
     require(not re.search(r'\b[TW] sbn_(?!3)',symbols),'legacy symbol in production archive')
     defined={line.split()[-1] for line in symbols.splitlines() if re.search(r'\b[TW]\b',line)}
     require(set(public)<=defined,f'missing public implementations: {set(public)-defined}')
-    for p in (ROOT/'src').rglob('*'):
+    for p in list((ROOT/'src').rglob('*'))+list((ROOT/'include').rglob('*')):
         if p.suffix not in {'.h','.hpp','.cpp','.c'}:continue
         s=re.sub(r'/\*.*?\*/|//[^\n]*','',p.read_text(),flags=re.S)
         require(not re.search(r'\b(?:malloc|calloc|realloc|aligned_alloc|posix_memalign)\s*\(',s),f'ordinary allocation: {p}')
@@ -49,7 +51,7 @@ def main():
         for name,digest in receipt['dependencies'].items():require(sha(Path(name))==digest,f'stale dependency: {name}')
         disassembly=command('llvm-objdump','-d','--no-show-raw-insn',str(obj))
         if e['group']=='common':require(not re.search(r'%zmm|%k[0-7]',disassembly),f'AVX-512 in common TU: {e["path"]}')
-        if re.search(r'/np(?:[4-9]|10)\.cpp$',e['path']):
+        if re.search(r'/np(?:[4-9]|10)\.cpp$',e['path']) or e['path'] in {'src/kernels/x86v4ifma/modular_row.cpp','src/kernels/x86v4ifma/outer_transform.cpp'}:
             require('vpmadd52' in disassembly,'native IFMA instance missing')
             undefined=command('llvm-nm','-u',str(obj))
             require(not re.search(r'\b(?:malloc|calloc|realloc|free|mmap|mlock|mprotect|madvise|posix_memalign|aligned_alloc|getenv)\b|\b_Zn[aw]',undefined),'allocation/page operation in native instance')
@@ -58,6 +60,14 @@ def main():
     for row in imports:
         require(re.fullmatch(r'[0-9a-f]{64}',row['sha256']), 'invalid donor identity')
         if args.verify_donors:require(sha(reference_root(True)/row['source'])==row['sha256'],f'donor changed: {row["source"]}')
+    vendor=ROOT/'third_party/xxhash'
+    upstream=json.loads((vendor/'provenance.json').read_text())
+    require(set(upstream['files'])=={'xxhash.h','LICENSE'},'xxHash pinned file set')
+    for name,record in upstream['files'].items():
+        require(sha(vendor/name)==record['sha256'],f'xxHash upstream file changed: {name}')
+    checksum_imports=command('llvm-nm','-u',str(ROOT/'build/native/src/external/checksum.cpp.o'))
+    require(not re.search(r'\b(?:malloc|calloc|realloc|free|mmap|mlock|mprotect|madvise|posix_memalign|aligned_alloc)\b|\b_Zn[aw]',checksum_imports),
+            'allocation/page operation in XXH3 checksum wrapper')
     result={'schema':1,'status':'passed','archive_sha256':sha(archive),'public_symbols':sorted(set(public)),
             'objects':objects,'donor_sources_verified':args.verify_donors,'checks':['explicit TU set','public C declarations implemented','no public ISA types',
             'no legacy production symbols','no ordinary source allocation','no backend environment choices',

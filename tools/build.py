@@ -25,13 +25,14 @@ def run(cmd):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('target', choices=['lib', 'check', 'bench', 'examples'])
+    ap.add_argument('target', choices=['lib', 'decimal-inline', 'check', 'bench', 'examples'])
     ap.add_argument('--sanitize', choices=['none', 'address', 'thread'], default='none')
     ap.add_argument('--extended',action='store_true')
     ap.add_argument('--checked',action='store_true',help='Enable small-operation contract diagnostics')
     ap.add_argument('--only-test',action='append',help='Run a registered test during focused iteration (repeatable)')
     ap.add_argument('--with-reference', action='store_true', help='Include optional frozen-reference benchmarks')
     ap.add_argument('--only-benchmark', action='append', help='Build only selected registered benchmarks')
+    ap.add_argument('--only-example', action='append', help='Build only selected registered examples')
     ap.add_argument('--build-only', action='store_true', help='Build test executables without running them')
     args = ap.parse_args()
     (V3/'build').mkdir(exist_ok=True)
@@ -72,6 +73,10 @@ def main():
         benchmarks=[b for b in benchmarks if not b.get('requires_reference')]
     if any(b.get('requires_reference') for b in benchmarks):reference_root(True)
     examples = json.loads((V3/'config/examples.json').read_text())['examples'] if args.target == 'examples' else []
+    if args.only_example:
+        selected=set(args.only_example)
+        if selected-{e['name'] for e in examples}:raise SystemExit('unknown example')
+        examples=[e for e in examples if e['name'] in selected]
     receipt = {'schema':1,'variant':variant,'compiler':versions,
                'small_checks':bool(args.checked or args.sanitize!='none'),'units':[], 'tests':[]}
 
@@ -81,6 +86,8 @@ def main():
         dep = Path(str(obj)+'.d')
         record = Path(str(obj)+'.json')
         cxx = language == 'cxx'
+        if '-fexceptions' in extra_flags and not prefix:
+            raise ValueError('exception-enabled TUs are client integration only: '+src)
         exe = compiler['cxx' if cxx else 'cc']
         flags = ['-g','-Wall','-Wextra','-Werror','-Iinclude','-Isrc']
         if language in ['c','cxx']: flags.insert(0, '-O2')
@@ -90,7 +97,10 @@ def main():
         # timing. Production, examples and maintained tests keep the guard.
         if prefix and not (prefix=='bench/' and reference_gmp):flags += ['-Itests/no_gmp']
         if language in ['c','cxx']:
-            flags += ['-std=c++20','-fno-exceptions','-fno-rtti'] if cxx else ['-std=c11']
+            # A manifest may opt a client-only integration TU into normal
+            # C++ exception semantics (e.g. standard stream/format adapters).
+            # Production sources retain the non-failable arithmetic policy.
+            flags += (['-std=c++20']+([] if '-fexceptions' in extra_flags else ['-fno-exceptions'])+['-fno-rtti']) if cxx else ['-std=c11']
             flags += sanitize
             if args.checked:flags += ['-DSBN3_CHECK_SMALL=1']
         if language != 'asm': flags += ['-MD','-MF',str(dep)]
@@ -116,6 +126,27 @@ def main():
                                     reused=valid,**previous))
         return obj
 
+    inline_archives={}
+    def inline_export(name):
+        if name in inline_archives:return inline_archives[name]
+        selected=[e for e in sources if e.get('inline_export')==name]
+        if not selected:raise SystemExit(f'unknown inline export: {name}')
+        objs=[compile_one(e['path'],e['language'],e['group'],'inline/',
+                          [*e.get('extra_flags',[]),'-flto=thin']) for e in selected]
+        archive=build/f'libsbn_v3_{name}_inline.a'
+        temporary=Path(str(archive)+'.next')
+        if temporary.exists():temporary.unlink()
+        run([compiler['ar'],'rcs',temporary,*objs]);os.replace(temporary,archive)
+        receipt.setdefault('inline_archives',[]).append({'path':str(archive.relative_to(V3)), 'sha256':digest(archive)})
+        inline_archives[name]=archive;return archive
+
+    if args.target=='decimal-inline':
+        archive=inline_export('decimal')
+        receipt['archive']={'path':str(archive.relative_to(V3)),'sha256':digest(archive)}
+        (build/'decimal-inline-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+        print(f'OK: {archive.relative_to(V3)}; link before the main archive with a compatible Clang LTO caller')
+        return
+
     objects=[compile_one(e['path'],e['language'],e['group'],extra_flags=e.get('extra_flags',[])) for e in sources]
     archive=build/'libsbn_v3.a'
     membership={'objects':{str(p.relative_to(V3)):digest(p) for p in objects},'archiver':versions['ar']}
@@ -130,21 +161,24 @@ def main():
     for example in examples:
         objs=[compile_one(e['path'],e['language'],e.get('group','reference'),'examples/',e.get('extra_flags',[])) for e in example['sources']]
         exe=build/example['name']
-        run([compiler['cc'],'-fuse-ld=lld',*sanitize,*objs,archive,'-pthread','-lm','-o',exe])
+        driver=compiler['cxx' if any(e['language']=='cxx' for e in example['sources']) else 'cc']
+        run([driver,'-fuse-ld=lld',*sanitize,*objs,archive,'-pthread','-lm','-o',exe])
         receipt.setdefault('examples',[]).append({'name':example['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe)})
     for benchmark in benchmarks:
+        exports=[inline_export(n) for n in benchmark.get('inline_exports',[])]
         unit_start=len(receipt['units'])
         objs=[compile_one(e['path'],e['language'],e.get('group','common'),'bench/',e.get('extra_flags',[]),benchmark.get('reference_gmp',False)) for e in benchmark['sources']]
         exe=build/benchmark['name']
         run([compiler['cxx'],'-fuse-ld=lld',*sanitize,*(['-shared'] if benchmark.get('shared') else []),*objs,
-             *([archive] if benchmark.get('link_library',True) else []),'-pthread','-lm',*benchmark.get('link_flags',[]),'-o',exe])
+             *exports,*([archive] if benchmark.get('link_library',True) else []),'-pthread','-lm',*benchmark.get('link_flags',[]),'-o',exe])
         receipt.setdefault('benchmarks',[]).append({'name':benchmark['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe),
                                                    'unit_indices':list(range(unit_start,len(receipt['units'])))})
     for test in tests:
+        exports=[inline_export(n) for n in test.get('inline_exports',[])]
         if any('gmp' in f.lower() for f in test.get('link_flags',[])):raise SystemExit('GMP is forbidden in maintained tests')
         objs=[compile_one(e['path'],e['language'],e.get('group','reference'),'tests/',e.get('extra_flags',[])) for e in test['sources']]
         exe=build/test['name']
-        cmd=[compiler['cxx'],'-fuse-ld=lld',*sanitize,*objs,archive,'-pthread','-lm',*test.get('link_flags',[]),'-o',exe]
+        cmd=[compiler['cxx'],'-fuse-ld=lld',*sanitize,*objs,*exports,archive,'-pthread','-lm',*test.get('link_flags',[]),'-o',exe]
         run(cmd)
         receipt.setdefault('test_binaries',[]).append({'name':test['name'],'path':str(exe.relative_to(V3)),'sha256':digest(exe),'timeout_seconds':test.get('timeout_seconds',60),'environment':test.get('environment',{})})
         if args.build_only:continue

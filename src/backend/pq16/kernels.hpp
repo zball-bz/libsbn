@@ -4,6 +4,7 @@
 #include "sbn3/team.h"
 namespace sbn::v3 {
 class Frame;
+struct MatrixProductInputs;
 namespace pq16 {
 enum class Recipe : uint8_t {PfaPQ=0,CooleyTukeyPQ=1,RightAngle=2};
 struct Shape {uint32_t nfull,branch,radix;bool centered;Recipe recipe=Recipe::PfaPQ;unsigned bits=16;bool balanced=false;}; // balanced: locally signed digits (wide codec only)
@@ -63,5 +64,10 @@ void cyclic_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
 // At origin the signed modular error is <2^40. No canonical residue promised.
 void cyclic_tail_multiply(uint64_t *,const uint64_t *,size_t,const uint64_t *,size_t,
                            const double *,const Tables &,Frame &,size_t origin) noexcept;
+// Matrix DOT2 envelope and execution have their own numerical admission;
+// ordinary product limits do not automatically admit accumulated products.
+bool matrix_supported(Shape) noexcept;
+void matrix_execute(const Tables &,Frame &,sbn3_team_scope *,
+                    const MatrixProductInputs &,size_t output_words,uint64_t arithmetic_id) noexcept;
 }
 }

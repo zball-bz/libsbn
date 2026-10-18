@@ -1,4 +1,6 @@
 #include "series/psr.hpp"
+#include "series/precision_policy.hpp"
+#include "series/precision_merge.hpp"
 #include "series/limited.hpp"
 #include "product/program.hpp"
 #include "product/cost_model.hpp"
@@ -13,7 +15,7 @@ namespace {
 constexpr unsigned max_blocks = 128;
 // Four mantissa guard words cover word rounding, <=2^48 terms, a <2^63
 // local affine value, and propagation through the contraction certificate.
-constexpr size_t guard_words = 4;
+constexpr size_t guard_words = precision_guard_words;
 // Relative cost of a merge that runs its np primes in several passes because
 // only `batch` of them fit the pool at a time: 1 + penalty (passes - 1),
 // passes = ceil(np/batch). See the merge planning in assemble().
@@ -37,94 +39,6 @@ uint64_t now() {
     timespec t{};
     clock_gettime(CLOCK_MONOTONIC, &t);
     return uint64_t(t.tv_sec) * 1000000000 + t.tv_nsec;
-}
-size_t precision(const PsrSpec &s, uint64_t at) {
-    const uint64_t lost = s.precision.decay_bits(s.precision.context, at) / 64;
-    return lost >= s.fractional_limbs - 2 ? 2 : s.fractional_limbs - size_t(lost);
-}
-size_t limited_words(const void *p, uint64_t a) {
-    return precision(*static_cast<const PsrSpec *>(p), a) + guard_words;
-}
-// An exact block runs the same canonical whole-word values (known low zero
-// words live in the exponent) under one constant limit: the words its first
-// index keeps. The exact-suffix rule proved that the span bound of the whole
-// block fits below it, and the span bound of every subrange is no larger (D
-// divides, the term count and the |P/Q| window only shrink), so no node ever
-// drops a nonzero bit; the root needs no more capacity than a limited one.
-size_t exact_words(const void *p, uint64_t) {
-    return static_cast<const Block *>(p)->exact_words;
-}
-FiniteFormula limited_formula(const PsrSpec &s, const Block *exact = nullptr) {
-    auto f = s.formula;
-    f.limit_context = exact ? static_cast<const void *>(exact) : &s;
-    f.limit_words = exact ? exact_words : limited_words;
-    f.reuse_values = true;
-    if(f.normalized_bounds)f.bounds=f.normalized_bounds;
-    if(f.normalized_serial_envelope)f.serial_envelope=f.normalized_serial_envelope;
-    f.parameter_id = exact ? identity::word(identity::word(f.parameter_id, 0x5053524558414354ULL), exact->exact_words)
-                           : identity::word(identity::word(f.parameter_id, 0x5053525041495231ULL), s.fractional_limbs);
-    return f;
-}
-struct Cut {
-    uint64_t end = 0;
-    bool exact = false;
-};
-// Exact-suffix rule (docs/series-precision-planner-math-2026-09-17.md, (22) and
-// section 7): the words a node starting at a must keep are
-// precision(a)+guard. When the exact values of the whole remaining range
-// [a,end) fit them with a word to spare, truncation cannot save anything
-// there: for x in [a,end) the demand falls by the attenuation of [a,x), which
-// never exceeds the growth log2 D[a,x) removed from the suffix (|U| >= 1), so
-// no node inside would be truncated either. The suffix is then planned as
-// one exact tree. Hyperdescent series stopped by their tail bound satisfy
-// this from the first index (log2 D[begin,N) = p + O(log N)); expanding
-// Common/BinaryBBP chains do not, and keep limited blocks. This is a
-// planning result of the same precision rule, not a formula-family switch.
-bool exact_suffix(const PsrSpec &s, uint64_t a) {
-    if (!s.exact_suffix)
-        return false;
-    const uint64_t end = s.range.end;
-    if (s.precision.maximum_block_terms && end - a > s.precision.maximum_block_terms)
-        return false;
-    sbn3_series_shape exact{};
-    if (s.formula.exact_span) {
-        if (s.formula.exact_span(s.formula.context, {a, end}, 3, &exact) != SBN3_SUPPORTED)
-            return false;
-    } else {
-        const auto bounds = s.formula.normalized_bounds ? s.formula.normalized_bounds : s.formula.bounds;
-        if (bounds(s.formula.context, {a, end}, end - a, 3, &exact) != SBN3_SUPPORTED)
-            return false;
-    }
-    return std::max(exact.limbs[0], exact.limbs[1]) + 1 <= precision(s, a) + guard_words;
-}
-Cut cut(const PsrSpec &s, uint64_t a) {
-    const auto &p = s.precision;
-    const uint64_t end = s.range.end;
-    if (exact_suffix(s, a))
-        return {end, true};
-    uint64_t low = a + 1, high = end;
-    while (low < high) {
-        const uint64_t m = low + (high - low) / 2;
-        if (s.formula.work(s.formula.context, {a, m}) >=
-            std::max(double(precision(s, m)) * 64, p.minimum_block_bits))
-            high = m;
-        else
-            low = m + 1;
-    }
-    low = std::max(low, a + std::min(p.minimum_block_terms, end - a));
-    if (p.maximum_block_terms)
-        low = std::min(low, a + std::min(p.maximum_block_terms, end - a));
-    return {low, false};
-}
-bool valid(const PsrSpec &s) {
-    return s.formula.bounds && s.formula.work && s.formula.leaf && s.precision.decay_bits &&
-           s.range.begin < s.range.end && s.range.end - s.range.begin <= (uint64_t(1) << 48) &&
-           s.fractional_limbs >= 2 && s.fractional_limbs <= (size_t(1) << 28) &&
-           s.precision.minimum_block_terms &&
-           (!s.precision.maximum_block_terms ||
-            s.precision.maximum_block_terms >= s.precision.minimum_block_terms) &&
-           s.formula.recipe >= SBN3_SERIES_HYPERDESCENT && s.formula.recipe <= SBN3_SERIES_BINARY_BBP &&
-           s.precision.decay_bits(s.precision.context, s.range.begin) == 0;
 }
 struct MergeBudget {
     size_t an=0,bn=0,offset=0,fast=0,compact=0,pitch=0;
@@ -154,13 +68,15 @@ MergeBudget make_budget(const ProductProgramPlan &p, size_t offset, bool paired)
 sbn3_query_result assemble(const PsrSpec &s, PsrInfo &out, void *destination = nullptr,
                            unsigned expected = 0, size_t destination_bytes = 0) {
     out = {};
-    if (!valid(s))
+    if (!precision_spec_supported(s))
         return SBN3_UNSUPPORTED;
     uint64_t ends[max_blocks]{};bool exact[max_blocks]{};unsigned total_blocks=0;
     for(uint64_t at=s.range.begin;at<s.range.end;){
         if(total_blocks==max_blocks)return SBN3_QUERY_CAPACITY;
-        const Cut c=cut(s,at);
-        at=c.end;exact[total_blocks]=c.exact;ends[total_blocks++]=at;
+        PrecisionBlock c{};
+        const auto rc=precision_block_query(s,at,c);
+        if(rc!=SBN3_SUPPORTED)return rc;
+        at=c.range.end;exact[total_blocks]=c.exact_words!=0;ends[total_blocks++]=at;
     }
     size_t metadata_cursor=up(total_blocks*block_stride);
     if(destination)require(total_blocks==expected && metadata_cursor<=destination_bytes,SBN3_FATAL_WORKSPACE,"PSR metadata headers");
@@ -183,15 +99,15 @@ sbn3_query_result assemble(const PsrSpec &s, PsrInfo &out, void *destination = n
         auto &b=destination?*::new(static_cast<char *>(destination)+out.blocks*block_stride)Block{}:temporary;
         b.range = {a, ends[out.blocks]};
         out.exact_blocks += exact[out.blocks];
-        b.precision = precision(s, a);
+        b.precision = precision_words(s, a);
         b.exact_words = exact[out.blocks] ? b.precision + guard_words : 0;
-        b.formula=limited_formula(s,exact[out.blocks]?&b:nullptr); // the block is its own stable limit context
+        b.formula=precision_formula(s,exact[out.blocks]?&b.exact_words:nullptr); // the block is its own stable limit context
         const uint64_t decay = s.precision.decay_bits(s.precision.context, b.range.end);
         if (decay < previous_decay)
             return SBN3_UNSUPPORTED;
         previous_decay = decay;
         const bool has_next = b.range.end < s.range.end;
-        b.next_precision = has_next ? precision(s, b.range.end) : 0;
+        b.next_precision = has_next ? precision_words(s, b.range.end) : 0;
         const unsigned need = has_next && s.formula.recipe == SBN3_SERIES_COMMON_P2B3 ? 7 : 3;
         sbn3_query_result rc;
         b.metadata=metadata_cursor;
@@ -426,100 +342,6 @@ uint64_t *at(PsrBinding &b, size_t offset) {
 sbn3_lease lease(PsrBinding &b, size_t offset, size_t bytes) {
     return b.arena->acquire(b.offset + b.info.pool + offset, bytes);
 }
-struct MergeCall {
-    const ProductProgram *program, *contraction;
-    Frame *work;
-    const sbn3_series_values *block;
-    sbn3_series_values *result;
-    sbn3_series_value x, y;
-    uint64_t *a, *b, *fallback;
-    size_t pair_words;
-    size_t precision;
-    sbn3_series_recipe recipe;
-};
-void merge_action(void *p, sbn3_team_scope *scope) {
-    auto &c = *static_cast<MergeCall *>(p);
-    auto multiply = [&](sbn3_series_value &out, const sbn3_series_value &x, const sbn3_series_value &y, const ProductProgram *selected=nullptr) {
-        const auto *program=selected?selected:c.program;
-        const auto &xm = x.mantissa, &ym = y.mantissa;
-        const size_t used = xm.size + ym.size;
-        const unsigned negative = xm.negative ^ ym.negative;
-        require(xm.size <= program->an && ym.size <= program->bn, SBN3_FATAL_WORKSPACE,
-                "PSR product bounds");
-        require(!__builtin_add_overflow(x.exponent2, y.exponent2, &out.exponent2), SBN3_FATAL_SIZE,
-                "PSR product exponent");
-        if (!xm.size || !ym.size) {
-            out.mantissa.size = out.mantissa.negative = 0;
-            out.exponent2 = 0;
-            return;
-        }
-        const bool direct = !c.fallback;
-        auto *destination = direct ? out.mantissa.data : c.fallback;
-        if (program->contract & program_bounded_inputs) {
-            product_program_bounded(
-                *program, *c.work, scope, {xm.data, xm.size}, {ym.data, ym.size},
-                {destination, direct ? out.mantissa.capacity : program->an + program->bn}, direct);
-        } else {
-            std::memcpy(c.a, xm.data, xm.size * 8);
-            std::memset(c.a + xm.size, 0, (program->an - xm.size) * 8);
-            std::memcpy(c.b, ym.data, ym.size * 8);
-            std::memset(c.b + ym.size, 0, (program->bn - ym.size) * 8);
-            product_program_execute(*program, *c.work, scope, {c.a, program->an}, {c.b, program->bn},
-                                    {destination, program->an + program->bn});
-        }
-        if (!direct)
-            std::memmove(out.mantissa.data, destination, used * 8);
-        out.mantissa.size = used;
-        out.mantissa.negative = negative;
-        // MergeCall temporaries retain the full backing slot until the merge
-        // finishes. Dropped low words need no physical compaction here.
-        limit_window(out, c.precision + 1);
-    };
-    const auto &v = *c.block;
-    auto &r = *c.result;
-    // V1: consume block U to form U*N_tail. N_tail then dies, so its slot
-    // saves T before V0 consumes Q and overwrites the old T/Q pair.
-    // Hyperdescent has U == 1; BinaryBBP is additive (T = T_L D_R + D_L T_R),
-    // so the block's own denominator plays the U role and attenuation is
-    // certified by the terms' absolute binary exponents, not by |U/D|.
-    if (c.recipe == SBN3_SERIES_HYPERDESCENT)
-        copy_limited(c.y, r.value[0], c.precision + 1);
-    else if (c.recipe == SBN3_SERIES_BINARY_BBP)
-        multiply(c.y, v.value[1], r.value[0]);
-    else
-        multiply(c.y, v.value[2], r.value[0], c.contraction);
-    copy_limited(r.value[0], v.value[0], c.precision);
-    // Both saved T and old denominator are now consumed into their combined
-    // contiguous output region. Restore the new denominator only after N.
-    sbn3_series_value sum{{r.value[0].mantissa.data, 2 * c.pair_words, 0, 0}, 0};
-    if (c.program->pair_workspace_bytes && v.value[1].mantissa.size &&
-        r.value[0].mantissa.size && r.value[1].mantissa.size) {
-        const auto &common = r.value[1];
-        const auto &x = v.value[1];
-        const auto &y = r.value[0];
-        const unsigned sign0 = common.mantissa.negative ^ x.mantissa.negative;
-        const unsigned sign1 = common.mantissa.negative ^ y.mantissa.negative;
-        int64_t e0 = 0, e1 = 0;
-        require(!__builtin_add_overflow(common.exponent2, x.exponent2, &e0) &&
-                    !__builtin_add_overflow(common.exponent2, y.exponent2, &e1),
-                SBN3_FATAL_SIZE, "PSR paired product exponent");
-        const size_t n0 = common.mantissa.size + x.mantissa.size;
-        const size_t n1 = common.mantissa.size + y.mantissa.size;
-        product_program_pair(*c.program, *c.work, scope, {common.mantissa.data, common.mantissa.size},
-                             {x.mantissa.data, x.mantissa.size}, {y.mantissa.data, y.mantissa.size},
-                             {c.x.mantissa.data, c.x.mantissa.capacity},
-                             {sum.mantissa.data, sum.mantissa.capacity}, true);
-        c.x.mantissa.size = n0; c.x.mantissa.negative = sign0; c.x.exponent2 = e0;
-        sum.mantissa.size = n1; sum.mantissa.negative = sign1; sum.exponent2 = e1;
-        limit_window(c.x, c.precision + 1);
-        limit_window(sum, c.precision + 1);
-    } else {
-        multiply(c.x, v.value[1], r.value[1]);
-        multiply(sum, r.value[0], r.value[1]);
-    }
-    add_limited<true>(r.value[0], sum, c.y, c.precision);
-    copy_limited(r.value[1], c.x, c.precision);
-}
 void evaluate(PsrBinding &b, const Block &block, sbn3_series_values &values) {
     auto prepared = lease(b, block.prepared, block.finite.prepared_bytes),
          scratch = lease(b, block.scratch, block.finite.workspace_bytes);
@@ -567,7 +389,7 @@ void combine(PsrBinding &b, const Block &block, const sbn3_series_values &v, sbn
                                 (program_bounded_inputs | program_consume_inputs);
             auto *fallback =
                 direct ? nullptr : static_cast<uint64_t *>(tf.allocate((program.an + program.bn) * 8, 128));
-            MergeCall call{&program,
+            PrecisionMergeCall call{&program,
                            single?&contraction:nullptr,
                            &wf,
                            &v,
@@ -580,7 +402,7 @@ void combine(PsrBinding &b, const Block &block, const sbn3_series_values &v, sbn
                            b.info.output_limbs,
                            cap,
                            b.spec.formula.recipe};
-            sbn3_team_run(b.team, merge_action, &call);
+            sbn3_team_run(b.team, precision_merge_action, &call);
         }
         sbn3_arena_release(b.arena, &table);
         sbn3_arena_release(b.arena, &work);

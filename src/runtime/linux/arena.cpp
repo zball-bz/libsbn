@@ -41,6 +41,7 @@ bool Arena::contains(size_t begin, size_t end) const noexcept {
     return false;
 }
 sbn3_status Arena::prepare(size_t offset, size_t bytes, sbn3_error *e) noexcept {
+    if(borrowed)return error(e,SBN3_EBUSY,"prepare borrowed storage");
     ArenaLock lock(*this); ++prepares;
     if(computations) return error(e,SBN3_EBUSY,"prepare during compute");
     Span requested;
@@ -99,6 +100,7 @@ sbn3_status Arena::prepare(size_t offset, size_t bytes, sbn3_error *e) noexcept 
     return error(e,SBN3_OK,"prepare");
 }
 sbn3_status Arena::trim(size_t offset, size_t bytes, sbn3_error *e) noexcept {
+    if(borrowed)return error(e,SBN3_EBUSY,"trim borrowed storage");
     ArenaLock lock(*this);++trims;
     if(computations) return error(e,SBN3_EBUSY,"trim during compute");
     Span s;
@@ -161,6 +163,7 @@ bool Arena::unleased(size_t offset,size_t bytes) noexcept {
     return true;
 }
 sbn3_status Arena::reserve_guard(size_t offset,size_t bytes,sbn3_lease &out) noexcept {
+    if(borrowed)return SBN3_EBUSY;
     ArenaLock lock(*this);Span s;
     if(computations)return SBN3_EBUSY;
     if(!page_span(offset,bytes,s) || s.begin!=offset || s.end-offset!=bytes)return SBN3_ECAPACITY;
@@ -216,6 +219,7 @@ extern "C" void sbn3_arena_acquire(sbn3_arena *a,size_t off,size_t n,sbn3_lease 
 extern "C" void sbn3_arena_release(sbn3_arena *a,sbn3_lease *l) {require(a&&l,SBN3_FATAL_ARGUMENT,"arena release");a->release(*l);*l={};}
 extern "C" void sbn3_arena_destroy(sbn3_arena *a) {
     if(!a)return;
+    require(!a->borrowed,SBN3_FATAL_LIFETIME,"destroy borrowed arena");
     sbn3_arena_stats s{};a->stats(s);
     require(!s.lease_references && !s.active_computations,SBN3_FATAL_LIFETIME,"destroy live arena",s.lease_references,0);
     require(pthread_mutex_destroy(&a->mutex)==0,SBN3_FATAL_LIFETIME,"arena mutex destroy");

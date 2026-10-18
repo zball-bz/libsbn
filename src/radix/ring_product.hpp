@@ -13,7 +13,7 @@ inline constexpr unsigned ring_max_groups = 8;
 struct RingPlan {
     bool enabled = false;
     bool cached = true;
-    unsigned np = 0, algorithm = 0, workers = 1;
+    unsigned np = 0, algorithm = 0, workers = 1, prime_batch = 0;
     int trunk_bits = 0;
     size_t ring = 0, common_limbs = 0, fresh_limbs = 0;
     size_t table_bytes = 0, work_bytes = 0, work_alignment = 64, output_limbs = 0;

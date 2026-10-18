@@ -12,7 +12,7 @@ struct FiniteFormula {
     const void *context = nullptr;
     sbn3_series_recipe recipe = SBN3_SERIES_HYPERDESCENT;
     uint64_t formula_id = 0, parameter_id = 0;
-    unsigned max_leaf_limbs = 0;
+    size_t max_leaf_limbs = 0;
     sbn3_query_result (*bounds)(const void *, sbn3_series_range, uint64_t, unsigned,
                                 sbn3_series_shape *) = nullptr;
     double (*work)(const void *, sbn3_series_range) = nullptr;
@@ -48,6 +48,10 @@ struct FiniteFormula {
     // limbs, including intermediate sums. Limited execution can compute a
     // bounded batch exactly in local storage and round only its final values.
     unsigned batch_words_per_term = 0, batch_max_terms = 0;
+    // Private dynamic-parameter formulas may have genuinely wide leaves.
+    // Bounds/work use context; Frame replay passes a separate run context to
+    // leaf/batch. Ordinary constant consumers keep the original 64-limb cap.
+    bool parameterized_leaves = false;
 };
 // Bounded memo of pure product planning results. product_program_query is a
 // pure function of (an, bn, options), so a hit returns the identical plan. The
@@ -110,6 +114,7 @@ FiniteFormula finite_formula(const Formula &) noexcept;
 // Logical result bound, excluding extra storage needed to reuse parent lanes.
 sbn3_query_result finite_value_shape(const FiniteFormula &, sbn3_series_range, unsigned need,
                                      sbn3_series_shape &) noexcept;
+bool finite_split(const FiniteFormula &,sbn3_series_range,double fraction,uint64_t &) noexcept;
 struct FinitePlan {
     FiniteFormula formula{};
     sbn3_series_spec spec{};
@@ -123,12 +128,18 @@ struct FiniteBinding {
     sbn3_team *team = nullptr;
     sbn3_lease prepared{}, scratch{};
     Frame *scratch_roots[32]{}; // populated only during synchronous execute
+    void *frame_prepared = nullptr; // raw caller storage, never a forged lease
+    const void *run_context = nullptr;
 };
 // The optional memo only removes repeated identical product queries inside
 // this planning pass; results are identical with or without it.
 sbn3_query_result finite_query(const FiniteFormula &, sbn3_series_range, unsigned need,
                                const sbn3_series_options &, FinitePlan &,
                                ProductPlanMemo * = nullptr) noexcept;
+// Pure explicit-prefix quote; preparation replays info.serial_prefix directly.
+sbn3_query_result finite_query_prefix(const FiniteFormula &, sbn3_series_range, unsigned need,
+                                      const sbn3_series_options &, unsigned prefix, FinitePlan &,
+                                      ProductPlanMemo * = nullptr) noexcept;
 sbn3_query_result finite_compile(const FiniteFormula &, sbn3_series_range, unsigned need,
                                  const sbn3_series_options &, void *, size_t,
                                  sbn3_series_info &, sbn3_series_plan *&,
@@ -139,4 +150,26 @@ void finite_prepare(const FinitePlan &, sbn3_arena &, sbn3_team &, const sbn3_le
                     const sbn3_lease &prepared, const sbn3_lease &scratch, FiniteBinding &,
                     sbn3_series_plan *compiled = nullptr) noexcept;
 void finite_execute(FiniteBinding &, sbn3_series_values &) noexcept;
+struct FiniteFrameInfo {
+    sbn3_series_info series{};
+    size_t metadata_bytes=0,phase_bytes=0,alignment=128;
+};
+struct FiniteFramePrepared {const void *state=nullptr;FiniteFrameInfo info{};};
+// Freeze the schedule and complete product plans before numerical execution.
+// Each execution materializes only this slice's tables in the phase Frame,
+// consumes its scratch, and rewinds. Metadata is immutable and independent of
+// runtime leaf digits; separate phase Frames permit concurrent reuse.
+// A parameterized formula wider than the stack leaf must use leaf_terms=1
+// or a batch callback covering every admitted leaf. This prevents an
+// unannounced scalar long-by-long fallback in the ordinary leaf loop.
+sbn3_query_result finite_frame_query(const FiniteFormula &,sbn3_series_range,unsigned need,
+    const sbn3_series_options &,FiniteFrameInfo &) noexcept;
+FiniteFramePrepared finite_frame_prepare(const FiniteFormula &,sbn3_series_range,unsigned need,
+    const sbn3_series_options &,Frame &metadata) noexcept;
+void finite_frame_execute(const FiniteFramePrepared &,const void *run_context,
+    sbn3_series_values &,Frame &phase,sbn3_team_scope *,ProductTablePoolView shared={}) noexcept;
+// Preparation-time access to the immutable selected products. A consumer may
+// populate a bounded shared table directory without repeating plan selection.
+void finite_frame_visit_products(const FiniteFramePrepared &,
+    void (*)(void *,const ProductProgramPlan &),void *) noexcept;
 } // namespace sbn::v3::series

@@ -12,6 +12,7 @@ struct Refinement {
     uint64_t *coarse = nullptr; // m+1 words for Quotient; unused by Inverse
     uint64_t *rho = nullptr;   // n-m+3 words, or unused if provider retains it
     sbn3_team *team = nullptr;
+    sbn3_team_scope *scope = nullptr;
 };
 enum class RefinementKind { Inverse, Quotient };
 
@@ -37,6 +38,7 @@ template<RefinementKind kind, class Products>
     constexpr bool quotient = kind == RefinementKind::Quotient;
     using namespace product;
     const size_t m = p.m, n = p.n;
+    const parallel_limbs::Owner owner{p.team,p.scope};
     require(m >= 3 && m < n && n - m <= m - 1 && d && u && out &&
                 (d[n-1] >> 63) && u[m] == 1,
             SBN3_FATAL_ARGUMENT, "bounded refinement input");
@@ -79,14 +81,14 @@ template<RefinementKind kind, class Products>
             uint64_t tail[3];memcpy(tail,coarse+shift,overlap*8);
             // The remaining source and destination are disjoint. Preserve
             // parallel bandwidth for large rungs instead of serial memmove.
-            parallel_limbs::copy(p.team,out+shift,coarse,shift);
+            parallel_limbs::copy(owner,out+shift,coarse,shift);
             memcpy(out+2*shift,tail,overlap*8);
         }else memmove(out+shift,coarse,(m+1)*8);
-    }else parallel_limbs::copy(p.team, out+n-m, coarse, m+1);
-    parallel_limbs::fill(p.team, out, n-m);
+    }else parallel_limbs::copy(owner, out+n-m, coarse, m+1);
+    parallel_limbs::fill(owner, out, n-m);
     const uint64_t spill = residual.negative
-        ? parallel_limbs::add_to(p.team, out, n+1, correction.data, count)
-        : parallel_limbs::sub_from(p.team, out, n+1, correction.data, count);
+        ? parallel_limbs::add_to(owner, out, n+1, correction.data, count)
+        : parallel_limbs::sub_from(owner, out, n+1, correction.data, count);
     require(!spill, SBN3_FATAL_MATH, "bounded refinement correction overflow");
     if constexpr (!quotient) {
         if (!out[n]) memset(out, 0, n*8);

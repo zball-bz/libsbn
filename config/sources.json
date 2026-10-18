@@ -16,7 +16,8 @@
   "entry_notes": {
     "requires": "Per TU/asm actual feature list, including transitive intrinsics.",
     "depends_on": "Registered TU paths for feature/symbol closure; private header deps also captured in compiler depfiles.",
-    "path": "Real .c/.cpp/.s/.S file; header-only fragments are not independent production TUs."
+    "path": "Real .c/.cpp/.s/.S file; header-only fragments are not independent production TUs.",
+    "inline_export": "Optional, explicitly tagged Clang ThinLTO archive for compatible callers; the main archive keeps ordinary objects."
   },
   "entries": [
     {
@@ -248,12 +249,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np4_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -286,12 +292,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np5_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -324,12 +335,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np7_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -362,12 +378,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np8_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -400,12 +421,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np10_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -438,12 +464,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np9_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -476,12 +507,17 @@
       "depends_on": [
         "src/runtime/team.cpp",
         "src/runtime/linux/arena.cpp",
-        "src/common/base.cpp"
+        "src/common/base.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::np6_backend"
       ],
-      "requires_symbols": [],
+      "requires_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors"
+      ],
       "donor_ids": [
         "p48"
       ],
@@ -509,7 +545,8 @@
         "src/instances/x86v4ifma/np9.cpp",
         "src/instances/x86v4ifma/np10.cpp",
         "src/product/short_backend.cpp",
-        "src/product/fft_backend.cpp"
+        "src/product/fft_backend.cpp",
+        "src/product/fft_matrix.cpp"
       ],
       "provides_symbols": [
         "sbn3_mul_bind",
@@ -661,7 +698,9 @@
         "sbn::v3::pq16::cyclic_multiply",
         "sbn::v3::pq16::plus_shape",
         "sbn::v3::pq16::plus_supported",
-        "sbn::v3::pq16::plus_multiply"
+        "sbn::v3::pq16::plus_multiply",
+        "sbn::v3::pq16::matrix_supported",
+        "sbn::v3::pq16::matrix_execute"
       ],
       "requires_symbols": [],
       "donor_ids": [
@@ -803,7 +842,8 @@
       "requires": [],
       "depends_on": [
         "src/algorithms/inverse_seed.cpp",
-        "src/algorithms/inverse_rung.cpp"
+        "src/algorithms/inverse_rung.cpp",
+        "src/algorithms/normalized_local.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::inverse_program"
@@ -887,7 +927,8 @@
         "src/algorithms/rsqrt.cpp",
         "src/algorithms/divide_terminal.cpp",
         "src/algorithms/sqrt2_rational.cpp",
-        "src/algorithms/sqrt2_finish.cpp"
+        "src/algorithms/sqrt2_finish.cpp",
+        "src/algorithms/normalized_local.cpp"
       ],
       "provides_symbols": [
         "sbn3_newton_query",
@@ -921,7 +962,10 @@
         "sbn3_int_divrem_execute",
         "sbn3_divrem_get_metrics",
         "sbn3_divrem_unbind",
-        "sbn3_divrem_prepare_into"
+        "sbn3_divrem_prepare_into",
+        "sbn3_remainder_workspace_bytes",
+        "sbn3_remainder_plan_workspace_bytes",
+        "sbn3_remainder_execute"
       ],
       "requires_symbols": [],
       "donor_ids": []
@@ -941,6 +985,24 @@
         "sbn::v3::fft_spectrum_description",
         "sbn::v3::fft_reserve_spectrum",
         "sbn::v3::fft_compute_spectrum"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/product/fft_matrix.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/instances/x86v4ifma/pq16.cpp",
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [
+        "sbn::v3::fft_matrix_backend",
+        "sbn::v3::fft_matrix_shape",
+        "sbn::v3::fft_matrix_query"
       ],
       "requires_symbols": [],
       "donor_ids": []
@@ -1006,7 +1068,8 @@
         "src/instances/x86v4ifma/u52.cpp",
         "src/instances/x86v4ifma/pq16.cpp",
         "src/value/divrem_basecase.cpp",
-        "src/kernels/x86v4ifma/division_high.cpp"
+        "src/kernels/x86v4ifma/division_high.cpp",
+        "src/algorithms/normalized_local.cpp"
       ],
       "provides_symbols": [
         "sbn::v3::local_division_plan",
@@ -1028,7 +1091,9 @@
       ],
       "provides_symbols": [
         "sbn3_divrem_small_scratch_bytes",
-        "sbn3_divrem_small"
+        "sbn3_divrem_small",
+        "sbn3_remainder_small_scratch_bytes",
+        "sbn3_remainder_small"
       ],
       "requires_symbols": [],
       "donor_ids": []
@@ -1246,7 +1311,9 @@
       "depends_on": [
         "src/series/arithmetic.cpp",
         "src/series/scaled_ratio.cpp",
-        "src/algorithms/newton_service.cpp"
+        "src/algorithms/newton_service.cpp",
+        "src/series/precision_policy.cpp",
+        "src/series/precision_merge.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],
@@ -1368,12 +1435,17 @@
         "avx512bw",
         "avx512dq",
         "avx512ifma",
-        "avx512vbmi"
+        "avx512vbmi",
+        "avx512vl"
       ],
       "depends_on": [
         "src/common/base.cpp"
       ],
-      "provides_symbols": [],
+      "provides_symbols": [
+        "sbn::v3::radix::validate_digits",
+        "sbn::v3::radix::format_bits",
+        "sbn::v3::radix::parse_bits_range"
+      ],
       "requires_symbols": [],
       "donor_ids": [
         "division_mid_radix"
@@ -1439,13 +1511,28 @@
       "donor_ids": []
     },
     {
+      "path": "src/radix/parse_compact.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/parse_tree.cpp",
+        "src/radix/power_bank.cpp",
+        "src/instances/x86v4ifma/u52.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
       "path": "src/radix/parse.cpp",
       "language": "cxx",
       "group": "common",
       "requires": [],
       "depends_on": [
         "src/radix/parse_tree.cpp",
-        "src/algorithms/newton_service.cpp"
+        "src/algorithms/newton_service.cpp",
+        "src/radix/parse_compact.cpp"
       ],
       "provides_symbols": [],
       "requires_symbols": [],
@@ -1487,6 +1574,1716 @@
       "provides_symbols": [],
       "requires_symbols": [],
       "donor_ids": []
+    },
+    {
+      "path": "src/backend/ntt_p48/root_bank.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn::v3::p48_root_bank::tower",
+        "sbn::v3::p48_root_bank::zero_image",
+        "sbn::v3::p48_root_bank::factors",
+        "sbn::v3::p48_root_bank::bytes"
+      ],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/decimal_tiny.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "bmi2",
+        "lzcnt",
+        "avx2",
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3_decimal_write_u64",
+        "sbn3_decimal_write_u128",
+        "sbn3_decimal_read_u64",
+        "sbn3_decimal_read_u128"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ],
+      "extra_flags": [
+        "-O3"
+      ],
+      "inline_export": "decimal"
+    },
+    {
+      "path": "src/kernels/x86v4ifma/decimal_small.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "bmi2",
+        "lzcnt",
+        "avx2",
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi"
+      ],
+      "depends_on": [],
+      "provides_symbols": [
+        "sbn3_decimal_write_small",
+        "sbn3_decimal_read_small",
+        "sbn3_decimal_write_fraction",
+        "sbn3_decimal_read_fraction"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "word_asm"
+      ],
+      "extra_flags": [
+        "-O3"
+      ],
+      "inline_export": "decimal"
+    },
+    {
+      "path": "src/radix/once.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/radix/format.cpp",
+        "src/radix/parse.cpp",
+        "src/kernels/x86v4ifma/decimal_small.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_format_once_query",
+        "sbn3_parse_once_query",
+        "sbn3_format_once",
+        "sbn3_parse_once"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/gcd_small.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "bmi1",
+        "bmi2",
+        "lzcnt",
+        "adx",
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vpopcntdq"
+      ],
+      "depends_on": [
+        "src/value/divrem_basecase.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_gcd_u64",
+        "sbn3_gcd_small_scratch_bytes",
+        "sbn3_gcd_small",
+        "sbn3_gcd_u64_batch"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "gcd_head_gmp",
+        "word_asm",
+        "gcd_odd_gmp"
+      ],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/api.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_gcd_query",
+        "sbn3_exgcd_query",
+        "sbn3_gcd",
+        "sbn3_int_exgcd",
+        "sbn3_gcd_scratch_bytes",
+        "sbn3_exgcd_scratch_bytes"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/product_ops.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/matrix.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/leaf.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "gcd_hgcd_gmp"
+      ],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/hgcd.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "gcd_hgcd_gmp"
+      ],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/matrix_strassen.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "gcd_matrix_gmp"
+      ],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/cyclic.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/middle.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/deferred.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp",
+        "src/gcd/hgcd.cpp",
+        "src/gcd/matrix.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/gcd/jacobi.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/kernels/x86v4ifma/gcd_small.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp",
+        "src/kernels/x86v4ifma/jacobi_small.cpp",
+        "src/gcd/hgcd.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_jacobi",
+        "sbn3_int_jacobi",
+        "sbn3_jacobi_query",
+        "sbn3_jacobi_scratch_bytes"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/jacobi_small.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "bmi1",
+        "bmi2",
+        "lzcnt",
+        "adx",
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vpopcntdq"
+      ],
+      "depends_on": [
+        "src/value/divrem_basecase.cpp",
+        "src/common/base.cpp",
+        "src/kernels/x86v4ifma/gcd_small.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_jacobi_u64"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [
+        "gcd_head_gmp",
+        "word_asm",
+        "gcd_odd_gmp",
+        "jacobi_word_gmp"
+      ],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/bitwise.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "bmi1",
+        "bmi2",
+        "lzcnt",
+        "avx512f",
+        "avx512dq",
+        "avx512vl",
+        "avx512vpopcntdq"
+      ],
+      "depends_on": [
+        "src/value/api.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [
+        "sbn3_int_bitwise",
+        "sbn3_int_and",
+        "sbn3_int_or",
+        "sbn3_int_xor",
+        "sbn3_int_complement",
+        "sbn3_int_arshift",
+        "sbn3_int_bit_length",
+        "sbn3_int_popcount_magnitude",
+        "sbn3_int_test_bit",
+        "sbn3_int_scan_bit",
+        "sbn3_int_popcount_range",
+        "sbn3_int_hamdist_range",
+        "sbn3_int_edit_bit"
+      ],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/memory.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/integer.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/memory.cpp",
+        "src/value/api.cpp",
+        "src/kernels/x86v4ifma/bitwise.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/arithmetic.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/bytes.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/kernels/x86v4ifma/bitwise.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/division.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/algorithms/divrem_service.cpp",
+        "src/algorithms/divrem_small.cpp",
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/prepared_division.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/division.cpp",
+        "src/algorithms/divrem_service.cpp",
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/number_theory.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/division.cpp",
+        "src/cpp/arithmetic.cpp",
+        "src/gcd/api.cpp",
+        "src/gcd/jacobi.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/radix.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/radix/once.cpp",
+        "src/runtime/linux/arena.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/power.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/expression.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/product/api.cpp",
+        "src/algorithms/divrem_service.cpp",
+        "src/gcd/api.cpp",
+        "src/runtime/team.cpp",
+        "src/runtime/linux/arena.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/chars.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/radix.cpp",
+        "src/kernels/x86v4ifma/decimal_small.cpp",
+        "src/kernels/x86v4ifma/decimal_tiny.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/planning/resources.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/planning/subtree.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/planning/resources.cpp",
+        "src/series/arithmetic.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/precision_policy.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/series/arithmetic.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/series/precision_merge.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/api.cpp",
+        "src/value/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/planning/precision.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/planning/subtree.cpp",
+        "src/series/precision_policy.cpp",
+        "src/series/precision_merge.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/io.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/checksum.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl"
+      ],
+      "depends_on": [],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "xxhash_0_8_3"
+      ]
+    },
+    {
+      "path": "src/external/store.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/io.cpp",
+        "src/external/checksum.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/resident_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/store.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/scratch_plane.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/store.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/m61.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f"
+      ],
+      "depends_on": [],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/kernels/x86v4ifma/modular_row.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512bw",
+        "avx512dq",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi"
+      ],
+      "depends_on": [
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-Wno-deprecated-anon-enum-enum-conversion"
+      ]
+    },
+    {
+      "path": "src/external/middle_rows.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/scratch_plane.cpp",
+        "src/kernels/x86v4ifma/modular_row.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/chunk_writer.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/scratch_plane.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/kernels/x86v4ifma/outer_transform.cpp",
+      "language": "cxx",
+      "group": "native",
+      "requires": [
+        "avx512f",
+        "avx512dq",
+        "avx512bw",
+        "avx512vl",
+        "avx512ifma",
+        "avx512vbmi",
+        "avx512vbmi2"
+      ],
+      "depends_on": [
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-Wno-deprecated-anon-enum-enum-conversion"
+      ]
+    },
+    {
+      "path": "src/external/forward_planes.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/chunk_writer.cpp",
+        "src/kernels/x86v4ifma/outer_transform.cpp",
+        "src/runtime/team.cpp",
+        "src/external/source_window.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/inverse_planes.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/scratch_plane.cpp",
+        "src/kernels/x86v4ifma/outer_transform.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/product/crt.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/instances/x86v4ifma/np4.cpp",
+        "src/instances/x86v4ifma/np5.cpp",
+        "src/instances/x86v4ifma/np6.cpp",
+        "src/instances/x86v4ifma/np7.cpp",
+        "src/instances/x86v4ifma/np8.cpp",
+        "src/instances/x86v4ifma/np9.cpp",
+        "src/instances/x86v4ifma/np10.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/carry_output.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/chunk_writer.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/integer_emit.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/product/crt.cpp",
+        "src/external/carry_output.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/spilled_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/forward_planes.cpp",
+        "src/external/middle_rows.cpp",
+        "src/external/inverse_planes.cpp",
+        "src/external/integer_emit.cpp",
+        "src/external/row_cache.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/planning/product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/spilled_product.cpp",
+        "src/product/api.cpp",
+        "src/backend/ntt_p48/root_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/values.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/store.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/owned_product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/values.cpp",
+        "src/external/spilled_product.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/integer.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/values.cpp",
+        "src/external/store.cpp",
+        "src/external/source_window.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/series_merge.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/integer.cpp",
+        "src/external/owned_product.cpp",
+        "src/planning/product.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/row_cache.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/forward_planes.cpp",
+        "src/external/values.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/series.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/series_merge.cpp",
+        "src/planning/precision.cpp",
+        "src/planning/subtree.cpp",
+        "src/series/arithmetic.cpp",
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/backend/pq16/root_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/source_window.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/store.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/window.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/integer.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/newton.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/window.cpp",
+        "src/external/owned_product.cpp",
+        "src/external/row_cache.cpp",
+        "src/planning/product.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/backend/pq16/root_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/rsqrt.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/window.cpp",
+        "src/external/owned_product.cpp",
+        "src/external/row_cache.cpp",
+        "src/planning/product.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/backend/pq16/root_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/mul_rsqrt.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/window.cpp",
+        "src/external/owned_product.cpp",
+        "src/external/row_cache.cpp",
+        "src/planning/product.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/backend/pq16/root_bank.cpp",
+        "src/external/rsqrt.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/format.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/owned_product.cpp",
+        "src/external/resident_product.cpp",
+        "src/planning/product.cpp",
+        "src/radix/format.cpp",
+        "src/radix/power_bank.cpp",
+        "src/kernels/x86v4ifma/radix_leaf.cpp",
+        "src/backend/ntt_p48/root_bank.cpp",
+        "src/backend/pq16/root_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/job.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/series.cpp",
+        "src/external/newton.cpp",
+        "src/external/mul_rsqrt.cpp",
+        "src/external/format.cpp",
+        "src/external/window.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/file_store.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/values.cpp",
+        "src/external/io.cpp",
+        "src/runtime/linux/uring.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/external/checkpoint.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/external/job.cpp",
+        "src/external/file_store.cpp",
+        "src/external/values.cpp",
+        "src/external/checksum.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": []
+    },
+    {
+      "path": "src/runtime/linux/uring.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [
+        "io"
+      ]
+    },
+    {
+      "path": "src/float/core.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/cpp/integer.cpp",
+        "src/common/base.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/roots.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/algorithms/rsqrt.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/product.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/fma.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/float.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/roots.cpp",
+        "src/float/division.cpp",
+        "src/float/agm.cpp",
+        "src/float/power.cpp",
+        "src/float/rootn.cpp",
+        "src/float/convert.cpp",
+        "src/float/logarithm.cpp",
+        "src/float/exponential.cpp",
+        "src/float/trig.cpp",
+        "src/float/elliptic.cpp",
+        "src/float/inverse_trig.cpp",
+        "src/float/hyperbolic.cpp",
+        "src/float/derived_explog.cpp",
+        "src/float/real_power.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/algorithms/normalized_local.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/local_inverse.cpp",
+        "src/algorithms/inverse_seed.cpp",
+        "src/instances/x86v4ifma/u52.cpp",
+        "src/instances/x86v4ifma/pq16.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/division.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/value/divrem_basecase.cpp",
+        "src/float/short_division.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/agm.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/roots.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/power.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/division.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/rootn.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/power.cpp",
+        "src/float/product.cpp",
+        "src/float/division.cpp",
+        "src/float/roots.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/constants.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/roots.cpp",
+        "src/float/division.cpp",
+        "src/float/agm.cpp",
+        "src/float/constant_bank_access.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/elliptic.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/complex.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/roots.cpp",
+        "src/float/division.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/trig_agm.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/complex.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/convert.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/value/divrem_basecase.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/short_division.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/algorithms/local_divrem.cpp",
+        "src/algorithms/normalized_local.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/product/api.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/logarithm.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/agm.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/trig.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/trig_agm.cpp",
+        "src/float/constants.cpp",
+        "src/product/api.cpp",
+        "src/float/trig_series.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/exponential.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/logarithm.cpp",
+        "src/float/constants.cpp",
+        "src/float/convert.cpp",
+        "src/float/exp_series.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/exp_series.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/division.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/trig_series.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/float/product.cpp",
+        "src/float/division.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/inverse_trig.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/trig_agm.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/hyperbolic.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/exponential.cpp",
+        "src/float/logarithm.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/derived_explog.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/logarithm.cpp",
+        "src/float/exponential.cpp",
+        "src/float/exp_series.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/real_power.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/logarithm.cpp",
+        "src/float/exponential.cpp",
+        "src/float/power.cpp",
+        "src/float/constant_bank.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/constant_bank_access.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/constant_bank.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constants.cpp",
+        "src/float/constant_bank_access.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/float_constants.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/constant_bank.cpp",
+        "src/float/constant_bank_access.cpp",
+        "src/cpp/memory.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/cpp/float_constant_functions.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/logarithm.cpp",
+        "src/float/exponential.cpp",
+        "src/float/elliptic.cpp",
+        "src/float/trig.cpp",
+        "src/float/inverse_trig.cpp",
+        "src/float/hyperbolic.cpp",
+        "src/float/derived_explog.cpp",
+        "src/float/real_power.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
+    },
+    {
+      "path": "src/float/bit_burst.cpp",
+      "language": "cxx",
+      "group": "common",
+      "requires": [],
+      "depends_on": [
+        "src/float/core.cpp",
+        "src/algorithms/normalized_local.cpp",
+        "src/algorithms/newton_service.cpp",
+        "src/series/arithmetic.cpp",
+        "src/series/schedule.cpp",
+        "src/series/scaled_ratio.cpp",
+        "src/product/api.cpp",
+        "src/runtime/team.cpp"
+      ],
+      "provides_symbols": [],
+      "requires_symbols": [],
+      "donor_ids": [],
+      "extra_flags": [
+        "-O3"
+      ]
     }
   ]
 }

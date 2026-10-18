@@ -24,6 +24,11 @@ the GMP-derived scalar code retains its LGPLv3-or-later / GPLv2-or-later notice
 in [scalar-donor-notice.txt](src/core/x86_64/scalar-donor-notice.txt).
 Source/import identities are recorded in [config/provenance](config/provenance).
 
+The Store checksum wrapper uses the unmodified xxHash 0.8.3 header by Yann
+Collet and contributors. Its BSD 2-Clause notice is retained in
+[third_party/xxhash/LICENSE](third_party/xxhash/LICENSE), with the pinned source
+URLs and hashes in [provenance.json](third_party/xxhash/provenance.json).
+
 ## Contributions
 
 Contributions submitted for inclusion must be offered under the applicable

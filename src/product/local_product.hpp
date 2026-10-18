@@ -1,4 +1,5 @@
 #pragma once
+#include "common/query_audit.hpp"
 #include "product/window.hpp"
 #include "backend/u52/kernels.hpp"
 #include "backend/pq16/kernels.hpp"
@@ -24,6 +25,7 @@ inline pq16::Shape previous_local_fft(pq16::Shape s) noexcept {
     return {m*n,n,m,false,pq16::Recipe::CooleyTukeyPQ,16,false};
 }
 inline LocalProductPlan local_product_query(size_t an,size_t bn,bool residual,bool keep) noexcept {
+    SBN3_QUERY_AUDIT("local_product_query");
     LocalProductPlan p;p.an=an;p.bn=bn;
     if(std::min(an,bn)>=128){
         // The engine publishes the small right-angle twist tables, so the

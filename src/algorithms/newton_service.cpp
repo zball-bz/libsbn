@@ -2,6 +2,9 @@
 #include "sbn3/newton.h"
 #include "algorithms/inverse_program.hpp"
 #include "algorithms/local_inverse.hpp"
+#include "algorithms/normalized_local.hpp"
+#include "algorithms/normalized_newton.hpp"
+#include "algorithms/refinement.hpp"
 #include "algorithms/newton_tuning.hpp"
 #include "algorithms/newton_contract.hpp"
 #include "algorithms/newton_limits.hpp"
@@ -9,12 +12,16 @@
 #include "product/stage.hpp"
 #include "product/native_capabilities.hpp"
 #include "product/local_program.hpp"
+#include "product/low_lift.hpp"
+#include "product/scoped_binding.hpp"
 #include "algorithms/rsqrt.hpp"
 #include "algorithms/divide_terminal.hpp"
 #include "algorithms/sqrt2_rational.hpp"
 #include "algorithms/sqrt2_finish.hpp"
 #include "runtime/team.hpp"
 #include "runtime/scratch.hpp"
+#include "runtime/bound_owner.hpp"
+#include "runtime/resident.hpp"
 #include <algorithm>
 #include <cmath>
 #include <new>
@@ -43,6 +50,14 @@ constexpr unsigned max_steps = newton_limits::stages, max_products = newton_limi
                    max_spectra = newton_limits::spectra, max_leases = newton_limits::leases;
 using newton_detail::Plan;
 using newton_detail::Bundle;
+struct Frozen {
+    Plan plan{};
+    Bundle* bundles=nullptr;
+    product::LowLiftProgram* low_lifts=nullptr;
+    size_t seed_limbs=0;
+    NormalizedLocalInfo local_seed_info{};
+    NormalizedLocalPrepared local_seed{};
+};
 struct Binding;
 struct CompactState {
     Binding *owner = nullptr;
@@ -59,6 +74,7 @@ struct Binding {
     Plan plan{};
     sbn3_arena *arena = nullptr;
     sbn3_team *team = nullptr;
+    BoundOwner owner{};
     size_t offset = 0;
     sbn3_lease leases[max_leases]{};
     unsigned lease_count = 0;
@@ -207,8 +223,8 @@ sbn3_mul_binding *compact_bind(void *ptr, unsigned slot) {
     }
     s.tables = b.arena->acquire(base + layout.table, i.mul.table_bytes);
     s.work = b.arena->acquire(base + layout.work, i.mul.workspace_bytes);
-    sbn3_product_bind(&v.plans[slot], b.arena, &s.tables, &s.work, b.team,
-                      i.cached_mask ? s.spectrum : nullptr, nullptr, &s.product);
+    product_bind_owned(v.plans[slot],*b.arena,s.tables,s.work,*b.team,
+        b.owner.resolve(*b.team,nullptr,i.mul.workers),i.cached_mask?s.spectrum:nullptr,nullptr,&s.product);
     s.slot = slot;
     return s.product;
 }
@@ -250,7 +266,11 @@ struct Assembly {
     // Inverse/rsqrt have the same cold work in either placement. Only
     // division changes its spectrum-build count when the pool is compact.
     bool replay_choices;
-    Assembly(Plan &plan, Binding *binding = nullptr, bool replay = true) : p(plan), b(binding), replay_choices(replay) {
+    const Frozen* frozen_read=nullptr;
+    Frozen* frozen_write=nullptr;
+    Assembly(Plan &plan, Binding *binding = nullptr, bool replay = true,
+             const Frozen* read=nullptr,Frozen* write=nullptr)
+        : p(plan), b(binding), replay_choices(replay),frozen_read(read),frozen_write(write) {
         if (p.compact)
             cursor = compact_control_bytes(p.choice_count);
     }
@@ -308,8 +328,8 @@ struct Assembly {
         if (!b)
             return nullptr;
         sbn3_mul_binding *result = nullptr;
-        sbn3_product_bind(&plan, b->arena, &t, &w, b->team, info.cached_mask ? cache : nullptr, nullptr,
-                          &result);
+        product_bind_owned(plan,*b->arena,t,w,*b->team,b->owner.resolve(*b->team,nullptr,info.mul.workers),
+                           info.cached_mask?cache:nullptr,nullptr,&result);
         b->products[b->product_count++] = result;
         return result;
     }
@@ -340,9 +360,23 @@ struct Assembly {
     bool cycle(Cycle kind, size_t m, size_t n, Bundle &v) {
         if (status != SBN3_SUPPORTED)
             return false;
-        if (!choose_cycle(p, kind, m, n, choices, b != nullptr || (p.compact && (replay_choices || kind != Cycle::Division)), v)) {
+        if(frozen_read){
+            require(choices<frozen_read->plan.choice_count&&frozen_read->bundles,
+                    SBN3_FATAL_MATH,"frozen Newton cycle");
+            v=frozen_read->bundles[choices];
+        }else if (!choose_cycle(p, kind, m, n, choices, b != nullptr || frozen_write != nullptr || (p.compact && (replay_choices || kind != Cycle::Division)), v)) {
             status = SBN3_QUERY_CAPACITY;
             return false;
+        }
+        if(frozen_write){
+            require(kind==Cycle::Inverse||kind==Cycle::Division,SBN3_FATAL_ARGUMENT,"frozen Newton kind");
+            if(frozen_write->bundles)frozen_write->bundles[choices]=v;
+            if(v.repair_bytes){
+                const auto shape=kind==Cycle::Inverse?refinement_products<RefinementKind::Inverse>(m,n):
+                    refinement_products<RefinementKind::Quotient>(m,n);
+                const auto lift=product::compile_low_lift_program(shape,v.producer_info.cyclic_limbs);
+                if(frozen_write->low_lifts)frozen_write->low_lifts[choices]=lift;
+            }
         }
         if (p.compact) {
             for (unsigned k = 0; k < v.count; ++k) {
@@ -382,12 +416,12 @@ struct Assembly {
     void inverse(size_t target, uint64_t *v0, uint64_t *v1) {
         size_t sizes[max_steps], m = target;
         unsigned count = 0;
-        const size_t seed_limit=p.options.prime_count?newton_limits::inverse_seed_words:
+        const size_t seed_limit=frozen_read?frozen_read->seed_limbs:p.options.prime_count?newton_limits::inverse_seed_words:
             product::window_seed_limit(p.options.workers);
         while (m > seed_limit) {
             // Use the same supported serial FFT prefix as the public inverse.
             // Only the remaining larger rungs need persistent NTT bindings.
-            if(!p.options.prime_count&&p.options.workers==1&&local_refinement_supported(m,false))break;
+            if(!frozen_read&&!p.options.prime_count&&p.options.workers==1&&local_refinement_supported(m,false))break;
             if (count == max_steps) {
                 status = SBN3_QUERY_CAPACITY;
                 return;
@@ -397,9 +431,17 @@ struct Assembly {
         }
         if (b)
             b->inv = {target, m, count, b->inv_steps};
+        if(frozen_read)require(m==frozen_read->seed_limbs,SBN3_FATAL_MATH,"frozen Newton seed precision");
+        if(frozen_write)frozen_write->seed_limbs=m;
         if(m>newton_limits::inverse_seed_words){
-            local_seed_bytes=local_inverse_approximate_bytes(m);
-            if(b)b->inv.local_seed_bytes=local_seed_bytes;
+            if(frozen_read)local_seed_bytes=frozen_read->local_seed.info.workspace_bytes;
+            else if(frozen_write){
+                status=normalized_local_query(NormalizedLocalKind::inverse,m,frozen_write->local_seed_info);
+                if(status!=SBN3_SUPPORTED)return;
+                local_seed_bytes=frozen_write->local_seed_info.workspace_bytes;
+            }else local_seed_bytes=local_inverse_approximate_bytes(m);
+            if(b){b->inv.local_seed_bytes=local_seed_bytes;
+                if(frozen_read)b->inv.prepared_local_seed=&frozen_read->local_seed;}
         }
         for (unsigned j = count; j-- > 0;) {
             const size_t n = sizes[j];
@@ -417,7 +459,9 @@ struct Assembly {
             if(b&&v.count==2){auto &r=b->inv_steps[count-1-j];r.correction_product=correction;
                 r.correction_input_words=newton_contract::residual_words(m,n);}
             if(b){b->inv_steps[count-1-j].consume_residual=v.consume_residual;
-                b->inv_steps[count-1-j].repair_bytes=v.repair_bytes;}
+                b->inv_steps[count-1-j].repair_bytes=v.repair_bytes;
+                b->inv_steps[count-1-j].scope=b->owner.resolve(*b->team,nullptr,p.info.workers);
+                if(frozen_read&&v.repair_bytes)b->inv_steps[count-1-j].low_lift=frozen_read->low_lifts+choices-1;}
             m = n;
         }
         if (b)
@@ -479,6 +523,8 @@ struct Assembly {
             b->division.retain_u_across_residual=v.count==1;
             b->division.output_capacity = std::max(v.producer_info.cyclic_limbs,n)+3;
             b->division.repair_bytes = v.repair_bytes;
+            b->division.scope=b->owner.resolve(*b->team,nullptr,p.info.workers);
+            if(frozen_read&&v.repair_bytes)b->division.low_lift=frozen_read->low_lifts+choices-1;
             for (unsigned k = 0; k < v.count; ++k)
                 b->division.output_capacity =
                     std::max(b->division.output_capacity, sbn3_mul_output_capacity(&v.infos[k].mul));
@@ -675,8 +721,7 @@ const Binding &binding(const sbn3_newton_binding *p) {
     return binding(const_cast<sbn3_newton_binding *>(p));
 }
 void idle(const Binding &b) {
-    require(pthread_equal(b.team->creator, pthread_self()) && !b.team->busy, SBN3_FATAL_TEAM,
-            "Newton owner/idle");
+    b.owner.check(*b.team);
 }
 uint64_t now() {
     timespec t{};
@@ -727,7 +772,7 @@ bool dyadic_query(size_t n,unsigned recipe,const sbn3_newton_options &o,sbn3_new
 void bind_dyadic(const sbn3_newton_plan &opaque,sbn3_arena *arena,size_t offset,
                 sbn3_team *team,sbn3_newton_binding **out) {
     newton_detail::DyadicPlan p;memcpy(&p,opaque.opaque,sizeof p);
-    require(team->arena==arena,SBN3_FATAL_TEAM,"small quotient arena/team");
+    require(arena->accepts_team(team->arena),SBN3_FATAL_TEAM,"small quotient arena/team");
     auto *data=arena->base+offset;
     require(!(reinterpret_cast<uintptr_t>(data)&127),SBN3_FATAL_WORKSPACE,"small quotient alignment");
     sbn3_lease storage{data,p.bytes,0};
@@ -823,6 +868,31 @@ void execute_local(LocalBinding &b,const sbn3_newton_inputs *provided,sbn3_limbs
     if(b.timed)b.metrics.compute_ns=now()-begin;
     b.metrics.products_executed=b.products;
 }
+sbn3_newton_binding* bind_native_plan(const Plan& p,sbn3_arena* arena,size_t offset,
+                                    sbn3_team* team,sbn3_team_scope* scope,const Frozen* frozen) {
+    BoundOwner owner;owner.bind(*arena,*team,scope,p.info.workers);
+    size_t end=0;
+    require(add_size(offset,p.info.storage_bytes,end)&&end<=arena->virtual_bytes&&arena->contains(offset,end)&&
+            !(reinterpret_cast<uintptr_t>(arena->base+offset)&(p.info.storage_alignment-1))&&
+            arena->unleased(offset,p.info.storage_bytes),SBN3_FATAL_WORKSPACE,"Newton prepared unleased range");
+    sbn3_arena_stats stats{};sbn3_arena_get_stats(arena,&stats);
+    require(stats.active_leases+p.info.lease_peak<=Arena::max_leases,SBN3_FATAL_WORKSPACE,
+            "Newton lease capacity",p.info.lease_peak,Arena::max_leases-stats.active_leases);
+    auto control=arena->acquire(offset,p.info.control_bytes);
+    auto* b=::new(control.data)Binding{};
+    b->plan=p;b->arena=arena;b->team=team;b->owner=owner;b->offset=offset;
+    b->leases[b->lease_count++]=control;
+    if(p.compact){
+        auto* base=static_cast<unsigned char*>(control.data);
+        b->compact=::new(base+compact_state_offset())CompactState{};
+        b->compact->owner=b;
+        b->compact->bundles=reinterpret_cast<Bundle*>(base+compact_bundles_offset());
+        b->compact->stages=reinterpret_cast<ProductStage*>(base+compact_stages_offset(p.choice_count));
+    }
+    Assembly assembly(b->plan,b,true,frozen);
+    assembly.run();require(assembly.finish(),SBN3_FATAL_MATH,"Newton bind plan replay");
+    return reinterpret_cast<sbn3_newton_binding*>(b);
+}
 } // namespace
 } // namespace sbn::v3
 using namespace sbn::v3;
@@ -879,7 +949,7 @@ extern "C" void sbn3_newton_bind(const sbn3_newton_plan *opaque, sbn3_arena *are
     if(opaque->opaque[0]==newton_detail::dyadic_plan_magic)
         return bind_dyadic(*opaque,arena,offset,team,out);
     const auto p = load(*opaque);
-    require(team->arena == arena && team->width >= p.info.workers &&
+    require(arena->accepts_team(team->arena) && team->width >= p.info.workers &&
                 pthread_equal(team->creator, pthread_self()) && !team->busy,
             SBN3_FATAL_TEAM, "Newton bind team");
     size_t end = 0;
@@ -903,24 +973,7 @@ extern "C" void sbn3_newton_bind(const sbn3_newton_plan *opaque, sbn3_arena *are
         }
         *out=reinterpret_cast<sbn3_newton_binding *>(b);return;
     }
-    auto control = arena->acquire(offset, p.info.control_bytes);
-    auto *b = ::new (control.data) Binding{};
-    b->plan = p;
-    b->arena = arena;
-    b->team = team;
-    b->offset = offset;
-    b->leases[b->lease_count++] = control;
-    if (p.compact) {
-        auto *base = static_cast<unsigned char *>(control.data);
-        b->compact = ::new (base + compact_state_offset()) CompactState{};
-        b->compact->owner = b;
-        b->compact->bundles = reinterpret_cast<Bundle *>(base + compact_bundles_offset());
-        b->compact->stages = reinterpret_cast<ProductStage *>(base + compact_stages_offset(p.choice_count));
-    }
-    Assembly assembly(b->plan, b);
-    assembly.run();
-    require(assembly.finish(), SBN3_FATAL_MATH, "Newton bind plan replay");
-    *out = reinterpret_cast<sbn3_newton_binding *>(b);
+    *out=bind_native_plan(p,arena,offset,team,nullptr,nullptr);
 }
 extern "C" void sbn3_newton_execute(sbn3_newton_binding *opaque, const sbn3_newton_inputs *provided,
                                     sbn3_limbs output) {
@@ -1023,6 +1076,141 @@ extern "C" void sbn3_newton_unbind(sbn3_newton_binding *opaque) {
     b.marker = 0;
     b.~Binding();
     arena->release(control);
+}
+
+namespace sbn::v3 {
+namespace {
+constexpr uint64_t normalized_magic=UINT64_C(0x53424e334e4e4557);
+struct NormalizedState {
+    uint64_t marker=0;
+    NormalizedNewtonInfo info{};
+    NormalizedLocalPrepared local{};
+    const Frozen* frozen=nullptr;
+    size_t metadata_extent=0;
+};
+NormalizedLocalKind local_kind(sbn3_newton_kind kind) {
+    return kind==SBN3_NEWTON_INVERSE?NormalizedLocalKind::inverse:NormalizedLocalKind::divide;
+}
+sbn3_query_result select_normalized(sbn3_newton_kind kind,size_t n,unsigned workers,
+                                   bool& local,Frozen& frozen,NormalizedLocalInfo& local_info) {
+    if((kind!=SBN3_NEWTON_INVERSE&&kind!=SBN3_NEWTON_DIVIDE)||!n||!workers||workers>32)
+        return SBN3_UNSUPPORTED;
+    sbn3_newton_plan chosen{};sbn3_newton_info info{};
+    sbn3_newton_options options{workers,0,0,0};
+    const auto rc=sbn3_newton_query(kind,n,&options,&chosen,&info);
+    if(rc!=SBN3_SUPPORTED)return rc;
+    local=chosen.opaque[0]==newton_detail::dyadic_plan_magic;
+    if(!local){frozen.plan=load(chosen);local=frozen.plan.local;}
+    return local?normalized_local_query(local_kind(kind),n,local_info):SBN3_SUPPORTED;
+}
+sbn3_query_result freeze_native(Frozen& frozen) {
+    Assembly assembly(frozen.plan,nullptr,true,nullptr,&frozen);
+    assembly.run();if(!assembly.finish())return assembly.status;
+    frozen.plan.seal=seal(frozen.plan);
+    return SBN3_SUPPORTED;
+}
+bool normalized_quote(sbn3_newton_kind kind,size_t n,bool local,const Frozen& frozen,
+                      const NormalizedLocalInfo& local_info,NormalizedNewtonInfo& info) {
+    info={};info.kind=kind;info.n=n;info.local=local;
+    size_t metadata=sizeof(NormalizedState)+256;
+    if(local){
+        if(!add_size(metadata,local_info.metadata_bytes,metadata))return false;
+        info.workspace_bytes=local_info.workspace_bytes;info.workers=1;
+    }else{
+        const auto& p=frozen.plan;
+        info.alignment=std::max<size_t>(128,p.info.storage_alignment);info.workers=p.info.workers;
+        size_t records=0;
+        if(!mul_size(p.choice_count,sizeof(Bundle)+sizeof(product::LowLiftProgram),records)||
+           !add_size(metadata,sizeof(Frozen)+records+512,metadata)||
+           !add_size(metadata,frozen.local_seed_info.metadata_bytes,metadata))return false;
+        size_t session=0;
+        if(!align_size(sizeof(ScopedResidentSession),info.alignment,session)||
+           !add_size(session,p.info.storage_bytes,info.workspace_bytes))return false;
+    }
+    info.metadata_bytes=metadata;
+    size_t total=0;
+    if(!add_size(metadata,info.workspace_bytes,total)||!add_size(total,info.alignment-1,info.storage_bytes))return false;
+    return true;
+}
+}
+sbn3_query_result normalized_newton_query(sbn3_newton_kind kind,size_t n,unsigned workers,
+                                         NormalizedNewtonInfo& info) noexcept {
+    info={};bool local=false;Frozen frozen;NormalizedLocalInfo local_info;
+    auto rc=select_normalized(kind,n,workers,local,frozen,local_info);
+    if(rc!=SBN3_SUPPORTED)return rc;
+    if(!local){rc=freeze_native(frozen);if(rc!=SBN3_SUPPORTED)return rc;}
+    return normalized_quote(kind,n,local,frozen,local_info,info)?SBN3_SUPPORTED:SBN3_QUERY_CAPACITY;
+}
+NormalizedNewtonPrepared normalized_newton_prepare(sbn3_newton_kind kind,size_t n,unsigned workers,
+                                                   Frame& metadata) noexcept {
+    bool local=false;Frozen chosen;NormalizedLocalInfo local_info;
+    require(select_normalized(kind,n,workers,local,chosen,local_info)==SBN3_SUPPORTED,
+            SBN3_FATAL_ARGUMENT,"normalized Newton shape");
+    auto* state=::new(metadata.allocate(sizeof(NormalizedState),128))NormalizedState{};
+    if(local){
+        state->local=normalized_local_prepare(local_kind(kind),n,metadata);
+        require(normalized_quote(kind,n,true,chosen,state->local.info,state->info),
+                SBN3_FATAL_SIZE,"normalized Newton local quote");
+    }else{
+        auto* frozen=::new(metadata.allocate(sizeof(Frozen),128))Frozen{};
+        frozen->plan=chosen.plan;
+        frozen->bundles=metadata.alloc<Bundle>(frozen->plan.choice_count);
+        frozen->low_lifts=metadata.alloc<product::LowLiftProgram>(frozen->plan.choice_count);
+        for(unsigned j=0;j<frozen->plan.choice_count;++j){
+            ::new(frozen->bundles+j)Bundle{};::new(frozen->low_lifts+j)product::LowLiftProgram{};
+        }
+        require(freeze_native(*frozen)==SBN3_SUPPORTED,SBN3_FATAL_MATH,"normalized Newton freeze");
+        if(frozen->seed_limbs>newton_limits::inverse_seed_words){
+            frozen->local_seed=normalized_local_prepare(NormalizedLocalKind::inverse,frozen->seed_limbs,metadata);
+            require(frozen->local_seed.info.workspace_bytes==frozen->local_seed_info.workspace_bytes,
+                    SBN3_FATAL_MATH,"normalized Newton prefix quote");
+        }
+        require(normalized_quote(kind,n,false,*frozen,{},state->info),SBN3_FATAL_SIZE,"normalized Newton quote");
+        state->frozen=frozen;
+    }
+    state->metadata_extent=size_t(metadata.data()+metadata.used()-reinterpret_cast<uint8_t*>(state));
+    require(state->metadata_extent<=state->info.metadata_bytes,SBN3_FATAL_WORKSPACE,"normalized Newton metadata quote");
+    state->marker=normalized_magic;
+    return {state,state->info};
+}
+void normalized_newton_execute(const NormalizedNewtonPrepared& prepared,sbn3_const_limbs A,
+    sbn3_const_limbs D,sbn3_limbs Q,Frame& work,sbn3_team_scope* scope) noexcept {
+    require_scope_leader(scope);
+    require(prepared.state,SBN3_FATAL_LIFETIME,"normalized Newton prepared state");
+    const auto& state=*static_cast<const NormalizedState*>(prepared.state);const auto& info=state.info;
+    require(state.marker==normalized_magic&&prepared.info.n==info.n&&prepared.info.kind==info.kind&&
+            prepared.info.workspace_bytes==info.workspace_bytes,SBN3_FATAL_LIFETIME,"normalized Newton identity");
+    require(scope->width>=info.workers,SBN3_FATAL_TEAM,"normalized Newton scope width");
+    const size_t n=info.n;const bool divide=info.kind==SBN3_NEWTON_DIVIDE;
+    require(D.data&&D.count==n&&Q.data&&Q.capacity>=n+1&&!(uintptr_t(Q.data)&63)&&
+            (D.data[n-1]>>63),SBN3_FATAL_ARGUMENT,"normalized Newton values");
+    require(divide?(A.data&&A.count==n+1&&A.data[n]<=1):(!A.data&&!A.count),
+            SBN3_FATAL_ARGUMENT,"normalized Newton numerator");
+    require(!overlaps(D.data,n*8,Q.data,(n+1)*8)&&
+            (!divide||((A.data==Q.data||!overlaps(A.data,(n+1)*8,Q.data,(n+1)*8))&&
+                        !overlaps(A.data,(n+1)*8,D.data,n*8))),SBN3_FATAL_ARGUMENT,"normalized Newton value alias");
+    const auto available=work.capacity()-work.used();
+    const auto* begin=work.used()?work.data()+work.used():work.data();
+    require(available>=info.workspace_bytes&&(!info.workspace_bytes||!(uintptr_t(begin)&(info.alignment-1))),
+            SBN3_FATAL_WORKSPACE,"normalized Newton workspace",info.workspace_bytes,available);
+    require(!overlaps(&state,state.metadata_extent,begin,available),SBN3_FATAL_ARGUMENT,"normalized Newton metadata/work alias");
+    for(auto value:{A,D,sbn3_const_limbs{Q.data,n+1}})if(value.count){
+        valid_span(value.data,value.count*8,"normalized Newton span");
+        require(!(uintptr_t(value.data)&7)&&!overlaps(value.data,value.count*8,&state,state.metadata_extent)&&
+                !overlaps(value.data,value.count*8,begin,available),SBN3_FATAL_ARGUMENT,"normalized Newton scratch alias");
+    }
+    FrameMark lifetime(work);
+    if(info.local){normalized_local_execute(state.local,A,D,Q,work);return;}
+    const auto& frozen=*state.frozen;
+    auto* object=work.allocate(sizeof(ScopedResidentSession),128);
+    auto* region=static_cast<std::byte*>(work.allocate(frozen.plan.info.storage_bytes,info.alignment));
+    auto* session=::new(object)ScopedResidentSession({region,frozen.plan.info.storage_bytes},scope);
+    auto* binding=bind_native_plan(frozen.plan,session->arena(),0,session->team(),session->scope(),&frozen);
+    const sbn3_newton_inputs input{A,D,0};
+    sbn3_newton_execute(binding,&input,Q);
+    sbn3_newton_unbind(binding);
+    session->~ScopedResidentSession();
+}
 }
 
 #include "algorithms/newton_planner_impl.hpp"

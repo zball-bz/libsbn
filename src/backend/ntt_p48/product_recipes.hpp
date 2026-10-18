@@ -89,7 +89,7 @@ void begin_spectrum(Binding &b,Spectrum &sp,sbn3_const_limbs a){
  }
 void compute_spectrum(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_limbs a){
     auto &b=binding(opaque);auto &sp=const_cast<Spectrum &>(spectrum(handle));begin_spectrum(b,sp,a);
-    PrepareCall call{&b,&sp,a,sp.desc.frontier};sbn3_team_run(b.run.team,prepare_action,&call);
+    PrepareCall call{&b,&sp,a,sp.desc.frontier};b.owner.run(*b.run.team,prepare_action,&call);
     __atomic_store_n(&sp.state,spectrum_contract::ready,__ATOMIC_RELEASE);
 }
 void prepare(sbn3_mul_binding *opaque,sbn3_const_limbs a,unsigned frontier,uint64_t generation,
@@ -194,7 +194,8 @@ void with_product_scratch(sbn3_mul_binding *opaque,void *arg,void (*fn)(void *,F
     __atomic_store_n(&b.active,0,__ATOMIC_RELEASE);
 }
 template<bool Live=false,bool Fresh=false>void product_execute_impl(sbn3_mul_binding *opaque,sbn3_team_scope *scope,const sbn3_product_inputs &in,sbn3_limbs out){
-    auto &b=binding(opaque);if(!scope)idle_owner(b);else require_scope_leader(scope);
+    auto &b=binding(opaque);scope=b.owner.resolve(*b.run.team,scope,b.plan.execution.info.workers);
+    if(!scope)idle_owner(b);
     const auto &r=b.plan.recipe;const size_t capacity=sbn3_mul_output_capacity(&b.plan.execution.info),rb=bytes_for(capacity,8);
     if constexpr(Live)require(r.kind==SBN3_PRODUCT_MUL&&r.cached_mask==1&&b.plan.arithmetic.transform.ring_rn,
                               SBN3_FATAL_ARGUMENT,"live cached cyclic product");
@@ -215,8 +216,8 @@ template<bool Live=false,bool Fresh=false>void product_execute_impl(sbn3_mul_bin
     for(const auto &l:{b.run.table_memory,b.run.work_memory,b.run.team->storage})no_alias(l);
     for(unsigned k=1;k<b.run.team->width;++k)no_alias(b.run.team->stacks[k]);
     for(auto *s:b.run.cached)if(s){require(__atomic_load_n(&spectrum(s).state,__ATOMIC_ACQUIRE)==spectrum_contract::ready,SBN3_FATAL_LIFETIME,"spectrum not completed");no_alias(spectrum(s).storage);}
-    if constexpr(LEAF!=8){Execute call{&b,in.a,in.b,out};if(scope)execute_action(&call,scope);else sbn3_team_run(b.run.team,execute_action,&call);return;}
-    ProductCall call{&b,in,out,Fresh};if(scope)product_action(&call,scope);else sbn3_team_run(b.run.team,product_action,&call);
+    if constexpr(LEAF!=8){Execute call{&b,in.a,in.b,out};if(scope)execute_action(&call,scope);else b.owner.run(*b.run.team,execute_action,&call);return;}
+    ProductCall call{&b,in,out,Fresh};if(scope)product_action(&call,scope);else b.owner.run(*b.run.team,product_action,&call);
 }
 void product_execute(sbn3_mul_binding *b,sbn3_team_scope *s,const sbn3_product_inputs &in,sbn3_limbs out){
     product_execute_impl(b,s,in,out);
@@ -241,7 +242,7 @@ void compute_square(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_li
     call.prep.counts=call.counts;
     auto action=[](void *ptr,sbn3_team_scope *scope){auto &v=*static_cast<Both *>(ptr);const auto begin=tick_ns();prepare_action(&v.prep,scope);const auto prepared=tick_ns();product_action(&v.product,scope);v.product.b->last_stage_ns[0]+=prepared-begin;
         for(unsigned j=0;j<32;++j){auto &dst=v.product.b->counts[j];const auto &src=v.counts[j];dst.row_forward+=src.row_forward;dst.column_forward+=src.column_forward;dst.row_mid+=src.row_mid;dst.row_inverse+=src.row_inverse;dst.column_inverse+=src.column_inverse;dst.row_transpose_forward+=src.row_transpose_forward;dst.leaf_products+=src.leaf_products;}};
-    sbn3_team_run(b.run.team,action,&call);__atomic_store_n(&sp.state,spectrum_contract::ready,__ATOMIC_RELEASE);
+    b.owner.run(*b.run.team,action,&call);__atomic_store_n(&sp.state,spectrum_contract::ready,__ATOMIC_RELEASE);
 }
 void compute_multiply(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_limbs a,
                       sbn3_const_limbs y,sbn3_limbs out){
@@ -278,7 +279,7 @@ void compute_multiply(sbn3_mul_binding *opaque,sbn3_spectrum *handle,sbn3_const_
             dst.column_inverse+=src.column_inverse;dst.row_transpose_forward+=src.row_transpose_forward;
             dst.leaf_products+=src.leaf_products;}
     };
-    sbn3_team_run(b.run.team,action,&call);
+    b.owner.run(*b.run.team,action,&call);
     __atomic_store_n(&sp.state,spectrum_contract::ready,__ATOMIC_RELEASE);
 }
 void product_metrics(const sbn3_mul_binding *opaque,sbn3_product_metrics &out){
