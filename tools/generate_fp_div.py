@@ -15,9 +15,9 @@ division (divsw.hpp there, Bounds (1)-(6)).
 Shape. e_top = ea - eb + 1 (the quotient a / b is below B^e_top), k = e_top - floor((leps - 2) / 64) quotient limbs at
 grid L(2) (k <= 0: zero; precondition k <= 512). The division from k = KMIN = 22 is sbn3f_div_km
 (src/fp/x86_64/div_km.cpp: Karp-Markstein on the reciprocal's IFMA levels, the operands' whole arrays; its header has the
-derivation); below, and for the reciprocal entry (an = 0), the cores here. The top k + 1 limbs of a and of b (zero below an operand that is
+derivation); below, and for the reciprocal entry (an = 0, k <= NMAX), the cores here. The top k + 1 limbs of a and of b (zero below an operand that is
 shorter) are shifted left together by ld = lzcnt(b's top limb) (k <= 5: in registers by mulx with 2^ld; k <= NMAX: a
-VPSHLDVQ funnel into the frame; qv: inside its u64 -> u52 conversions, the windows passed unshifted):
+VPSHLDVQ funnel into the frame):
   Y = floor(b_w 2^ld / B), k limbs, normalized;   X = floor(a_w 2^ld / B), k + 1 limbs, X < B Y (X / Y < 2^(ld+1)).
 The quotient of X B^(k-1) by Y has k limbs (below B^k) on the grid L(2): no binade test, no normalization of z, no
 clamp. The cores take the remainder R = X B^k (positions k .. 2k; the prototype: X' B^(k+1) with X' < Y after a
@@ -25,11 +25,9 @@ subtraction for X >= Y), which keeps their invariant 0 <= R < 2 Y B^(k+1) at the
   k = 1: one divq of <x1, x0> by y0.  k = 2: two exact 3/2 steps on <x2, x1, x0> and <r1, r0, 0>.
   k = 3..5: div_ssF's 3/2 loop, the registers loaded with X[k] .. X[0] top-aligned.
   k = 6..NMAX: the register-window short division, M from position k (X[0] .. X[k-5], complemented), the window
-    X[k-4] .. X[k] (the division to KMIN - 1, the reciprocal to NMAX).  The reciprocal above NMAX (k <= QVMAX = 230; not
-    reached from sbn3f_inv, which hands over only k <= 4 and k > 512): sbn3f_div_qv (src/fp/x86_64/div_qv.cpp, the IFMA
-    short division).
-Error, in units of the last quotient limb: the cores give z in (v' - 1 - 16/B, v' + 2k/B^2) (k <= 2: the exact floor;
-qv: (v' - 1 - 2^-6.9, v' + 2^-400]), v' = X B^(k-1) / Y; Y below b_w 2^ld / B by < 1 + 2^ld / B < 3/2 with
+    X[k-4] .. X[k] (the division to KMIN - 1, the reciprocal to NMAX).  The reciprocal above NMAX: ud2 (sbn3f_inv hands
+    over only k <= 4 and k > 512; the IFMA short division sbn3f_div_qv that served k <= 230 here was removed 2026-10-18).
+Error, in units of the last quotient limb: the cores give z in (v' - 1 - 16/B, v' + 2k/B^2) (k <= 2: the exact floor), v' = X B^(k-1) / Y; Y below b_w 2^ld / B by < 1 + 2^ld / B < 3/2 with
 Y >= B^k / 2 and v' < B^k puts v' above the true quotient by less than 3; X's and a's truncations lower v' by
 less than 3/B. So z - a / b lies in (-1 - 19/B, 3 + 2k/B^2): below 4 units = 2^(64 L(2) + 2) <= 2^leps.
 The top limb of z is zero when X < Y; the strip loop takes any count.
@@ -40,14 +38,13 @@ The reciprocal. e_top = 1 - eb (1 / b <= B^(1-eb), equal only for b = B^(eb-1)),
 B^(1-eb)]: error < 2 units). Otherwise the bound above holds as it is. k = 1: one divq of <2^ld, 0>. k = 2: the
 prototype's two-limb inverse: v = invert_pi1(Y), r = B^3 - (B + v) Y, v0 = r (B + v) / B^2 from below (by < 2), so
 W = <1, v, v0> lies in (B^4 / Y - 3, B^4 / Y] and z = floor(W 2^ld / B) in (v' - 5/2, v'] (no divq after the
-inverse's). k = 3..5, 6..NMAX and qv: the division's cores on this X (registers, directly initialized complemented M/window, an = 0).
+inverse's). k = 3..5 and 6..NMAX: the division's cores on this X (registers, directly initialized complemented M/window, an = 0).
 """
 import sys
 
 OUT = 'src/fp/x86_64/div.S'
-NMAX = 34                         # the scalar cores' largest n (the prototype's measured cut 34 / 35); qv beyond
+NMAX = 34                         # the scalar cores' largest n (the prototype's measured cut 34 / 35)
 KMAX = 512                        # the precondition's largest k (Karp-Markstein's range)
-QVMAX = 230                       # qv's largest k (the reciprocal's na = 0 path above NMAX, unreachable from sbn3f_inv)
 KMIN = 22                         # the division's k from which Karp-Markstein (div_km.cpp) beats the register-window cores
 CORE_PAD = 15                     # int3 bytes before the cores: the route's code in the entries moved them by 49 B (+1 % at k 9..17)
 MO = 0                            # M: positions n-6 .. 2n+1 at 8 (p - (n-6))
@@ -1048,7 +1045,7 @@ def entries():
     e('\tleaq\t1(%r8), %rdx')
     e('\tret')
     e('.Ligen:')
-    e('\txorl\t%r10d, %r10d')                     # na = 0: the reciprocal for .Lbe and qv
+    e('\txorl\t%r10d, %r10d')                     # na = 0: the reciprocal for .Lbe
     e('\tjmp\t.Lgen')
     e('.Lleps:')
     e('\tsubq\t$2, %rcx')
@@ -1075,38 +1072,20 @@ def entries():
     e('\tjbe\t.Lbe')
     e('\ttestq\t%r10, %r10')
     e('\tjnz\t.Lgkm')
-    e(f'\tcmpq\t${NMAX}, %r9')                    # na = 0, the reciprocal: the cores to NMAX, then qv
-    e('\tjbe\t.Lbe')
+    e(f'\tcmpq\t${NMAX}, %r9')                    # na = 0, the reciprocal: the cores to NMAX (sbn3f_inv hands
+    e('\tjbe\t.Lbe')                              # over k <= 4 and k > 512 only)
+    e('\tjmp\t.Lbad')
     e('.Lgkm:')
     e('\tpushq\t%rdi')                            # z
     e('\tpushq\t%rax')                            # e_top
     e('\tpushq\t%r8')                             # ns
     e('\tpushq\t%r9')                             # k
     e('\tsubq\t$8, %rsp')                         # rsp 16-aligned at the call
-    e('\ttestq\t%r10, %r10')
-    e('\tjz\t.Lgqv')                              # na = 0: the reciprocal (qv)
     # Karp-Markstein: the operands' whole arrays
     e('\tmovq\t%rdx, %rcx')                       # b.d
     e('\tmovq\t%r10, %rdx')                       # na
     e('\tmovq\t%r11, %r8')                        # nb
     e('\tcall\tsbn3f_div_km')                     # (z, a.d, na, b.d, nb, k)
-    e('\tjmp\t.Lgret')
-    # qv: the windows' top limbs unshifted (the shift by ld goes into its u64 -> u52 conversions), an = 0 the reciprocal
-    e('.Lgqv:')
-    e(f'\tcmpq\t${QVMAX}, %r9')
-    e('\tja\t.Lbad')
-    e('\tleaq\t1(%r9), %rcx')
-    e('\tmovq\t%r11, %r8')
-    e('\tcmpq\t%rcx, %r8')
-    e('\tcmovaq\t%rcx, %r8')                      # bn = min(nb, k + 1)
-    e('\tsubq\t%r8, %r11')
-    e('\tleaq\t(%rdx,%r11,8), %rcx')              # bw
-    e('\tleaq\t1(%r9), %rdx')
-    e('\tcmpq\t%rdx, %r10')
-    e('\tcmovbq\t%r10, %rdx')                     # an = min(na, k + 1)
-    e('\tsubq\t%rdx, %r10')
-    e('\tleaq\t(%rsi,%r10,8), %rsi')              # aw
-    e('\tcall\tsbn3f_div_qv')                     # (z, aw, an, bw, bn, k)
     e('.Lgret:')
     e('\taddq\t$8, %rsp')
     e('\tpopq\t%rcx')                             # k
@@ -1192,7 +1171,7 @@ def funnel_vector(nsrc, top_from_b, pre=''):
 def main():
     e(f'/* Generated by tools/generate_fp_div.py; do not edit. fp kernel division and reciprocal, x86-64 (BMI2, ADX,')
     e(' * LZCNT): the research prototype\'s scalar division on the limb grid to k = 21; from k = 22 Karp-Markstein on the')
-    e(' * reciprocal\'s IFMA levels (sbn3f_div_km, div_km.cpp); the reciprocal entry above k = 34: IFMA qv (div_qv.cpp).')
+    e(' * reciprocal\'s IFMA levels (sbn3f_div_km, div_km.cpp); the reciprocal entry above k = 34: ud2 (unreachable).')
     e(' * n = 2 and n = 3..5 port GMP 6.3.0 udiv_qr_3by2 / invert_pi1 / sbpi1_div_qr arithmetic via the library (dual')
     e(' * LGPLv3+ / GPLv2+; Copyright 1991-2016 Free Software Foundation, Inc.; notice')
     e(' * src/core/x86_64/scalar-donor-notice.txt); n >= 6 is the prototype\'s register-window short division. */')

@@ -1788,7 +1788,6 @@
         "lzcnt"
       ],
       "depends_on": [
-        "src/fp/x86_64/div_qv.cpp",
         "src/fp/x86_64/div_km.cpp"
       ],
       "provides_symbols": [
@@ -1796,7 +1795,6 @@
         "sbn3f_inv_base"
       ],
       "requires_symbols": [
-        "sbn3f_div_qv",
         "sbn3f_div_km"
       ],
       "donor_ids": [
@@ -1822,7 +1820,6 @@
         "src/core/x86_64/recip_u1024.s"
       ],
       "provides_symbols": [
-        "sbn3f_div_qv",
         "sbn3f_sqrt_qv"
       ],
       "requires_symbols": [
